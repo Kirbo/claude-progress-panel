@@ -788,3 +788,40 @@ test('a failed pipeline keeps the Pipelines section open', async ($, on) => {
   expect(await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' })).toBeTruthy()
   await ui.unmount()
 })
+
+test("the pipeline line ends with its duration: live while running, GitLab's once finished", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, {
+    id: 42,
+    status: 'running',
+    ref: 'main',
+    started_at: new Date(T0 - 65_000).toISOString(),
+  })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+
+  let ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+    '▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s',
+  )
+  await ui.unmount()
+
+  world.gitlab.set(PIPE, {
+    id: 42,
+    status: 'success',
+    ref: 'main',
+    started_at: new Date(T0 - 65_000).toISOString(),
+    finished_at: new Date(T0 + 10_000).toISOString(),
+    duration: 70,
+  })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'success']))
+  await world.clock.advance(15_000)
+  ui = await pane($)
+  await ui.press({ key: 'pipelines' })
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+    '▸ app #42 · main · success  ████████ 1/1 · 1m10s',
+  )
+  await ui.unmount()
+})

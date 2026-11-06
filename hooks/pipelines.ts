@@ -67,7 +67,16 @@ function json(text: string): unknown {
   }
 }
 
-export type PipelineHead = { id: number; state: JobState; ref?: string; sha?: string; url?: string }
+export type PipelineHead = {
+  id: number
+  state: JobState
+  ref?: string
+  sha?: string
+  url?: string
+  startedAt?: string
+  pipelineFinishedAt?: string
+  durationS?: number
+}
 
 /** `glab api …/pipelines/<id>` (an object) or `…/pipelines?sha=` (a list, newest first). */
 export function parsePipeline(text: string): PipelineHead | undefined {
@@ -81,7 +90,25 @@ export function parsePipeline(text: string): PipelineHead | undefined {
     ...(typeof p.ref === 'string' ? { ref: p.ref } : {}),
     ...(typeof p.sha === 'string' ? { sha: p.sha } : {}),
     ...(typeof p.web_url === 'string' ? { url: p.web_url } : {}),
+    ...(typeof p.started_at === 'string' ? { startedAt: p.started_at } : {}),
+    ...(typeof p.finished_at === 'string' ? { pipelineFinishedAt: p.finished_at } : {}),
+    ...(typeof p.duration === 'number' ? { durationS: p.duration } : {}),
   }
+}
+
+/**
+ * How long the pipeline has run, in seconds: while running, from its start to now (ticks live);
+ * once finished, GitLab's own `duration` (what its UI shows), else finish − start. Null before it
+ * has started.
+ */
+export function pipelineDuration(p: Pipeline, nowMs: number): number | null {
+  const started = p.startedAt ? Date.parse(p.startedAt) : Number.NaN
+  if (isFinished(p.state)) {
+    if (typeof p.durationS === 'number') return p.durationS
+    const ended = p.pipelineFinishedAt ? Date.parse(p.pipelineFinishedAt) : Number.NaN
+    return Number.isNaN(started) || Number.isNaN(ended) ? null : Math.max(0, (ended - started) / 1000)
+  }
+  return Number.isNaN(started) ? null : Math.max(0, (nowMs - started) / 1000)
 }
 
 /**

@@ -41,6 +41,10 @@ export type Pipeline = {
   addedAt: string
   checkedAt: string | null
   finishedAt?: string
+  /** GitLab's start / finish of the pipeline and its own `duration` (seconds), when known. */
+  startedAt?: string
+  pipelineFinishedAt?: string
+  durationS?: number
   /** The last refresh's error (glab missing, not logged in, no such pipeline…). */
   error?: string
 }

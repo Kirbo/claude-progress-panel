@@ -126,7 +126,7 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   `glab api` every 15 s — only its own pipelines, only while unfinished — and stops at the first
   finished state. Other panes read the result from the file (no extra GitLab calls).
 - States: GitLab's statuses fold into queued / running / success / failed / canceled / skipped /
-  manual. Header: `label #id · ref · state  ▰▰▱▱ finished/total`, finished = success + failed +
+  manual. Header: `label #id · ref · state  ██░░ finished/total · duration`, finished = success + failed +
   canceled + skipped. Then the counts line (each state in its colour, zeros dimmed) and the jobs
   grouped by stage in pipeline order (GitLab lists newest first; sorted by job id), names padded
   so the durations line up. Layout (0.4.1): one indent step per level — section → item → details →
@@ -135,6 +135,9 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   shows the stage/job tree; ✕ on a finished one goes to the
   sidecar (`pipeline:<key>` + `finishedAt`), so the session's file keeps its one writer.
 - A `glab` failure (not installed, not logged in, no such pipeline) is shown on the pipeline.
+- Duration (0.5.1): running → now − GitLab's `started_at` (ticks with the pane's 2 s redraw);
+  finished → GitLab's `duration` (as its UI shows), else `finished_at − started_at`; omitted
+  before the pipeline has started.
 - The section header is a fold button with a summary (0.5.0): `Pipelines  N watching · N succeeded
   · N failed` (+ canceled when any). It is folded by default once every pipeline succeeded and
   open otherwise. The person's fold/unfold is stored under the pipelines' current state signature,

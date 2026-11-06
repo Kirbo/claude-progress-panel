@@ -9,6 +9,7 @@ import {
   jobState,
   parseJobs,
   parsePipeline,
+  pipelineDuration,
   progressBar,
   stageGroups,
   visiblePipelines,
@@ -74,6 +75,29 @@ test('stageGroups keeps pipeline order and groups each stage once', () => {
   ])
 })
 
+test("pipelineDuration: running counts from the start, finished uses GitLab's duration", () => {
+  const started = '2026-11-06T20:00:00.000Z'
+  const base: Pipeline = {
+    key: 'g/a#1',
+    project: 'g/a',
+    id: 1,
+    label: 'a',
+    state: 'running',
+    jobs: [],
+    addedAt: started,
+    checkedAt: started,
+  }
+  expect(pipelineDuration(base, Date.parse(started) + 125_000)).toBeNull()
+  expect(pipelineDuration({ ...base, startedAt: started }, Date.parse(started) + 125_000)).toBe(125)
+  expect(pipelineDuration({ ...base, state: 'success', startedAt: started, durationS: 393 }, 0)).toBe(393)
+  expect(
+    pipelineDuration(
+      { ...base, state: 'failed', startedAt: started, pipelineFinishedAt: '2026-11-06T20:01:00.000Z' },
+      0,
+    ),
+  ).toBe(60)
+})
+
 test('progressBar fills by finished share; formatDuration reads like a timer', () => {
   expect(progressBar(4, 8, 8)).toBe('████░░░░')
   expect(progressBar(0, 0, 4)).toBe('░░░░')
@@ -89,6 +113,23 @@ test('parsePipeline / parseJobs read glab api output and refuse anything else', 
     JSON.stringify({ id: 42, status: 'running', ref: 'main', sha: 'abc1234def', web_url: 'https://x/p/42' }),
   )
   expect(p).toEqual({ id: 42, state: 'running', ref: 'main', sha: 'abc1234def', url: 'https://x/p/42' })
+  expect(
+    parsePipeline(
+      JSON.stringify({
+        id: 43,
+        status: 'success',
+        started_at: '2026-11-06T20:00:00.000Z',
+        finished_at: '2026-11-06T20:06:40.000Z',
+        duration: 393,
+      }),
+    ),
+  ).toEqual({
+    id: 43,
+    state: 'success',
+    startedAt: '2026-11-06T20:00:00.000Z',
+    pipelineFinishedAt: '2026-11-06T20:06:40.000Z',
+    durationS: 393,
+  })
   expect(parsePipeline('[]')).toBeUndefined()
   expect(parsePipeline('{ nope')).toBeUndefined()
   // `pipelines?sha=` answers a list: the newest first.

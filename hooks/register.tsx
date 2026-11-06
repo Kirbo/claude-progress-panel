@@ -28,6 +28,7 @@ import {
   jobCounts,
   parseJobs,
   parsePipeline,
+  pipelineDuration,
   progressBar,
   stageGroups,
   visiblePipelines,
@@ -381,6 +382,9 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
     state: parsed.state,
     ...(parsed.ref ? { ref: parsed.ref } : {}),
     ...(parsed.url ? { url: parsed.url } : {}),
+    ...(parsed.startedAt ? { startedAt: parsed.startedAt } : {}),
+    ...(parsed.pipelineFinishedAt ? { pipelineFinishedAt: parsed.pipelineFinishedAt } : {}),
+    ...(parsed.durationS !== undefined ? { durationS: parsed.durationS } : {}),
     jobs,
     checkedAt: at,
     ...(isFinished(parsed.state) && !p.finishedAt ? { finishedAt: at } : {}),
@@ -558,6 +562,9 @@ export const register: Register = (on, options) => {
         bar: progressBar(counts.finished, counts.total),
         finished: counts.finished,
         total: counts.total,
+        duration: ((d: number | null) => (d === null ? '' : t('pipe.duration', { d: formatDuration(d) })))(
+          pipelineDuration(p, nowMs),
+        ),
       })
       const countParts = COUNT_ORDER.filter(s => ALWAYS_COUNTED.has(s) || counts[s] > 0)
       // Names padded to the widest in this pipeline, so the times line up in a column.
