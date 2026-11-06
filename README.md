@@ -97,12 +97,17 @@ mise install
 mise exec -- biome check .                 # lint + format check (biome check --write . to fix)
 mise exec -- claude plugin test .          # hooks/*.test.tsx against the engine
 mise exec -- claude plugin validate .      # manifest + module, as the engine reads them
+mise exec -- node --test scripts/          # sealing + audit-register guard tests
+mise exec -- node scripts/check-audits.mjs # audit-register guard (also run by CI)
 claude --plugin-dir .                      # a session with this working copy loaded
+git config core.hooksPath .githooks        # once per clone: the pre-commit hook seals audit findings
 ```
 
 Test-first: a change lands with its test in `hooks/register.test.tsx`. Every user-facing string
 lives in `locales/en.ts` and goes through `t()` (`hooks/i18n.ts`). CI (`.gitlab-ci.yml`) runs the
-three checks on every push.
+checks above on every push. Security findings that are not fixed yet are never published: they are
+age-sealed in `docs/audits/` (process: [`docs/audits/README.md`](docs/audits/README.md); `/audit`
+and `/maintain` are project skills in `.claude/skills/`).
 
 ## License
 

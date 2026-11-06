@@ -30,3 +30,5 @@ check:
     - mise exec -- claude --version
     - mise exec -- claude plugin validate .
     - mise exec -- claude plugin test .
+    - mise exec -- node --test scripts/
+    - mise exec -- node scripts/check-audits.mjs
