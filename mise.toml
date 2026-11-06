@@ -1,0 +1,7 @@
+# Dev + CI toolchain. Exact pins only; `mise lock` after a bump.
+[tools]
+biome = "2.6.5"
+claude = "2.1.318"
+
+[settings]
+lockfile = true

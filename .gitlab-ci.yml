@@ -1,0 +1,24 @@
+# Lint, validate and test the plugin with the toolchain mise.lock pins.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+check:
+  image: jdxcode/mise:2026.11.2@sha256:39cd8aad519a3dbc860eceb64dfd8cb5efe4cdbb8ad741a6867b544b2787b79c
+  variables:
+    MISE_LOCKED: "1"
+    MISE_YES: "1"
+  cache:
+    key:
+      files: [mise.lock]
+    paths: [.mise-cache/]
+  before_script:
+    - export MISE_DATA_DIR="$CI_PROJECT_DIR/.mise-cache"
+    - mise install
+  script:
+    - mise exec -- biome ci .
+    - mise exec -- claude --version
+    - mise exec -- claude plugin validate .
+    - mise exec -- claude plugin test .

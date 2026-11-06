@@ -1,0 +1,19 @@
+{
+  "name": "progress-panel",
+  "version": "0.1.0",
+  "description": "A pane beside the Claude Code chat showing what the agent is working on, read live from a JSON status file",
+  "author": { "name": "Kirbo" },
+  "homepage": "https://gitlab.com/KirboDev/agentic-coding/claude-progress-panel",
+  "repository": "https://gitlab.com/KirboDev/agentic-coding/claude-progress-panel",
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "progressFile": {
+      "type": "string",
+      "title": "Status file",
+      "description": "Path of the JSON status file the pane shows. Empty = progress.json in the Claude config directory (~/.claude/progress.json). ~/ expands to your home directory.",
+      "default": "",
+      "required": false
+    }
+  }
+}

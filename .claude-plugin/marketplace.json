@@ -1,0 +1,15 @@
+{
+  "name": "claude-progress-panel",
+  "owner": {
+    "name": "Kirbo"
+  },
+  "plugins": [
+    {
+      "name": "progress-panel",
+      "source": "./"
+    }
+  ],
+  "metadata": {
+    "description": "A live progress pane for Claude Code"
+  }
+}
