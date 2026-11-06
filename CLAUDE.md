@@ -27,11 +27,13 @@ How to _use_ the panel during a task is the bundled skill:
    `keepEndedSessionsDays`, `sortTasksBy` (README "Settings") — ask the user only if they care.
    If the user is continuing work from another machine, put their handover into THIS session
    with the `progress_update` tool (tasks + now + needsYou) — never invent content.
-5. Verify: `claude plugin list` shows `progress-panel@claude-progress-panel` enabled. The pane
+5. Pipelines in the pane need [`glab`](https://gitlab.com/gitlab-org/cli) on PATH and logged in
+   (`glab auth status`); without it everything else works and a watched pipeline shows glab's error.
+6. Verify: `claude plugin list` shows `progress-panel@claude-progress-panel` enabled. The pane
    appears in the NEXT session (or after `/reload-plugins` in a running one); `/progress` opens it.
    It needs a terminal ≥ ~144 columns to open by itself and does not draw usefully inside
    `screen`/`tmux` panes that are too narrow.
-6. If the user wants the agent to keep it current by default, add one line to their
+7. If the user wants the agent to keep it current by default, add one line to their
    `~/.claude/CLAUDE.md` (ask first — it is their file):
    `Keep the progress panel (progress-panel skill) current during multi-step work.`
 
@@ -42,7 +44,7 @@ How to _use_ the panel during a task is the bundled skill:
   day old.
 - **Lint/format: Biome** (`biome check .`; `--write` to fix). No ESLint/Prettier.
 - **TDD.** Write the failing test first (`claude plugin test .`), then the code: pure logic in
-  `hooks/model.ts` ↔ `hooks/model.test.ts`; I/O, tool, timer and pane in `hooks/register.tsx` ↔
+  `hooks/model.ts` ↔ `hooks/model.test.ts` and `hooks/pipelines.ts` ↔ `hooks/pipelines.test.ts`; I/O, tool, timer and pane in `hooks/register.tsx` ↔
   `hooks/register.test.tsx`, whose `engine()` helper stands in for the engine (`on('<op>', …)`
   stubs, a fake disk, `mock.clock`) — reuse and extend it, don't fork it.
 - **i18n.** Every user-facing string is a key in `locales/en.ts`, read through `t()` from

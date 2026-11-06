@@ -27,11 +27,21 @@ send only what changed:
 | `needsYou` | replaces your asks — only what the USER must do/decide; `[]` once answered |
 | `tasks`    | upserts `{ id?, title?, status?, note? }` — by `id`, or by exact `title`   |
 | `remove`   | task ids to delete (mistakes, not finished work — finish with `done`)      |
+| `watch`    | GitLab pipelines to follow live: `{ project: "group/name", pipeline: <id> }` or `{ project, sha }`, optional `label` |
+| `unwatch`  | pipeline keys (`group/name#<id>`, or `group/name@<sha>`) to stop showing   |
 
 - `status`: `todo` (○), `doing` (●), `blocked` (✗ — say why in `note`), `done` (✓), `skipped` (–).
 - New tasks need a `title`; the tool assigns ids (`t1`, `t2`, …) and answers with the full list —
   use the ids afterwards.
 - Timestamps (created, updated, done) are stamped for you. Never write the files yourself.
+
+## Pipelines
+
+Whenever you push and the pipeline matters (you will report on it, or wait for it), `watch` it in
+the same call that sets `now`: by id when you know it, else by the pushed commit's `sha` (the
+plugin finds the pipeline once GitLab creates it). The plugin then refreshes it through the user's
+`glab` every 15 s until it finishes — do not poll it yourself just to update the pane. You still
+read the result yourself (e.g. `glab api …/pipelines/<id>/jobs`) before reporting on it.
 
 ## The routine
 

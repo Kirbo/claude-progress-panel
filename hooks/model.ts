@@ -1,6 +1,6 @@
 // The session file and every pure operation on it — no I/O here (see store.ts for that).
 
-import type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task } from '../types'
+import type { Dismissal, Pipeline, SessionFile, SessionInfo, SidecarFile, Status, Task } from '../types'
 
 export type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task }
 
@@ -29,6 +29,7 @@ export function newSession(info: Omit<SessionInfo, 'startedAt' | 'endedAt'>, now
     tasks: [],
     dismissed: [],
     seq: 0,
+    pipelines: [],
   }
 }
 
@@ -152,7 +153,7 @@ export function mergeSidecar(file: SessionFile, entries: readonly Dismissal[]): 
 }
 
 /** The entries for these tasks' current completions, added to a sidecar's (each id + doneAt once). */
-export function addDismissals(entries: readonly Dismissal[], tasks: readonly Task[]): Dismissal[] {
+export function addDismissals(entries: readonly Dismissal[], tasks: readonly Dismissal[]): Dismissal[] {
   const next = [...entries]
   for (const task of tasks) {
     if (!next.some(d => d.id === task.id && d.doneAt === task.doneAt))
@@ -241,7 +242,15 @@ export function parseSessionFile(text: string): SessionFile | undefined {
       isStatus((t as Task).status),
   )
   const seq = typeof f.seq === 'number' && Number.isFinite(f.seq) ? f.seq : 0
-  return { ...(f as unknown as SessionFile), needsYou, dismissed, tasks, seq }
+  const pipelines = (Array.isArray(f.pipelines) ? f.pipelines : []).filter(
+    (p): p is Pipeline =>
+      typeof p === 'object' &&
+      p !== null &&
+      typeof (p as Pipeline).key === 'string' &&
+      typeof (p as Pipeline).project === 'string' &&
+      Array.isArray((p as Pipeline).jobs),
+  )
+  return { ...(f as unknown as SessionFile), needsYou, dismissed, tasks, seq, pipelines }
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')

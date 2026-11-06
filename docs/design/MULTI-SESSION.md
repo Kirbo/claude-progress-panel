@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -111,6 +111,26 @@ idle status from a pane that stopped refreshing.)
   option is the starting value.
 - Sorting: `status` = blocked, doing, todo (open) and newest done first; `title` = A→Z;
   `created` = oldest first; `done` = newest done first (open tasks by creation).
+
+## Pipelines (0.4.0)
+
+Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits on.
+
+- The tool's `watch` (`{ project, pipeline }` or `{ project, sha }`, optional `label`) and
+  `unwatch` (keys) maintain the session file's `pipelines` list: key (`project#id`, or
+  `project@sha` until found), state, ref, url, jobs (`name`, `stage`, `state`, `durationS`),
+  `addedAt`, `checkedAt`, `finishedAt`, `error`.
+- **Push is not possible** from GitLab to a local plugin: webhooks need a reachable HTTP server,
+  and GitLab's own live updates (GraphQL subscriptions over ActionCable) need a browser websocket
+  session; the plugin API has neither. So the **watching session** polls through the user's
+  `glab api` every 15 s — only its own pipelines, only while unfinished — and stops at the first
+  finished state. Other panes read the result from the file (no extra GitLab calls).
+- States: GitLab's statuses fold into queued / running / success / failed / canceled / skipped /
+  manual. Header: `label #id · ref · state  ▰▰▱▱ finished/total`, finished = success + failed +
+  canceled + skipped. Then the counts line and one line per job (duration once finished).
+  Running pipelines start unfolded, finished ones folded; ✕ on a finished one goes to the
+  sidecar (`pipeline:<key>` + `finishedAt`), so the session's file keeps its one writer.
+- A `glab` failure (not installed, not logged in, no such pipeline) is shown on the pipeline.
 
 ## Out of scope / later
 

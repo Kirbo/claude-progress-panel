@@ -1,6 +1,6 @@
 {
   "name": "progress-panel",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "A pane beside every Claude Code chat showing the progress of every session on the machine, grouped by session",
   "author": {
     "name": "Kirbo"
@@ -21,7 +21,17 @@
       "type": "string",
       "title": "Auto-clear done tasks after (hours)",
       "description": "Done and skipped tasks older than this are cleared. 0 = never.",
-      "options": ["0", "1", "3", "6", "12", "24", "48", "72", "168"],
+      "options": [
+        "0",
+        "1",
+        "3",
+        "6",
+        "12",
+        "24",
+        "48",
+        "72",
+        "168"
+      ],
       "default": "0",
       "required": false
     },
@@ -29,7 +39,14 @@
       "type": "string",
       "title": "Keep ended sessions (days)",
       "description": "An ended session is removed this many days after it ended. 0 = keep until dismissed.",
-      "options": ["0", "1", "3", "7", "14", "30"],
+      "options": [
+        "0",
+        "1",
+        "3",
+        "7",
+        "14",
+        "30"
+      ],
       "default": "7",
       "required": false
     },
@@ -37,7 +54,12 @@
       "type": "string",
       "title": "Sort tasks by",
       "description": "The starting order; the pane's Sort button changes it.",
-      "options": ["status", "title", "created", "done"],
+      "options": [
+        "status",
+        "title",
+        "created",
+        "done"
+      ],
       "default": "status",
       "required": false
     }

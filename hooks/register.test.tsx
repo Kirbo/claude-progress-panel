@@ -112,8 +112,19 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
     return { value: undefined }
   })
   const runs: string[][] = []
+  const gitlab = new Map<string, unknown>()
   on('process.run', (_, e) => {
     runs.push([...e.argv])
+    if (e.argv[0] === 'glab') {
+      // `glab api <path>`: answered from the fake GitLab (or a CLI failure when the path is unknown).
+      const body = gitlab.get(e.argv[2] as string)
+      return {
+        value:
+          body === undefined
+            ? { exitCode: 1, stdout: '', stderr: 'glab: 404 Not Found' }
+            : { exitCode: 0, stdout: JSON.stringify(body), stderr: '' },
+      } as never
+    }
     const target = e.argv[e.argv.length - 1] as string
     disk.removed.push(target)
     disk.files.delete(target)
@@ -121,6 +132,7 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
   })
   return {
     clock,
+    gitlab,
     runs,
     store,
     status,
@@ -563,5 +575,140 @@ test('the header says when the pane last checked, and flags a check that stopped
   ui = await pane($)
   const header = await ui.find({ type: 'Text', text: /checked/ })
   expect(header?.text).toMatch(new RegExp(`· checked ${clock(T0 + 4000)} \\(stale\\)$`))
+  await ui.unmount()
+})
+
+const PIPE = 'projects/g%2Fapp/pipelines/42'
+
+function jobsOf(...states: [string, string][]): unknown[] {
+  return states.map(([name, status], i) => ({
+    name,
+    stage: 'build',
+    status,
+    duration: status === 'running' ? null : 10 + i,
+  }))
+}
+
+test('a watched pipeline shows live: progress bar, counts and every job', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, {
+    id: 42,
+    status: 'running',
+    ref: 'main',
+    web_url: 'https://gitlab.example/g/app/-/pipelines/42',
+  })
+  world.gitlab.set(
+    `${PIPE}/jobs?per_page=100`,
+    jobsOf(['lint', 'success'], ['test', 'running'], ['build', 'pending'], ['docs', 'skipped']),
+  )
+  await start($)
+
+  const answer = await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  expect(answer).toMatchObject({ result: expect.stringContaining('watching g/app#42') })
+
+  const ui = await pane($)
+  const lines = await texts(ui)
+  expect(lines).toContain('Pipelines')
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+    '▾ app #42 · main · running  ▰▰▰▰▱▱▱▱ 2/4',
+  )
+  expect(lines).toContain('  1 running · 1 queued · 1 skipped · 1 passed · 0 failed')
+  expect(lines).toContain('  ✓ lint  10s')
+  expect(lines).toContain('  ● test')
+  expect(lines).toContain('  ○ build')
+  expect(lines).toContain('  – docs  13s')
+  await ui.unmount()
+})
+
+test('the session polls its unfinished pipelines every 15 s and stops once they finish', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  const calls = () => world.runs.filter(r => r[0] === 'glab').length
+  expect(calls()).toBe(2)
+
+  world.gitlab.set(PIPE, { id: 42, status: 'failed', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'failed']))
+  await world.clock.advance(15_000)
+  expect(calls()).toBe(4)
+  const p = read(disk, `${DIR}/s-me.json`).pipelines?.[0]
+  expect(p).toMatchObject({ state: 'failed', jobs: [{ name: 'lint', state: 'failed' }] })
+  expect(p?.finishedAt).toBeTruthy()
+
+  await world.clock.advance(60_000)
+  expect(calls()).toBe(4)
+
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+    '▸ app #42 · main · failed  ▰▰▰▰▰▰▰▰ 1/1',
+  )
+  await ui.unmount()
+})
+
+test('a pipeline watched by commit is found once GitLab has it', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { watch: [{ project: 'g/app', sha: 'abc123', label: 'app main' }] })
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ key: 'g/app@abc123', id: null })
+
+  world.gitlab.set('projects/g%2Fapp/pipelines?sha=abc123&per_page=1', [
+    { id: 42, status: 'pending', ref: 'main' },
+  ])
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'pending']))
+  await world.clock.advance(15_000)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({
+    id: 42,
+    state: 'queued',
+    label: 'app main',
+  })
+})
+
+test('a glab failure shows on the pipeline instead of breaking the pane', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, { watch: [{ project: 'g/none', pipeline: 9 }] })
+  const ui = await pane($)
+  expect(await texts(ui)).toContain('  glab: 404 Not Found')
+  await ui.unmount()
+})
+
+test("another session's pipelines show read-only and are never polled here; ✕ hides a finished one", async ($, on) => {
+  const disk = makeDisk()
+  const theirs = other('s-other', 'site', T0, {})
+  theirs.pipelines = [
+    {
+      key: 'g/site#7',
+      project: 'g/site',
+      id: 7,
+      label: 'site',
+      state: 'success',
+      ref: 'main',
+      jobs: [{ name: 'deploy', stage: 'deploy', state: 'success', durationS: 61 }],
+      addedAt: new Date(T0).toISOString(),
+      checkedAt: new Date(T0).toISOString(),
+      finishedAt: new Date(T0).toISOString(),
+    },
+  ]
+  put(disk, `${DIR}/s-other.json`, theirs)
+  const before = disk.files.get(`${DIR}/s-other.json`)?.text
+  const world = engine(on, disk)
+  await start($)
+  await world.clock.advance(30_000)
+  expect(world.runs.filter(r => r[0] === 'glab')).toEqual([])
+
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' }))?.text).toBe(
+    '▸ site #7 · main · success  ▰▰▰▰▰▰▰▰ 1/1',
+  )
+  await ui.press({ key: 'unpipe:s-other:g/site#7' })
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()
+  expect(disk.files.get(`${DIR}/s-other.json`)?.text).toBe(before)
+  expect(sidecar(disk, 's-other').map(d => d.id)).toEqual(['pipeline:g/site#7'])
   await ui.unmount()
 })

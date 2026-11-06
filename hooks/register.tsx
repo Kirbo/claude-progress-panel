@@ -20,6 +20,17 @@ import {
   visibleTasks,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
+import type { JobState, Pipeline, PipelineJob, WatchInput } from './pipelines'
+import {
+  applyWatch,
+  formatDuration,
+  isFinished,
+  jobCounts,
+  parseJobs,
+  parsePipeline,
+  progressBar,
+  visiblePipelines,
+} from './pipelines'
 
 const PANE = 'progress'
 const TOOL = 'progress_update'
@@ -30,6 +41,10 @@ const REFRESH_MS = 2000
 // A check older than this many refresh periods is shown as stale (the timer or the folder failed).
 const STALE_AFTER_MS = 5 * REFRESH_MS
 const DAY_MS = 24 * 3_600_000
+// GitLab cannot push pipeline status to a local plugin (webhooks need a reachable server; its live
+// updates need a browser websocket session), so the session that watches a pipeline polls it
+// through the user's own `glab` — only while it is unfinished, and only that session.
+const PIPELINE_POLL_MS = 15_000
 const SORT_KEY = 'sortTasksBy'
 
 const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {} as Loaded, {
@@ -47,6 +62,20 @@ const sorting = atom({ plugin: 'progress-panel', key: 'sort' } as const, '' as S
 // Needs-you items already announced, so a toast fires once per new item (module-local: a reload
 // starts quiet again, seeded on its first scan).
 let seenNeeds: Set<string> | undefined
+
+const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> = {
+  success: { sign: '✓', color: 'green' },
+  failed: { sign: '✗', color: 'red' },
+  running: { sign: '●', color: 'yellow' },
+  queued: { sign: '○' },
+  skipped: { sign: '–' },
+  canceled: { sign: '⊘' },
+  manual: { sign: '▶' },
+  unknown: { sign: '?' },
+}
+const COUNT_ORDER: JobState[] = ['running', 'queued', 'skipped', 'success', 'failed', 'canceled', 'manual']
+// Always shown, even at 0 (the rest only when present): the line reads the same way every time.
+const ALWAYS_COUNTED = new Set<JobState>(['running', 'queued', 'skipped', 'success', 'failed'])
 
 const MARK: Record<string, { sign: string; color?: string }> = {
   blocked: { sign: '✗', color: 'red' },
@@ -80,6 +109,22 @@ const INPUT_SCHEMA = {
       },
     },
     remove: { type: 'array', items: { type: 'string' } },
+    watch: {
+      type: 'array',
+      description: 'GitLab CI pipelines to follow live in the pane.',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['project'],
+        properties: {
+          project: { type: 'string', description: 'group/name (full path)' },
+          pipeline: { type: 'integer', description: 'pipeline id' },
+          sha: { type: 'string', description: 'commit sha, when the id is not known yet' },
+          label: { type: 'string', description: 'short name shown in the pane' },
+        },
+      },
+    },
+    unwatch: { type: 'array', items: { type: 'string' }, description: 'pipeline keys to stop showing' },
   },
 }
 
@@ -128,7 +173,11 @@ async function ownFile($: EngineInterface, dir: string): Promise<SessionFile> {
   const id = await $.session.id()
   const text = await $.fs.read(`${dir}/${id}.json`).catch(() => undefined)
   const existing = text === undefined ? undefined : parseSessionFile(text)
-  if (existing) return mergeSidecar(existing, await readSidecar($, dir, id))
+  if (existing) {
+    const entries = await readSidecar($, dir, id)
+    const merged = mergeSidecar(existing, entries)
+    return { ...merged, pipelines: visiblePipelines(merged.pipelines ?? [], entries) }
+  }
   const cwd = await $.session.cwd()
   const repo = await $.session.repo().catch(() => null)
   return newSession({ id, project: baseName(repo?.root ?? cwd), cwd }, await nowIso($))
@@ -140,7 +189,7 @@ async function dismiss(
   $: EngineInterface,
   options: PluginOptions,
   id: string,
-  tasks: readonly Task[],
+  tasks: readonly Dismissal[],
 ): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir || tasks.length === 0) return
@@ -275,13 +324,77 @@ function summarize(file: SessionFile, errors: readonly string[]): string {
   return lines.join('\n')
 }
 
-async function runUpdate($: EngineInterface, options: PluginOptions, input: UpdateInput): Promise<string> {
+type ToolInput = UpdateInput & { watch?: WatchInput[]; unwatch?: string[] }
+
+async function runUpdate($: EngineInterface, options: PluginOptions, input: ToolInput): Promise<string> {
   const dir = await progressDir($, options)
   if (!dir) return t('tool.noDir')
-  const { file, errors } = applyUpdate(await ownFile($, dir), input, await nowIso($))
+  const at = await nowIso($)
+  const updated = applyUpdate(await ownFile($, dir), input, at)
+  const watched = applyWatch(updated.file.pipelines ?? [], input.watch ?? [], input.unwatch ?? [], at)
+  const file = { ...updated.file, pipelines: watched.list }
   await save($, dir, file)
   await announce($, await read($, sessions), file.session.id)
-  return summarize(file, errors)
+  const added = watched.list.filter(p => !(updated.file.pipelines ?? []).some(old => old.key === p.key))
+  if (added.length > 0) await pollPipelines($, options)
+  const text = summarize(file, [...updated.errors, ...watched.errors])
+  return added.length > 0
+    ? `${text}\n${t('tool.watching', { keys: added.map(p => p.key).join(', ') })}`
+    : text
+}
+
+// One `glab api <path>`: the parsed JSON text, or the CLI's error as one line.
+async function glabApi($: EngineInterface, path: string): Promise<{ text?: string; error?: string }> {
+  const ran = await $.process.run(['glab', 'api', path]).catch((err: unknown) => ({
+    exitCode: 127,
+    stdout: '',
+    stderr: err instanceof Error ? err.message : String(err),
+  }))
+  if (ran.exitCode === 0) return { text: ran.stdout }
+  const line = (ran.stderr || ran.stdout).trim().split('\n').pop() ?? ''
+  return { error: line || `glab exited ${ran.exitCode}` }
+}
+
+// Fetches one pipeline's head and jobs (finding it by commit first, when only the sha is known).
+async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
+  const project = encodeURIComponent(p.project)
+  // By commit, GitLab's list answer already carries the newest pipeline's status: no second call.
+  const head =
+    p.id === null
+      ? await glabApi($, `projects/${project}/pipelines?sha=${encodeURIComponent(p.sha ?? '')}&per_page=1`)
+      : await glabApi($, `projects/${project}/pipelines/${p.id}`)
+  const parsed = head.text === undefined ? undefined : parsePipeline(head.text)
+  // Not created yet (a fresh push): no error, try again next round.
+  if (!parsed && p.id === null && !head.error) return { ...p, checkedAt: at }
+  if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'glab: unreadable pipeline' }
+  const id = parsed.id
+  const jobsText = await glabApi($, `projects/${project}/pipelines/${id}/jobs?per_page=100`)
+  const jobs: PipelineJob[] = (jobsText.text === undefined ? undefined : parseJobs(jobsText.text)) ?? p.jobs
+  const { error: _cleared, ...rest } = p
+  return {
+    ...rest,
+    id,
+    state: parsed.state,
+    ...(parsed.ref ? { ref: parsed.ref } : {}),
+    ...(parsed.url ? { url: parsed.url } : {}),
+    jobs,
+    checkedAt: at,
+    ...(isFinished(parsed.state) && !p.finishedAt ? { finishedAt: at } : {}),
+    ...(jobsText.error ? { error: jobsText.error } : {}),
+  }
+}
+
+// The session's own unfinished pipelines, refreshed and saved (only when something moved).
+async function pollPipelines($: EngineInterface, options: PluginOptions): Promise<void> {
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const file = await ownFile($, dir)
+  const list = file.pipelines ?? []
+  if (!list.some(p => !isFinished(p.state))) return
+  const at = await nowIso($)
+  const next: Pipeline[] = []
+  for (const p of list) next.push(isFinished(p.state) ? p : await refreshPipeline($, p, at))
+  await save($, dir, { ...file, pipelines: next })
 }
 
 async function markEnded($: EngineInterface, options: PluginOptions): Promise<void> {
@@ -348,6 +461,7 @@ export const register: Register = (on, options) => {
     if (dir) await save($, dir, await ownFile($, dir))
     await scan($, options)
     $.clock.every(REFRESH_MS, () => void scan($, options))
+    $.clock.every(PIPELINE_POLL_MS, () => void pollPipelines($, options))
     void $.ui.open({ id: PANE, title: t('pane.title') })
     return next(e)
   })
@@ -364,12 +478,14 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: TOOL_ID }, async ($, e) => {
-    const input = e as unknown as UpdateInput
+    const input = e as unknown as ToolInput
     const text = await runUpdate($, options, {
       now: input.now,
       needsYou: input.needsYou,
       tasks: input.tasks,
       remove: input.remove,
+      watch: input.watch,
+      unwatch: input.unwatch,
     })
     return { result: text }
   }).catch(() => ({ result: t('tool.failed') }))
@@ -388,6 +504,68 @@ export const register: Register = (on, options) => {
     const newest = [...ordered].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
 
     if (!newest) return <Text dimColor>{t('pane.empty')}</Text>
+
+    // Every session's pipelines (this session's first), minus the finished ones dismissed with ✕.
+    const pipelineRows = ordered.flatMap(f =>
+      visiblePipelines(f.pipelines ?? [], all[f.session.id]?.sidecar?.entries ?? []).map(pipeline => ({
+        sessionId: f.session.id,
+        pipeline,
+      })),
+    )
+
+    const pipelineBlock = (sessionId: string, p: Pipeline) => {
+      const key = `pipe:${sessionId}:${p.key}`
+      const finished = isFinished(p.state)
+      const isOpen = folded[key] ?? !finished
+      const counts = jobCounts(p.jobs)
+      const mark = JOB_MARK[p.state]
+      const label = t('pipe.header', {
+        fold: isOpen ? '▾' : '▸',
+        label: p.label,
+        id: p.id ?? '?',
+        ref: p.ref ? t('pipe.ref', { ref: p.ref }) : '',
+        state: t(`pipe.state.${p.state}`),
+        bar: progressBar(counts.finished, counts.total),
+        finished: counts.finished,
+        total: counts.total,
+      })
+      const countLine = COUNT_ORDER.filter(s => ALWAYS_COUNTED.has(s) || counts[s] > 0)
+        .map(s => t(`pipe.count.${s}`, { n: counts[s] }))
+        .join(' · ')
+      return (
+        <Box flexDirection="column">
+          <Box flexDirection="row" gap={1}>
+            <Button key={key} label={label} plain onPress={() => void toggle($, key, isOpen)} />
+            {finished && p.finishedAt ? (
+              <Button
+                key={`unpipe:${sessionId}:${p.key}`}
+                label={t('pipe.dismiss')}
+                plain
+                dimColor
+                onPress={() =>
+                  void dismiss($, options, sessionId, [
+                    { id: `pipeline:${p.key}`, doneAt: p.finishedAt ?? null },
+                  ])
+                }
+              />
+            ) : null}
+          </Box>
+          {isOpen && p.error ? <Text color="red">{`  ${p.error}`}</Text> : null}
+          {isOpen && counts.total > 0 ? <Text color={mark.color} dimColor>{`  ${countLine}`}</Text> : null}
+          {isOpen
+            ? p.jobs.map(j => {
+                const jm = JOB_MARK[j.state]
+                const duration = isFinished(j.state) ? formatDuration(j.durationS) : ''
+                return (
+                  <Text color={jm.color}>
+                    {`  ${t(duration ? 'pipe.jobTimed' : 'pipe.job', { glyph: jm.sign, name: j.name, duration })}`}
+                  </Text>
+                )
+              })
+            : null}
+        </Box>
+      )
+    }
 
     const taskRow = (task: Task) => {
       const mark = MARK[task.status] ?? { sign: '?' }
@@ -522,6 +700,12 @@ export const register: Register = (on, options) => {
               .map(f => (
                 <Text>{t('pane.nowItem', { project: f.session.project, now: f.now ?? '' })}</Text>
               ))}
+          </Box>
+        ) : null}
+        {pipelineRows.length > 0 ? (
+          <Box flexDirection="column" marginTop={1}>
+            <Text bold>{t('pane.pipelines')}</Text>
+            {pipelineRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}
           </Box>
         ) : null}
         <Box flexDirection="row" gap={2} marginTop={1}>

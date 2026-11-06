@@ -15,6 +15,12 @@ session, and each session's tasks grouped and foldable, with a Done list you can
 │ api · Waiting for CI, then pushing the release branch      │
 │ web · Refactoring the settings view                        │
 │                                                            │
+│ Pipelines                                                  │
+│ ▾ api #3038537023 · main · running  ▰▰▰▰▱▱▱▱ 4/8           │
+│     2 running · 1 queued · 1 skipped · 3 passed · 0 failed │
+│     ✓ build-image:release:arm64  26s                       │
+│     ● build-image:windows:arm64                            │
+│                                                            │
 │ Sessions  Sort: status                                     │
 │ ▾ api (this session) · 22:05 · 2 open · 3 done             │
 │     ✗ macOS build                                          │
@@ -91,6 +97,12 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   yellow with "(stale)": the pane stopped refreshing, so what it shows may be old.
 - A session marks its entry ended when it closes; ended entries are dimmed and folded, and are
   removed after `keepEndedSessionsDays`.
+- **Pipelines:** the agent can `watch` a GitLab CI pipeline (by id, or by commit sha before the
+  pipeline exists). The session that watches it polls it through your own `glab` every 15 s until it
+  finishes (GitLab cannot push to a local plugin), writes it into its file, and every pane shows
+  it: a progress bar of finished / all jobs, the counts per state and every job with its result and
+  time. Finished pipelines fold; ✕ removes one. Needs [`glab`](https://gitlab.com/gitlab-org/cli)
+  on PATH and logged in (`glab auth status`).
 - **Upgrading from 0.1:** the single `~/.claude/progress.json` is no longer read.
 
 ## Develop
