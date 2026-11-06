@@ -135,6 +135,10 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   shows the stage/job tree; ✕ on a finished one goes to the
   sidecar (`pipeline:<key>` + `finishedAt`), so the session's file keeps its one writer.
 - A `glab` failure (not installed, not logged in, no such pipeline) is shown on the pipeline.
+- List (0.6.0): newest first (by GitLab's `started_at`, else when watched), across sessions. A
+  success folds to its one header line (running / failed ones keep the counts line). A pipeline
+  that succeeded more than 1 h ago moves into a folded `Finished (N)` row at the end of the
+  section; one press lists them. Actions (✕) are right-aligned, padded to a five-column hitbox.
 - Duration (0.5.1): running → now − GitLab's `started_at` (ticks with the pane's 2 s redraw);
   finished → GitLab's `duration` (as its UI shows), else `finished_at − started_at`; omitted
   before the pipeline has started.

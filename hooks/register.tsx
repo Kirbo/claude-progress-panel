@@ -47,6 +47,9 @@ const DAY_MS = 24 * 3_600_000
 // updates need a browser websocket session), so the session that watches a pipeline polls it
 // through the user's own `glab` — only while it is unfinished, and only that session.
 const PIPELINE_POLL_MS = 15_000
+// A pipeline that succeeded longer ago than this moves into the folded "Finished" list.
+const ARCHIVE_AFTER_MS = 3_600_000
+const FINISHED_KEY = 'pipelines-finished'
 const SORT_KEY = 'sortTasksBy'
 
 const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {} as Loaded, {
@@ -524,13 +527,24 @@ export const register: Register = (on, options) => {
 
     if (!newest) return <Text dimColor>{t('pane.empty')}</Text>
 
-    // Every session's pipelines (this session's first), minus the finished ones dismissed with ✕.
-    const pipelineRows = ordered.flatMap(f =>
-      visiblePipelines(f.pipelines ?? [], all[f.session.id]?.sidecar?.entries ?? []).map(pipeline => ({
-        sessionId: f.session.id,
-        pipeline,
-      })),
-    )
+    // Every session's pipelines, newest first, minus the finished ones dismissed with ✕.
+    const startedMs = (p: Pipeline) => Date.parse(p.startedAt ?? p.addedAt) || 0
+    const pipelineRows = ordered
+      .flatMap(f =>
+        visiblePipelines(f.pipelines ?? [], all[f.session.id]?.sidecar?.entries ?? []).map(pipeline => ({
+          sessionId: f.session.id,
+          pipeline,
+        })),
+      )
+      .sort((a, b) => startedMs(b.pipeline) - startedMs(a.pipeline))
+    // Successes older than an hour step aside into the folded "Finished" list.
+    const isArchived = (p: Pipeline) => {
+      const ended = Date.parse(p.pipelineFinishedAt ?? p.finishedAt ?? '')
+      return p.state === 'success' && !Number.isNaN(ended) && ended < nowMs - ARCHIVE_AFTER_MS
+    }
+    const currentRows = pipelineRows.filter(r => !isArchived(r.pipeline))
+    const archivedRows = pipelineRows.filter(r => isArchived(r.pipeline))
+    const isFinishedOpen = folded[FINISHED_KEY] ?? false
 
     const states = pipelineRows.map(r => r.pipeline.state)
     const allSucceeded = states.length > 0 && states.every(st => st === 'success')
@@ -590,7 +604,8 @@ export const register: Register = (on, options) => {
           </Box>
           <Box flexDirection="column" paddingLeft={INDENT * 2}>
             {p.error ? <Text color="red">{p.error}</Text> : null}
-            {counts.total > 0 ? (
+            {/* A success folds to its one header line; anything else keeps its counts line. */}
+            {counts.total > 0 && (isOpen || p.state !== 'success') ? (
               <Text>
                 {countParts.flatMap((state, i) => [
                   i > 0 ? <Text dimColor>{' · '}</Text> : null,
@@ -787,7 +802,24 @@ export const register: Register = (on, options) => {
             />
             {isSectionOpen ? (
               <Box flexDirection="column" paddingLeft={INDENT}>
-                {pipelineRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}
+                {currentRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}
+                {archivedRows.length > 0 ? (
+                  <Button
+                    key={FINISHED_KEY}
+                    label={t('pane.pipelinesFinished', {
+                      fold: isFinishedOpen ? '▾' : '▸',
+                      count: archivedRows.length,
+                    })}
+                    plain
+                    dimColor
+                    onPress={() => void toggle($, FINISHED_KEY, isFinishedOpen)}
+                  />
+                ) : null}
+                {archivedRows.length > 0 && isFinishedOpen ? (
+                  <Box flexDirection="column" paddingLeft={INDENT}>
+                    {archivedRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}
+                  </Box>
+                ) : null}
               </Box>
             ) : null}
           </Box>

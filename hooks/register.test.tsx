@@ -843,3 +843,63 @@ test('rows with an action are full-width, the action pushed to the right edge', 
   expect(spread.length).toBe(4)
   await ui.unmount()
 })
+
+function finishedPipeline(key: string, id: number, startedMs: number, finishedMs: number, state = 'success') {
+  return {
+    key,
+    project: key.split('#')[0] as string,
+    id,
+    label: (key.split('#')[0] as string).split('/').pop() as string,
+    state,
+    ref: 'main',
+    jobs: [{ name: 'job', stage: 'build', state, durationS: 10 }],
+    addedAt: new Date(startedMs).toISOString(),
+    checkedAt: new Date(finishedMs).toISOString(),
+    startedAt: new Date(startedMs).toISOString(),
+    pipelineFinishedAt: new Date(finishedMs).toISOString(),
+    finishedAt: new Date(finishedMs).toISOString(),
+    durationS: (finishedMs - startedMs) / 1000,
+  }
+}
+
+test('pipelines: newest first; a success is one line; successes older than 1 h fold into Finished', async ($, on) => {
+  const disk = makeDisk()
+  const theirs = other('s-other', 'site', T0, {})
+  theirs.pipelines = [
+    finishedPipeline('g/old#1', 1, T0 - 3 * HOUR, T0 - 2 * HOUR) as never,
+    finishedPipeline('g/new#3', 3, T0 - 20 * 60_000, T0 - 10 * 60_000) as never,
+    finishedPipeline('g/bad#2', 2, T0 - 4 * HOUR, T0 - 3 * HOUR, 'failed') as never,
+  ]
+  put(disk, `${DIR}/s-other.json`, theirs)
+  engine(on, disk)
+  await start($)
+
+  const ui = await pane($)
+  // A failure keeps the section open.
+  const buttons = (await ui.findAll({ type: 'Button' })).map(b => b.key)
+  const order = buttons.filter(k => k?.startsWith('pipe:'))
+  // Newest first; the old success is not in the main list.
+  expect(order).toEqual(['pipe:s-other:g/new#3', 'pipe:s-other:g/bad#2'])
+  // A success is one line: no counts line under it; the failure keeps its counts line.
+  const lines = await texts(ui)
+  expect(lines.filter(l => /running · .* passed · /.test(l)).length).toBe(1)
+  expect((await ui.find({ type: 'Button', key: 'pipelines-finished' }))?.text).toBe('▸ Finished (1)')
+
+  await ui.press({ key: 'pipelines-finished' })
+  expect((await ui.find({ type: 'Button', key: 'pipelines-finished' }))?.text).toBe('▾ Finished (1)')
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/old#1' })).toBeTruthy()
+  await ui.unmount()
+})
+
+test('the ✕ hitbox is wider than the glyph', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, { tasks: [{ title: 'Alpha', status: 'done' }] })
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-me' })
+  const x = await ui.find({ type: 'Button', key: 'dismiss:s-me:t1' })
+  expect(x?.text?.trim()).toBe('✕')
+  expect((x?.text ?? '').length).toBeGreaterThanOrEqual(5)
+  await ui.unmount()
+})

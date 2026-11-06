@@ -106,7 +106,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   it: a progress bar of finished / all jobs, how long it has run (live; GitLab's duration once
   finished), the counts per state (coloured) and every job, grouped
   by stage in pipeline order, with its result and time. The section header sums up every pipeline (watching / succeeded / failed) and folds itself once
-  all of them succeeded (it opens again on news). A pipeline starts folded — its header and
+  all of them succeeded (it opens again on news). Pipelines are listed newest first; a success folds to one line, and one that succeeded more
+  than an hour ago moves into a folded "Finished" row. A pipeline starts folded — its header and
   counts — and a press opens every job; ✕ removes
   a finished one. Needs [`glab`](https://gitlab.com/gitlab-org/cli)
   on PATH and logged in (`glab auth status`).
