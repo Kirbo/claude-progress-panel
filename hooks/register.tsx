@@ -3,19 +3,21 @@ import { atom, read, update } from 'claude-code'
 
 import type { Folds, Loaded, SortChoice } from '../types'
 import { t } from './i18n'
-import type { SessionFile, SortBy, Task, UpdateInput } from './model'
+import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
 import {
+  addDismissals,
   applyUpdate,
-  clearDone,
-  dismissTasks,
   formatClock,
   formatTime,
   isClosed,
+  mergeSidecar,
   newSession,
   parseSessionFile,
+  parseSidecar,
   pruneDone,
   SORTS,
   sortTasks,
+  visibleTasks,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
 
@@ -31,8 +33,9 @@ const DAY_MS = 24 * 3_600_000
 const SORT_KEY = 'sortTasksBy'
 
 const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {} as Loaded, {
-  shape: 'sessions-1',
+  shape: 'sessions-2',
 })
+const SIDECAR = '.dismissed.json'
 const folds = atom({ plugin: 'progress-panel', key: 'folds' } as const, {} as Folds, { shape: 'folds-1' })
 // When the last successful folder listing finished, so the header can show the pane is live.
 const checked = atom({ plugin: 'progress-panel', key: 'checked' } as const, 0, { shape: 'checked-1' })
@@ -102,39 +105,58 @@ async function nowIso($: EngineInterface): Promise<string> {
   return new Date(await $.clock.now()).toISOString()
 }
 
-// Writes a session file whole and records what was written, so the pane redraws at once.
+// Writes a session file whole and records what was written, so the pane redraws at once. Only a
+// session writes its own live file (an ended one, whose session is gone, is pruned by any pane).
 async function save($: EngineInterface, dir: string, file: SessionFile): Promise<void> {
   const path = `${dir}/${file.session.id}.json`
   await $.fs.write(path, `${JSON.stringify(file, null, 2)}\n`)
   const stat = await $.fs.stat(path).catch(() => undefined)
-  await update($, sessions, all => ({ ...all, [file.session.id]: { mtimeMs: stat?.mtimeMs ?? 0, file } }))
+  await update($, sessions, all => ({
+    ...all,
+    [file.session.id]: { ...all[file.session.id], mtimeMs: stat?.mtimeMs ?? 0, file },
+  }))
 }
 
-// This session's file as it is on disk now; a fresh one when there is none (first write, or after /clear).
+async function readSidecar($: EngineInterface, dir: string, id: string): Promise<Dismissal[]> {
+  const text = await $.fs.read(`${dir}/${id}${SIDECAR}`).catch(() => undefined)
+  return (text === undefined ? undefined : parseSidecar(text))?.entries ?? []
+}
+
+// This session's file as it is on disk now, with the panes' dismissals folded in; a fresh one when
+// there is none (first write, or after /clear).
 async function ownFile($: EngineInterface, dir: string): Promise<SessionFile> {
   const id = await $.session.id()
   const text = await $.fs.read(`${dir}/${id}.json`).catch(() => undefined)
   const existing = text === undefined ? undefined : parseSessionFile(text)
-  if (existing) return existing
+  if (existing) return mergeSidecar(existing, await readSidecar($, dir, id))
   const cwd = await $.session.cwd()
   const repo = await $.session.repo().catch(() => null)
   return newSession({ id, project: baseName(repo?.root ?? cwd), cwd }, await nowIso($))
 }
 
-// Re-reads one session's file and applies a change to it (a press on any session's row).
-async function changeSession(
+// A press (✕ / Clear all) on any session's rows: the completions go to that session's sidecar, never
+// to its own file, so a pane can't race the session writing its status. Read fresh, union, write.
+async function dismiss(
   $: EngineInterface,
   options: PluginOptions,
   id: string,
-  change: (file: SessionFile) => SessionFile,
+  tasks: readonly Task[],
 ): Promise<void> {
   const dir = await progressDir($, options)
-  if (!dir) return
-  const text = await $.fs.read(`${dir}/${id}.json`).catch(() => undefined)
-  const file = text === undefined ? undefined : parseSessionFile(text)
-  if (!file) return
-  const next = change(file)
-  if (next !== file) await save($, dir, next)
+  if (!dir || tasks.length === 0) return
+  const sidecar: SidecarFile = {
+    version: 1,
+    sessionId: id,
+    entries: addDismissals(await readSidecar($, dir, id), tasks),
+  }
+  const path = `${dir}/${id}${SIDECAR}`
+  await $.fs.write(path, `${JSON.stringify(sidecar, null, 2)}\n`)
+  const stat = await $.fs.stat(path).catch(() => undefined)
+  await update($, sessions, all => {
+    const known = all[id]
+    if (!known) return all
+    return { ...all, [id]: { ...known, sidecar: { mtimeMs: stat?.mtimeMs ?? 0, entries: sidecar.entries } } }
+  })
 }
 
 // The plugin API has no file delete: the platform's own command removes the file.
@@ -148,6 +170,7 @@ async function forgetSession($: EngineInterface, options: PluginOptions, id: str
   const dir = await progressDir($, options)
   if (!dir) return
   await deleteFile($, `${dir}/${id}.json`)
+  await deleteFile($, `${dir}/${id}${SIDECAR}`)
   await update($, sessions, all => {
     const { [id]: _gone, ...rest } = all
     return rest
@@ -190,16 +213,39 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
   if (!entries) return
   const before = await read($, sessions)
   const next: Loaded = {}
+  const sidecars: Record<string, { mtimeMs: number; entries: Dismissal[] }> = {}
   for (const entry of entries) {
     if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
-    const known = before[entry.name.slice(0, -'.json'.length)]
+    if (entry.name.endsWith(SIDECAR)) {
+      const id = entry.name.slice(0, -SIDECAR.length)
+      const known = before[id]?.sidecar
+      if (known && known.mtimeMs === entry.mtimeMs) {
+        sidecars[id] = known
+        continue
+      }
+      const text = await $.fs.read(`${dir}/${entry.name}`).catch(() => undefined)
+      const parsed = text === undefined ? undefined : parseSidecar(text)
+      // Unreadable (e.g. caught mid-write): keep the last good copy; its old mtime retries next tick.
+      if (parsed) sidecars[id] = { mtimeMs: entry.mtimeMs, entries: parsed.entries }
+      else if (known) sidecars[id] = known
+      continue
+    }
+    const id = entry.name.slice(0, -'.json'.length)
+    const known = before[id]
     if (known && known.mtimeMs === entry.mtimeMs) {
-      next[known.file.session.id] = known
+      next[id] = { mtimeMs: known.mtimeMs, file: known.file }
       continue
     }
     const text = await $.fs.read(`${dir}/${entry.name}`).catch(() => undefined)
     const file = text === undefined ? undefined : parseSessionFile(text)
+    // Unreadable (e.g. caught mid-write): keep the last good copy, so the group neither flickers nor
+    // re-announces its asks; the old mtime makes the next tick read it again.
     if (file) next[file.session.id] = { mtimeMs: entry.mtimeMs, file }
+    else if (known) next[id] = { mtimeMs: known.mtimeMs, file: known.file }
+  }
+  for (const [id, sidecar] of Object.entries(sidecars)) {
+    const known = next[id]
+    if (known) next[id] = { ...known, sidecar }
   }
   await update($, sessions, () => next)
 
@@ -368,7 +414,7 @@ export const register: Register = (on, options) => {
           label={t('pane.dismiss')}
           plain
           dimColor
-          onPress={() => void changeSession($, options, sessionId, f => dismissTasks(f, [task.id]))}
+          onPress={() => void dismiss($, options, sessionId, [task])}
         />
       </Box>
     )
@@ -376,12 +422,13 @@ export const register: Register = (on, options) => {
     const group = (file: SessionFile) => {
       const id = file.session.id
       const ended = file.session.endedAt
+      const shown = visibleTasks(file, all[id]?.sidecar?.entries ?? [])
       const open = sortTasks(
-        file.tasks.filter(x => !isClosed(x.status)),
+        shown.filter(x => !isClosed(x.status)),
         by,
       )
       const done = sortTasks(
-        file.tasks.filter(x => isClosed(x.status)),
+        shown.filter(x => isClosed(x.status)),
         by === 'status' ? 'done' : by,
       )
       const groupKey = `group:${id}`
@@ -433,7 +480,7 @@ export const register: Register = (on, options) => {
                     label={t('pane.clearAll')}
                     plain
                     dimColor
-                    onPress={() => void changeSession($, options, id, clearDone)}
+                    onPress={() => void dismiss($, options, id, done)}
                   />
                 </Box>
               ) : null}

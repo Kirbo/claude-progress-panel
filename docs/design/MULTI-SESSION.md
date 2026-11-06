@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -52,11 +52,21 @@ per session, `<session-id>.json`, written only whole:
 ```
 
 - `project` = the repository's name (`$.session.repo()`), else the last segment of the cwd.
-- A session writes its own file; a pane's ✕ / Clear all / dismiss-session write the file of the
-  session the row belongs to: read it fresh, change only those rows, write it back (the window
-  for a lost update is one read-modify-write; acceptable for a status display).
-- `dismissed` remembers ids the person removed, so the agent re-sending a done task does not
-  bring it back. Re-opening it (a non-done status) clears the dismissal.
+- **One writer per file.** A session's file is written only by that session (its tool calls,
+  its `session.end`, its own auto-clear). Any pane may write only the **sidecar**
+  `<session-id>.dismissed.json` — `{ "version": 1, "sessionId": "…", "entries": [{ "id": "t3",
+  "doneAt": "ISO" }] }` — on ✕ / Clear all (read it fresh, add, write). So a person's click can never
+  race the session writing its status. (Exception: an *ended* session's file, whose session is
+  gone, is auto-cleared and deleted by whichever pane gets there; concurrent panes write identical
+  results.)
+- **Dismissals name a completion.** A sidecar entry hides a task only while it is closed with that
+  same `doneAt`; re-opening and finishing it again shows it again. Panes apply the sidecar when
+  drawing; the session folds it into its own `dismissed` on its next write, so a re-sent done
+  copy of a dismissed task is ignored (`dismissed` is cleared again when the task is re-opened).
+- **A file caught mid-write is not news.** Writes are not atomic (the plugin API has no rename),
+  so a pane may read a half-written file. An unreadable file keeps its last good copy and is
+  re-read on the next tick — the group never flickers out and its asks are never re-toasted.
+- Forgetting an ended session deletes both its files.
 
 ## Writing: the `progress_update` tool
 

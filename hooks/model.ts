@@ -1,8 +1,8 @@
 // The session file and every pure operation on it — no I/O here (see store.ts for that).
 
-import type { SessionFile, SessionInfo, Status, Task } from '../types'
+import type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task } from '../types'
 
-export type { SessionFile, SessionInfo, Status, Task }
+export type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task }
 
 export const STATUSES = ['todo', 'doing', 'blocked', 'done', 'skipped'] as const satisfies readonly Status[]
 
@@ -134,12 +134,51 @@ export function dismissTasks(file: SessionFile, ids: readonly string[]): Session
   }
 }
 
-/** "Clear all" on a Done section. */
-export function clearDone(file: SessionFile): SessionFile {
+function isDismissedBy(task: Task, entries: readonly Dismissal[]): boolean {
+  return isClosed(task.status) && entries.some(d => d.id === task.id && d.doneAt === task.doneAt)
+}
+
+/** The tasks a pane shows: the file's, minus closed ones a sidecar entry names for that same completion. */
+export function visibleTasks(file: SessionFile, entries: readonly Dismissal[]): Task[] {
+  return file.tasks.filter(task => !isDismissedBy(task, entries))
+}
+
+/** The owner folds its sidecar into its own file: the named completions become ordinary dismissals. */
+export function mergeSidecar(file: SessionFile, entries: readonly Dismissal[]): SessionFile {
   return dismissTasks(
     file,
-    file.tasks.filter(t => isClosed(t.status)).map(t => t.id),
+    file.tasks.filter(task => isDismissedBy(task, entries)).map(task => task.id),
   )
+}
+
+/** The entries for these tasks' current completions, added to a sidecar's (each id + doneAt once). */
+export function addDismissals(entries: readonly Dismissal[], tasks: readonly Task[]): Dismissal[] {
+  const next = [...entries]
+  for (const task of tasks) {
+    if (!next.some(d => d.id === task.id && d.doneAt === task.doneAt))
+      next.push({ id: task.id, doneAt: task.doneAt })
+  }
+  return next
+}
+
+/** A sidecar file, or undefined for anything else. */
+export function parseSidecar(text: string): SidecarFile | undefined {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return undefined
+  }
+  const f = raw as Partial<SidecarFile> | null
+  if (f?.version !== 1 || typeof f.sessionId !== 'string' || !Array.isArray(f.entries)) return undefined
+  const entries = f.entries.filter(
+    (d): d is Dismissal =>
+      typeof d === 'object' &&
+      d !== null &&
+      typeof d.id === 'string' &&
+      (d.doneAt === null || typeof d.doneAt === 'string'),
+  )
+  return { version: 1, sessionId: f.sessionId, entries }
 }
 
 /** Auto-clear: done tasks finished more than `hours` ago go (0 = never). Same object when nothing goes. */

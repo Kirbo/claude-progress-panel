@@ -78,7 +78,10 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 ### How it works
 
 - Each session writes only its own file, `<progressDir>/<session-id>.json`, through the
-  `progress_update` tool (a patch: `now`, `needsYou`, `tasks` upserted by id or title, `remove`);
+  `progress_update` tool — nobody else writes it, so sessions never overwrite each other. Your ✕ /
+  Clear all go to a separate `<session-id>.dismissed.json`, which the session folds in on its next
+  update; a file caught half-written is ignored until the next refresh (the last good copy stays).
+  The tool takes a patch (`now`, `needsYou`, `tasks` upserted by id or title, `remove`), and
   the plugin stamps created / updated / done times. The format is in
   [`docs/design/MULTI-SESSION.md`](docs/design/MULTI-SESSION.md).
 - Every pane lists the folder every 2 seconds and reads a file only when it changed (plugins have

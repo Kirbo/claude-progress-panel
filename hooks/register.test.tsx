@@ -131,6 +131,11 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
   }
 }
 
+function sidecar(disk: Disk, id: string): { id: string; doneAt: string | null }[] {
+  const file = disk.files.get(`${DIR}/${id}.dismissed.json`)
+  return file ? (JSON.parse(file.text) as { entries: { id: string; doneAt: string | null }[] }).entries : []
+}
+
 async function start($: $Test) {
   await $.session.start({ cwd: '/w/app/sub', surface: 'terminal', isInteractive: true })
 }
@@ -257,7 +262,7 @@ test('another session changing its file shows after the next 2 s tick, with a to
   expect(world.toasts).toHaveLength(1)
 })
 
-test('Done folds, shows when each task was done, and ✕ / Clear all dismiss for good', async ($, on) => {
+test('Done folds, shows done times; ✕ / Clear all go to the sidecar and stay gone', async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
   await start($)
@@ -268,6 +273,7 @@ test('Done folds, shows when each task was done, and ✕ / Clear all dismiss for
       { title: 'Gamma', status: 'doing' },
     ],
   })
+  const own = disk.files.get(`${DIR}/s-me.json`)?.text
 
   const ui = await pane($)
   expect(await ui.find({ type: 'Text', text: /Alpha/ })).toBeUndefined()
@@ -277,14 +283,86 @@ test('Done folds, shows when each task was done, and ✕ / Clear all dismiss for
 
   await ui.press({ key: 'dismiss:s-me:t1' })
   expect(await ui.find({ type: 'Text', text: /Alpha/ })).toBeUndefined()
-  expect(read(disk, `${DIR}/s-me.json`).dismissed).toEqual(['t1'])
+  // The pane never writes a session's own file: the dismissal lands in the sidecar.
+  expect(disk.files.get(`${DIR}/s-me.json`)?.text).toBe(own)
+  expect(sidecar(disk, 's-me').map(d => d.id)).toEqual(['t1'])
 
+  // The owner merges the sidecar on its next write; a re-sent done copy stays gone.
   await update($, { tasks: [{ id: 't1', title: 'Alpha', status: 'done' }] })
   expect(read(disk, `${DIR}/s-me.json`).tasks.map(t => t.id)).toEqual(['t2', 't3'])
+  expect(read(disk, `${DIR}/s-me.json`).dismissed).toEqual(['t1'])
 
   await ui.press({ key: 'clear:s-me' })
+  expect(sidecar(disk, 's-me').map(d => d.id)).toEqual(['t1', 't2'])
+  expect(await ui.find({ type: 'Button', key: 'done:s-me' })).toBeUndefined()
+  await update($, { now: 'later' })
   expect(read(disk, `${DIR}/s-me.json`).tasks.map(t => t.id)).toEqual(['t3'])
   await ui.unmount()
+})
+
+test("✕ on another session's task never writes that session's file", async ($, on) => {
+  const disk = makeDisk()
+  put(
+    disk,
+    `${DIR}/s-other.json`,
+    other('s-other', 'site', T0, { tasks: [{ title: 'Shipped', status: 'done' }] }),
+  )
+  const before = disk.files.get(`${DIR}/s-other.json`)?.text
+  engine(on, disk)
+  await start($)
+
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-other' })
+  await ui.press({ key: 'dismiss:s-other:t1' })
+  expect(disk.files.get(`${DIR}/s-other.json`)?.text).toBe(before)
+  expect(sidecar(disk, 's-other').map(d => d.id)).toEqual(['t1'])
+  expect(await ui.find({ type: 'Text', text: /Shipped/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'done:s-other' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a dismissed task that is reopened and finished again shows again', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { tasks: [{ title: 'Flaky', status: 'done' }] })
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-me' })
+  await ui.press({ key: 'dismiss:s-me:t1' })
+  await ui.unmount()
+
+  await world.clock.advance(60_000)
+  await update($, { tasks: [{ id: 't1', title: 'Flaky', status: 'doing' }] })
+  await world.clock.advance(60_000)
+  await update($, { tasks: [{ id: 't1', status: 'done' }] })
+
+  // The Done fold stays open from before (fold state is the pane's, not the mount's).
+  const again = await pane($)
+  expect(await again.find({ type: 'Text', text: /^✓ Flaky/ })).toBeTruthy()
+  await again.unmount()
+})
+
+test('a half-written file keeps the last good state: no flicker, no repeated toast', async ($, on) => {
+  const disk = makeDisk()
+  put(disk, `${DIR}/s-other.json`, other('s-other', 'site', T0, { now: 'Deploying', needsYou: ['Approve'] }))
+  const world = engine(on, disk)
+  await start($)
+  await world.clock.advance(2000)
+  expect(world.toasts).toEqual([])
+
+  disk.tick += 1
+  disk.files.set(`${DIR}/s-other.json`, { text: '{ "version": 2, "sess', mtimeMs: disk.tick })
+  await world.clock.advance(2000)
+  let ui = await pane($)
+  expect(await texts(ui)).toContain('site · Deploying')
+  await ui.unmount()
+
+  put(disk, `${DIR}/s-other.json`, other('s-other', 'site', T0, { now: 'Deployed', needsYou: ['Approve'] }))
+  await world.clock.advance(2000)
+  ui = await pane($)
+  expect(await texts(ui)).toContain('site · Deployed')
+  await ui.unmount()
+  expect(world.toasts).toEqual([])
 })
 
 test('a group folds and unfolds; ended sessions start folded and dimmed', async ($, on) => {
@@ -338,7 +416,7 @@ test(
     })
 
     await world.clock.advance(2000)
-    expect(disk.removed).toEqual([`${DIR}/s-gone.json`])
+    expect(disk.removed).toEqual([`${DIR}/s-gone.json`, `${DIR}/s-gone.dismissed.json`])
     expect(read(disk, `${DIR}/s-me.json`).tasks).toHaveLength(2)
 
     await world.clock.advance(HOUR)
@@ -417,9 +495,17 @@ test('an ended session can be forgotten with its ✕; Windows deletes with del',
   const world = engine(on, disk, { env: { USERPROFILE: '/Users/me', OS: 'Windows_NT' } })
   await start($)
 
+  put(disk, '/Users/me/.claude/progress/s-old.dismissed.json', {
+    version: 1,
+    sessionId: 's-old',
+    entries: [],
+  })
   const ui = await pane($)
   await ui.press({ key: 'forget:s-old' })
-  expect(world.runs.at(-1)).toEqual(['cmd', '/c', 'del', '/q', '\\Users\\me\\.claude\\progress\\s-old.json'])
+  expect(world.runs.slice(-2)).toEqual([
+    ['cmd', '/c', 'del', '/q', '\\Users\\me\\.claude\\progress\\s-old.json'],
+    ['cmd', '/c', 'del', '/q', '\\Users\\me\\.claude\\progress\\s-old.dismissed.json'],
+  ])
   expect(await ui.find({ type: 'Button', key: 'group:s-old' })).toBeUndefined()
   await ui.unmount()
 })

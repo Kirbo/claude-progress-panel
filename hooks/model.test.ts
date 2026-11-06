@@ -1,15 +1,18 @@
 import { expect, test } from 'claude-code/testing'
 import type { SessionFile, Task } from './model'
 import {
+  addDismissals,
   applyUpdate,
-  clearDone,
   dismissTasks,
   formatClock,
   formatTime,
+  mergeSidecar,
   newSession,
   parseSessionFile,
+  parseSidecar,
   pruneDone,
   sortTasks,
+  visibleTasks,
 } from './model'
 
 const T0 = Date.UTC(2026, 10, 6, 20, 0, 0)
@@ -106,18 +109,34 @@ test('a dismissed done task stays gone until it is reopened', () => {
   expect(file.dismissed).toEqual([])
 })
 
-test('clearDone dismisses every done and skipped task, keeps open ones', () => {
+test('sidecar dismissals hide only the completion they name; the owner merges them', () => {
   const file = {
     ...fresh(),
     tasks: [
-      task({ id: 't1', status: 'done' }),
-      task({ id: 't2', status: 'doing' }),
-      task({ id: 't3', status: 'skipped' }),
+      task({ id: 't1', status: 'done', doneAt: iso(T0) }),
+      task({ id: 't2', status: 'done', doneAt: iso(T0 + HOUR) }),
+      task({ id: 't3', status: 'doing' }),
     ],
   }
-  const cleared = clearDone(file)
-  expect(cleared.tasks.map(t => t.id)).toEqual(['t2'])
-  expect(cleared.dismissed).toEqual(['t1', 't3'])
+  const entries = addDismissals([], [file.tasks[0] as Task, file.tasks[1] as Task])
+  expect(addDismissals(entries, [file.tasks[0] as Task])).toEqual(entries)
+
+  const stale = [{ id: 't2', doneAt: iso(T0) }, ...entries.slice(0, 1)]
+  expect(visibleTasks(file, stale).map(t => t.id)).toEqual(['t2', 't3'])
+  expect(visibleTasks(file, [{ id: 't3', doneAt: null }]).map(t => t.id)).toEqual(['t1', 't2', 't3'])
+
+  const merged = mergeSidecar(file, stale)
+  expect(merged.tasks.map(t => t.id)).toEqual(['t2', 't3'])
+  expect(merged.dismissed).toEqual(['t1'])
+  expect(mergeSidecar(file, [])).toBe(file)
+})
+
+test('parseSidecar accepts a v1 sidecar, drops bad entries, refuses anything else', () => {
+  const ok = { version: 1, sessionId: 's1', entries: [{ id: 't1', doneAt: iso(T0) }, { id: 5 }, null] }
+  expect(parseSidecar(JSON.stringify(ok))?.entries).toEqual([{ id: 't1', doneAt: iso(T0) }])
+  expect(parseSidecar('{ nope')).toBeUndefined()
+  expect(parseSidecar(JSON.stringify({ version: 2, sessionId: 's1', entries: [] }))).toBeUndefined()
+  expect(parseSidecar('null')).toBeUndefined()
 })
 
 test('pruneDone removes done tasks older than the limit; 0 hours never prunes', () => {

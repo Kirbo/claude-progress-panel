@@ -34,8 +34,20 @@ export type SessionFile = {
   seq: number
 }
 
-/** Every session file the pane knows, by session id, with the mtime it was read at. */
-export type Loaded = Record<string, { mtimeMs: number; file: SessionFile }>
+/** One person's ✕ on a finished task: hides that task while it stays the same completion (`doneAt`). */
+export type Dismissal = { id: string; doneAt: string | null }
+
+/**
+ * `<session-id>.dismissed.json` beside a session's file. Only panes write it (✕ / Clear all), so a
+ * session's own file keeps exactly one writer, its session. The owner merges it on its next write.
+ */
+export type SidecarFile = { version: 1; sessionId: string; entries: Dismissal[] }
+
+/** Every session the pane knows, by session id: its file and its sidecar, with the mtimes read at. */
+export type Loaded = Record<
+  string,
+  { mtimeMs: number; file: SessionFile; sidecar?: { mtimeMs: number; entries: Dismissal[] } }
+>
 
 /** Fold state this pane's person set, by Button key (`group:<id>`, `done:<id>`); unset = the default. */
 export type Folds = Record<string, boolean>
