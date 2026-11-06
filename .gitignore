@@ -2,3 +2,9 @@
 .claude-plugin/types/
 node_modules/
 .mise-cache/
+# Open audit findings: plaintext stays local, only the .age blob is committed (.sealed.json).
+docs/audits/**
+!docs/audits/README.md
+!docs/audits/**/
+!docs/audits/**/*.age
+!docs/audits/fixed/*.md

@@ -1,0 +1,12 @@
+{
+  "$comment": "Files committed ONLY as age ciphertext (<path>.age); the plaintext stays on disk, gitignored. Read by scripts/seal.mjs, the pre-commit hook and scripts/check-audits.mjs. A rule seals the files under `root` whose root-relative path matches an `include` glob and no `exclude` glob (`*` = one path segment, `**` = any depth, dotfiles included). This repo is PUBLIC: the open audit findings are not fixed yet. The public half (README.md, fixed/*.md) stays plaintext.",
+  "recipients": ".age-recipients",
+  "rules": [
+    {
+      "name": "audit reports",
+      "root": "docs/audits",
+      "include": ["**/*"],
+      "exclude": ["README.md", "fixed/*.md"]
+    }
+  ]
+}

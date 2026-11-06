@@ -2,6 +2,10 @@
 [tools]
 biome = "2.6.5"
 claude = "2.1.318"
+# node runs scripts/*.mjs (audit sealing + guard). LTS only, never Current.
+node = "26.13.0"
+# age seals the open audit findings (scripts/seal.mjs); its age-plugin-pq reads the maintainer key.
+age = "1.3.2"
 
 [settings]
 lockfile = true

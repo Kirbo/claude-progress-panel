@@ -55,8 +55,22 @@ How to _use_ the panel during a task is the bundled skill:
   declined. `types/index.d.ts` is the contract and must stay self-contained (no imports).
 - **The design** (store format, tool semantics, refresh, retention) is
   `docs/design/MULTI-SESSION.md` — keep it in step with the code.
-- **Done = green:** `biome check .`, `claude plugin test .`, `claude plugin validate .` all clean
+- **Done = green:** `biome check .`, `claude plugin test .`, `claude plugin validate .`,
+  `node --test scripts/`, `node scripts/check-audits.mjs` all clean
   (validate's "plugin directory" notes about the icon are informational). Bump `version` in
   `.claude-plugin/plugin.json` for any behaviour change — `claude plugin update` keys on it.
+- **Hooks:** once per clone `git config core.hooksPath .githooks` (the pre-commit hook seals audit
+  findings; see below).
+- **Audits (`/audit`, `.claude/skills/audit/`).** Process, formats, IDs (`CPP-NNNN`) and sealing:
+  [`docs/audits/README.md`](docs/audits/README.md). **A finding that is not fixed is never readable
+  in the clear** — only in the age-sealed `docs/audits/open/*.md.age` (plaintext gitignored, sealed
+  by the pre-commit hook to the maintainer key). Never write an open finding's content into
+  README/CLAUDE.md/docs, a code comment, a test name, an issue or a commit message. A fix commit
+  cites the ID, ships a regression test and moves the finding to `docs/audits/fixed/` in the same
+  commit. Never commit with `--no-verify`; never print, copy or create the private identity (only
+  `.age-recipients`, public keys, is in the repo). `node scripts/seal.mjs status|unseal|verify`.
+- **Maintenance (`/maintain`, `.claude/skills/maintain/`):** toolchain + CI pin bumps (releases at
+  least 1 day old), docs reconciliation, all gates.
+- Scripts (`scripts/*.mjs`) are plain Node with no dependencies, tested with `node --test scripts/`.
 - Commits: Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
 - Public repo: no secrets, hostnames, private URLs or personal paths in code, docs or tests.
