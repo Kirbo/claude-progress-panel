@@ -7,6 +7,8 @@ export const en = {
   'error.noHome': 'No home directory: set the progressDir option',
   'pane.empty': 'No session has reported progress yet.',
   'pane.updated': 'updated {when} · {project}',
+  'pane.checked': 'checked {when}',
+  'pane.checkedStale': 'checked {when} (stale)',
   'pane.needsYou': '⚠ Needs you ({count})',
   'pane.needsYouItem': '• {project}: {item}',
   'pane.now': 'Now',

@@ -8,7 +8,8 @@ description: Keep the Progress pane current — the pane beside every Claude Cod
 The `progress-panel` plugin shows one pane in EVERY Claude Code session on this machine. Each
 session owns one entry in a shared folder; every pane shows all of them, grouped by session:
 
-1. `updated HH:MM · project` — the newest update anywhere.
+1. `updated HH:MM · project · checked HH:MM:SS` — the newest update anywhere, and when this pane
+   last refreshed (yellow "(stale)" if it stopped).
 2. `⚠ Needs you` — every live session's asks, highlighted, also in the status line and toasted to
    the other sessions.
 3. `Now` — one line per live session.

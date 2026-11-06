@@ -8,7 +8,7 @@
 ## Layout (top to bottom)
 
 ```
-updated 22:05 · switchboard                       ← newest update across sessions
+updated 22:05 · switchboard · checked 22:08:14   ← newest update across sessions · last refresh
 ⚠ Needs you (2)                                   ← bold magenta, only when non-empty
   • switchboard: push OK for next
   • panel: pick a name
@@ -79,6 +79,10 @@ with the session's task list (ids, statuses) so the agent can address tasks by i
 There is no file-watch API for plugins, so each session lists the folder every **2 s**
 (`$.clock.every`) and reads a file only when its mtime changed — one directory listing per tick.
 A session's own write redraws at once. (Deliberate poll: push is impossible here.)
+The header's `checked HH:MM:SS` is the end of the last successful listing; older than 10 s (five
+missed ticks) it turns yellow with "(stale)" — a failed listing keeps the last known state rather
+than blanking the pane. (Added in 0.3.0, asked for 2026-11-06: "updated" alone could not tell an
+idle status from a pane that stopped refreshing.)
 
 ## Retention (settings)
 

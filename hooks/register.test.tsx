@@ -27,7 +27,13 @@ const PANE = {
   },
 } as const
 
-type Disk = { files: Map<string, { text: string; mtimeMs: number }>; removed: string[]; tick: number }
+type Disk = {
+  files: Map<string, { text: string; mtimeMs: number }>
+  removed: string[]
+  tick: number
+  /** When set, listing the folder fails (an unreadable or vanished store). */
+  listFails?: boolean
+}
 
 function makeDisk(): Disk {
   return { files: new Map(), removed: [], tick: 1 }
@@ -75,6 +81,7 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
   on('session.repo', () => ({ value: { root: '/w/app', remote: null } }) as never)
   on('tool.call', () => ({ result: {} }))
   on('fs.list', (_, e) => {
+    if (disk.listFails) return { deny: `EACCES: ${e.path}` }
     const prefix = `${e.path}/`
     if (![...disk.files.keys()].some(p => p.startsWith(prefix))) return { deny: `ENOENT: ${e.path}` }
     return {
@@ -223,7 +230,7 @@ test('every session shows: newest update, needs-you from all, one now line each,
   expect(lines).toContain('✗ Deploy')
   expect(lines).toContain('  waits for approval')
   expect(lines).toContain('● Build')
-  expect(lines[0]).toMatch(/^updated \d\d:\d\d · app$/)
+  expect(lines[0]).toMatch(/^updated \d\d:\d\d · app · checked \d\d:\d\d:\d\d$/)
   expect(world.status.at(-1)).toBe('⚠ 2 need you')
   expect(await ui.find({ type: 'Button', key: 'group:s-me' })).toBeTruthy()
   await ui.unmount()
@@ -443,5 +450,32 @@ test('with no home directory the pane says so instead of failing', async ($, on)
   expect(answer).toMatchObject({ result: expect.stringContaining('no progress folder') })
   const ui = await pane($)
   expect((await ui.find({ type: 'Text' }))?.text).toBe('No session has reported progress yet.')
+  await ui.unmount()
+})
+
+test('the header says when the pane last checked, and flags a check that stopped', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'x' })
+  const clock = (ms: number) => {
+    const d = new Date(ms)
+    return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':')
+  }
+
+  let ui = await pane($)
+  expect((await texts(ui))[0]).toMatch(new RegExp(`· checked ${clock(T0)}$`))
+  await ui.unmount()
+
+  await world.clock.advance(4000)
+  ui = await pane($)
+  expect((await texts(ui))[0]).toMatch(new RegExp(`· checked ${clock(T0 + 4000)}$`))
+  await ui.unmount()
+
+  disk.listFails = true
+  await world.clock.advance(12_000)
+  ui = await pane($)
+  const header = await ui.find({ type: 'Text', text: /checked/ })
+  expect(header?.text).toMatch(new RegExp(`· checked ${clock(T0 + 4000)} \\(stale\\)$`))
   await ui.unmount()
 })

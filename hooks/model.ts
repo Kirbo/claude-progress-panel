@@ -207,6 +207,12 @@ export function parseSessionFile(text: string): SessionFile | undefined {
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
+/** Local `HH:MM:SS` of a time in milliseconds. */
+export function formatClock(ms: number): string {
+  const d = new Date(ms)
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
 /** Local `HH:MM` for today, `YYYY-MM-DD HH:MM` otherwise; '' for an unreadable time. */
 export function formatTime(iso: string, nowMs: number): string {
   const ms = Date.parse(iso)

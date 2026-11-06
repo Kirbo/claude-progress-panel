@@ -4,6 +4,7 @@ import {
   applyUpdate,
   clearDone,
   dismissTasks,
+  formatClock,
   formatTime,
   newSession,
   parseSessionFile,
@@ -166,4 +167,8 @@ test('formatTime: HH:MM today, date and time otherwise', () => {
   expect(formatTime(new Date(at).toISOString(), at + HOUR)).toBe('09:05')
   expect(formatTime(new Date(at).toISOString(), at + 30 * HOUR)).toBe('2026-11-06 09:05')
   expect(formatTime('garbage', at)).toBe('')
+})
+
+test('formatClock: local HH:MM:SS', () => {
+  expect(formatClock(new Date(2026, 10, 6, 9, 5, 7).getTime())).toBe('09:05:07')
 })

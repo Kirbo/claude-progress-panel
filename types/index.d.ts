@@ -45,6 +45,12 @@ export type SortChoice = '' | 'status' | 'title' | 'created' | 'done'
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-panel': { sessions: Shaped<Loaded>; folds: Shaped<Folds>; sort: Shaped<SortChoice> }
+    'progress-panel': {
+      sessions: Shaped<Loaded>
+      folds: Shaped<Folds>
+      sort: Shaped<SortChoice>
+      /** When this pane last listed the folder successfully (ms since the epoch; 0 = not yet). */
+      checked: Shaped<number>
+    }
   }
 }

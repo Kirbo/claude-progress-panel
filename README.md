@@ -6,7 +6,7 @@ session, and each session's tasks grouped and foldable, with a Done list you can
 
 ```
 ┌ Progress ──────────────────────────────────────────────────┐
-│ updated 22:05 · api                                        │
+│ updated 22:05 · api · checked 22:08:14                     │
 │                                                            │
 │ ⚠ Needs you (1)                                            │
 │ • api: Push OK for the release branch                      │
@@ -83,6 +83,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   [`docs/design/MULTI-SESSION.md`](docs/design/MULTI-SESSION.md).
 - Every pane lists the folder every 2 seconds and reads a file only when it changed (plugins have
   no file-watch API). A session's own update shows at once.
+- The header carries two times: **updated** — the newest status change of any session — and
+  **checked** — when this pane last looked (it ticks every 2 s). A check older than 10 s turns
+  yellow with "(stale)": the pane stopped refreshing, so what it shows may be old.
 - A session marks its entry ended when it closes; ended entries are dimmed and folded, and are
   removed after `keepEndedSessionsDays`.
 - **Upgrading from 0.1:** the single `~/.claude/progress.json` is no longer read.

@@ -8,6 +8,7 @@ import {
   applyUpdate,
   clearDone,
   dismissTasks,
+  formatClock,
   formatTime,
   isClosed,
   newSession,
@@ -24,6 +25,8 @@ const TOOL_ID = `mcp__progress-panel__${TOOL}`
 // No file-watch API exists for plugins, so other sessions' files are noticed by listing the
 // folder on this timer (a file is read only when its mtime moved). Own writes redraw at once.
 const REFRESH_MS = 2000
+// A check older than this many refresh periods is shown as stale (the timer or the folder failed).
+const STALE_AFTER_MS = 5 * REFRESH_MS
 const DAY_MS = 24 * 3_600_000
 const SORT_KEY = 'sortTasksBy'
 
@@ -31,6 +34,8 @@ const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {}
   shape: 'sessions-1',
 })
 const folds = atom({ plugin: 'progress-panel', key: 'folds' } as const, {} as Folds, { shape: 'folds-1' })
+// When the last successful folder listing finished, so the header can show the pane is live.
+const checked = atom({ plugin: 'progress-panel', key: 'checked' } as const, 0, { shape: 'checked-1' })
 // The order the pane draws in, mirrored from $.store (kept per user across sessions) so a change redraws.
 const sorting = atom({ plugin: 'progress-panel', key: 'sort' } as const, '' as SortChoice, {
   shape: 'sort-1',
@@ -180,7 +185,9 @@ async function announce($: EngineInterface, all: Loaded, me: string): Promise<vo
 async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
-  const entries = await $.fs.list(dir).catch(() => [])
+  const entries = await $.fs.list(dir).catch(() => undefined)
+  // A failed listing keeps what the pane knows; its `checked` stamp then ages into "stale".
+  if (!entries) return
   const before = await read($, sessions)
   const next: Loaded = {}
   for (const entry of entries) {
@@ -212,6 +219,7 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
     if (pruned !== file) await save($, dir, pruned)
   }
   await announce($, await read($, sessions), me)
+  await update($, checked, () => nowMs)
 }
 
 function summarize(file: SessionFile, errors: readonly string[]): string {
@@ -324,6 +332,7 @@ export const register: Register = (on, options) => {
     const { Box, Text, Button } = $.ui.resolve(e)
     const all = await read($, sessions)
     const folded = await read($, folds)
+    const lastCheck = await read($, checked)
     const me = await $.session.id()
     const nowMs = await $.clock.now()
     const by = await sortBy($, options)
@@ -438,7 +447,12 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         <Text dimColor>
-          {t('pane.updated', { when: formatTime(newest.updatedAt, nowMs), project: newest.session.project })}
+          {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs), project: newest.session.project })} · `}
+          {nowMs - lastCheck > STALE_AFTER_MS ? (
+            <Text color="yellow">{t('pane.checkedStale', { when: formatClock(lastCheck) })}</Text>
+          ) : (
+            t('pane.checked', { when: formatClock(lastCheck) })
+          )}
         </Text>
         {needs.length > 0 ? (
           <Box flexDirection="column" marginTop={1}>
