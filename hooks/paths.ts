@@ -1,23 +1,28 @@
 export type PathEnv = { home?: string; configDir?: string }
 
-const FILE_NAME = 'progress.json'
+const DIR_NAME = 'progress'
 
 function trimSlash(dir: string): string {
   return dir.replace(/[\\/]+$/, '')
 }
 
 /**
- * The status file the pane reads: the `progressFile` option when set (`~/` expands to the home
- * directory), else `progress.json` in Claude Code's config directory (`CLAUDE_CONFIG_DIR`, or
- * `~/.claude`). Undefined when no option is set and no home directory is known.
+ * The shared folder every session's status file lives in: the `progressDir` option when set
+ * (`~/` expands to the home directory), else `progress/` in Claude Code's config directory
+ * (`CLAUDE_CONFIG_DIR`, or `~/.claude`). Undefined when no option is set and no home is known.
  */
-export function resolveProgressFile(option: string, env: PathEnv): string | undefined {
+export function resolveProgressDir(option: string, env: PathEnv): string | undefined {
   const chosen = option.trim()
   if (chosen) {
-    if (chosen.startsWith('~/') && env.home) return `${trimSlash(env.home)}/${chosen.slice(2)}`
-    return chosen
+    if (chosen.startsWith('~/') && env.home) return trimSlash(`${trimSlash(env.home)}/${chosen.slice(2)}`)
+    return trimSlash(chosen)
   }
-  if (env.configDir?.trim()) return `${trimSlash(env.configDir.trim())}/${FILE_NAME}`
-  if (env.home) return `${trimSlash(env.home)}/.claude/${FILE_NAME}`
+  if (env.configDir?.trim()) return `${trimSlash(env.configDir.trim())}/${DIR_NAME}`
+  if (env.home) return `${trimSlash(env.home)}/.claude/${DIR_NAME}`
   return undefined
+}
+
+/** The last segment of a path, either separator. */
+export function baseName(path: string): string {
+  return trimSlash(path).split(/[\\/]/).pop() ?? path
 }

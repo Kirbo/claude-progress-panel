@@ -1,61 +1,52 @@
 ---
 name: progress-panel
-description: Keep the Progress pane beside the chat current — write the JSON status file it shows (what you are doing now, what needs the user, every phase with its status). Use during any multi-step task, unattended run or handover, when the user asks for the panel / progress pane / status panel, or when a session starts with an existing status file.
+description: Keep the Progress pane current — the pane beside every Claude Code session on this machine that shows each session's "now", what needs the user, and its tasks. Use the progress_update tool during any multi-step task, unattended run or handover, when the user asks for the panel / progress pane / status panel, and whenever your status changes.
 ---
 
 # Keeping the Progress pane current
 
-The `progress-panel` plugin draws a pane beside the chat from ONE JSON file. You keep that file
-current; the pane re-reads it after every Write / Edit / MultiEdit / Bash / NotebookEdit call
-(one `stat`, re-parsed only when its mtime moved) — there is no timer, so write it with one of those
-tools.
+The `progress-panel` plugin shows one pane in EVERY Claude Code session on this machine. Each
+session owns one entry in a shared folder; every pane shows all of them, grouped by session:
 
-## Where the file is
+1. `updated HH:MM · project` — the newest update anywhere.
+2. `⚠ Needs you` — every live session's asks, highlighted, also in the status line and toasted to
+   the other sessions.
+3. `Now` — one line per live session.
+4. `Sessions` — one foldable group per session (this one first): open tasks, then a foldable
+   Done section with done times, "Clear all" and a ✕ per item.
 
-1. The plugin option `progressFile`, if set (`claude plugin configure progress-panel` shows it;
-   `~/` expands to the home directory).
-2. Else `$CLAUDE_CONFIG_DIR/progress.json` when `CLAUDE_CONFIG_DIR` is set.
-3. Else `~/.claude/progress.json`.
+## How to write: the `progress_update` tool
 
-The pane's first line names the path when the file is missing or unreadable.
+Call `mcp__progress-panel__progress_update` (its schema is in your tool list). It is a **patch** —
+send only what changed:
 
-## The shape (all fields optional)
+| Field      | Effect                                                                     |
+| ---------- | -------------------------------------------------------------------------- |
+| `now`      | replaces your one-line summary: what you are doing, what comes next        |
+| `needsYou` | replaces your asks — only what the USER must do/decide; `[]` once answered |
+| `tasks`    | upserts `{ id?, title?, status?, note? }` — by `id`, or by exact `title`   |
+| `remove`   | task ids to delete (mistakes, not finished work — finish with `done`)      |
 
-```json
-{
-  "now": "One or two sentences: what you are doing this minute and what comes next.",
-  "needsYou": ["Each thing ONLY the user can do or decide — a push OK, a login, a choice."],
-  "updated": "2026-11-06 22:05",
-  "phases": [{ "title": "Short name of a unit of work", "status": "doing", "note": "where it stands" }]
-}
-```
+- `status`: `todo` (○), `doing` (●), `blocked` (✗ — say why in `note`), `done` (✓), `skipped` (–).
+- New tasks need a `title`; the tool assigns ids (`t1`, `t2`, …) and answers with the full list —
+  use the ids afterwards.
+- Timestamps (created, updated, done) are stamped for you. Never write the files yourself.
 
-- `status` is one of `doing` (●, yellow), `blocked` (✗, red), `todo` (○), `done` (✓, green, dimmed),
-  `skipped` (–, dimmed). Unknown values show `?`.
-- The pane sorts phases blocked → doing → todo → done → skipped and shows notes only for open ones,
-  so a note on a done phase is a record, not clutter. It ends with `N open · M done/skipped`.
-- `updated` is free text — use local time `YYYY-MM-DD HH:MM`.
+## The routine
 
-## The protocol
-
-- **Every turn of tracked work:** read the file, change what moved, write it back whole (valid
-  JSON — a parse error replaces the pane with an error line). Update `updated`.
-- **Keep it true.** `now` says what is actually running; `needsYou` holds only real blockers and is
-  emptied the moment they are answered; a phase moves to `done` only when verified.
-- **Don't drop history** mid-task: finished phases stay as `done` with a one-line outcome (commit
-  hashes, pipeline ids) — they are the user's record of the session.
-- **Edit with a JSON tool** (`jq` in Bash, or Write the whole file) rather than string surgery.
-  Example — set `now` and the timestamp:
-  `jq '.now = "…" | .updated = "2026-11-06 22:05"' "$F" > "$F.new" && mv "$F.new" "$F"`
-- **Mirrors are optional.** If the user also keeps the same status somewhere shared (an artifact,
-  a doc, a gist), update the mirror from the file each turn so both say the same thing; the file
-  is the source.
-- **Handover / resume:** a new session (another machine, a resumed one) starts by reading the
-  file and continuing from it. Never commit it to a project repository: it is personal state.
+- **Start of multi-step work:** one call with `now` and the planned tasks (`todo`).
+- **Each change:** mark the task `doing` when you start it, `done` (with a one-line outcome in
+  `note`: commit hash, pipeline id) when verified, `blocked` with the reason when stuck.
+- **Asks:** put a blocker in `needsYou` the moment you need the user, and clear it (`[]` or the
+  remaining list) as soon as it is answered. Keep it honest — every session shows it.
+- **Keep `now` true:** what is actually running right now.
+- **Don't delete history:** finished tasks stay `done`; the user clears them (✕ / Clear all) or
+  the plugin's auto-clear setting does.
+- **Resume:** a resumed session keeps its entry while its session id is unchanged (a `/clear`
+  starts a new entry); the tool's answer lists your tasks and ids.
 
 ## When the pane is not visible
 
-- `/progress` opens it (the session opens it by itself only on a wide enough terminal, ~144
-  columns).
-- No pane and no `/progress` command → the plugin is not installed/enabled on this machine: see
-  the repository README (`claude plugin marketplace add …` then `claude plugin install …`).
+- `/progress` opens it (a session opens it by itself only on a terminal ~144 columns wide).
+- No `progress_update` tool and no `/progress` → the plugin is not installed on this machine: see
+  the repository's `CLAUDE.md` ("Set the panel up on a machine").

@@ -1,28 +1,35 @@
 # Claude Code progress panel
 
-A pane beside the Claude Code chat that shows what the agent is working on — **now**, what
-**needs you**, and every **phase** of the task with its status — read live from one JSON file
-the agent keeps current.
+A pane beside every Claude Code chat on your machine that shows what **every session** is doing —
+the newest update, what **needs you** (from any session, highlighted), one **now** line per
+session, and each session's tasks grouped and foldable, with a Done list you can clear.
 
 ```
-┌ Progress ─────────────────────────────────────────────┐
-│ updated 2026-11-06 22:05                              │
-│ Waiting for CI, then pushing the release branch       │
-│                                                       │
-│ Needs you                                             │
-│ • Push OK for the release branch                      │
-│                                                       │
-│ ✗ macOS build                                         │
-│   EPERM on the app icon — runner restarted            │
-│ ● Screenshot refresh                                  │
-│   throttled capture running                           │
-│ ✓ Prefill images                                      │
-│ 2 open · 1 done/skipped                               │
-└───────────────────────────────────────────────────────┘
+┌ Progress ──────────────────────────────────────────────────┐
+│ updated 22:05 · api                                        │
+│                                                            │
+│ ⚠ Needs you (1)                                            │
+│ • api: Push OK for the release branch                      │
+│                                                            │
+│ Now                                                        │
+│ api · Waiting for CI, then pushing the release branch      │
+│ web · Refactoring the settings view                        │
+│                                                            │
+│ Sessions  Sort: status                                     │
+│ ▾ api (this session) · 22:05 · 2 open · 3 done             │
+│     ✗ macOS build                                          │
+│       EPERM on the app icon — runner restarted             │
+│     ● Screenshot refresh                                   │
+│     ▾ Done (3)  Clear all                                  │
+│       ✓ Prefill images  21:58  ✕                           │
+│ ▸ web · 22:01 · 4 open · 0 done                            │
+│ ▸ docs · ended 19:40 · 0 open · 6 done  ✕                  │
+└────────────────────────────────────────────────────────────┘
 ```
 
-It is a Claude Code plugin (a hooks module) plus a skill that teaches the agent how to keep the
-file current. Nothing leaves your machine: the pane only reads a local file.
+It is a Claude Code plugin: a hooks module that draws the pane and gives the agent a
+`progress_update` tool, plus a skill that teaches the agent when to call it. Nothing leaves your
+machine: sessions share a local folder.
 
 ## Install
 
@@ -51,41 +58,34 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 - The pane opens by itself when a session starts in a terminal at least ~144 columns wide; on a
   narrower one (or after closing it) type **`/progress`**.
 - Ask the agent to use it: _"keep the progress panel updated while you work"_. The bundled
-  `progress-panel` skill tells it the file's location, shape and the update-every-turn routine.
-  To make it the default for every task, add a line like this to your `~/.claude/CLAUDE.md`:
+  `progress-panel` skill tells it how. To make it the default for every task, add a line like this
+  to your `~/.claude/CLAUDE.md`:
   `Keep the progress panel (progress-panel skill) current during multi-step work.`
-- You can edit the file yourself too; the pane picks the change up after the agent's next file
-  or shell tool call.
+- Every `▾`/`▸` line folds; **Sort** cycles status → title → created → done (remembered); **✕**
+  removes a done task (or an ended session), **Clear all** empties a Done list.
 
-### The status file
+### Settings
 
-Default: `~/.claude/progress.json` (or `$CLAUDE_CONFIG_DIR/progress.json`). Another path:
-`claude plugin configure progress-panel` (option `progressFile`, `~/` allowed) or `/config`.
+`/config` (or `claude plugin configure progress-panel`):
 
-```json
-{
-  "now": "What is happening right now.",
-  "needsYou": ["Only things the user must do or decide."],
-  "updated": "2026-11-06 22:05",
-  "phases": [{ "title": "Unit of work", "status": "doing", "note": "where it stands" }]
-}
-```
+| Option                  | Values                                  | Default                |
+| ----------------------- | --------------------------------------- | ---------------------- |
+| `progressDir`           | a folder (`~/` allowed)                  | `~/.claude/progress`   |
+| `autoClearDoneHours`    | 0 (never), 1, 3, 6, 12, 24, 48, 72, 168 | 0                      |
+| `keepEndedSessionsDays` | 0 (never), 1, 3, 7, 14, 30              | 7                      |
+| `sortTasksBy`           | status, title, created, done            | status                 |
 
-| `status`  | Mark | Shown                 |
-| --------- | ---- | --------------------- |
-| `blocked` | ✗    | red, with its note    |
-| `doing`   | ●    | yellow, with its note |
-| `todo`    | ○    | with its note         |
-| `done`    | ✓    | dimmed, note hidden   |
-| `skipped` | –    | dimmed, note hidden   |
+### How it works
 
-All fields are optional. A missing file or invalid JSON shows one red line naming the path.
-
-### How it refreshes
-
-No polling: after every `Write`, `Edit`, `MultiEdit`, `Bash` or `NotebookEdit` tool call the
-plugin `stat`s the file and re-reads it only if its modification time moved. An edit made outside
-the session shows after the next such tool call, or on `/progress`.
+- Each session writes only its own file, `<progressDir>/<session-id>.json`, through the
+  `progress_update` tool (a patch: `now`, `needsYou`, `tasks` upserted by id or title, `remove`);
+  the plugin stamps created / updated / done times. The format is in
+  [`docs/design/MULTI-SESSION.md`](docs/design/MULTI-SESSION.md).
+- Every pane lists the folder every 2 seconds and reads a file only when it changed (plugins have
+  no file-watch API). A session's own update shows at once.
+- A session marks its entry ended when it closes; ended entries are dimmed and folded, and are
+  removed after `keepEndedSessionsDays`.
+- **Upgrading from 0.1:** the single `~/.claude/progress.json` is no longer read.
 
 ## Develop
 
@@ -100,7 +100,8 @@ mise exec -- claude plugin validate .      # manifest + module, as the engine re
 claude --plugin-dir .                      # a session with this working copy loaded
 ```
 
-Test-first: a change lands with its test in `hooks/register.test.tsx`. Every user-facing string
+Test-first: a change lands with its test (`hooks/model.test.ts` for the pure logic,
+`hooks/register.test.tsx` for the plugin against the engine). Every user-facing string
 lives in `locales/en.ts` and goes through `t()` (`hooks/i18n.ts`). CI (`.gitlab-ci.yml`) runs the
 three checks on every push.
 
