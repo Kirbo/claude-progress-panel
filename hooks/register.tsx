@@ -75,7 +75,8 @@ const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> =
   manual: { sign: '»' },
   unknown: { sign: '?' },
 }
-// One indent step (columns) per level: section → item → details → jobs.
+// One indent step (columns) per level: section → item → details → jobs. Rows with an action (✕,
+// Clear all) are full-width, the label left and the action on the pane's right edge.
 const INDENT = 2
 const COUNT_ORDER: JobState[] = ['running', 'queued', 'skipped', 'success', 'failed', 'canceled', 'manual']
 const COUNT_COLOR: Partial<Record<JobState, string>> = { running: 'yellow', success: 'green', failed: 'red' }
@@ -571,7 +572,7 @@ export const register: Register = (on, options) => {
       const width = Math.max(0, ...p.jobs.map(j => j.name.length))
       return (
         <Box flexDirection="column">
-          <Box flexDirection="row" gap={1}>
+          <Box flexDirection="row" justifyContent="space-between" gap={2}>
             <Button key={key} label={label} plain onPress={() => void toggle($, key, isOpen)} />
             {finished && p.finishedAt ? (
               <Button
@@ -646,7 +647,7 @@ export const register: Register = (on, options) => {
     }
 
     const doneRow = (sessionId: string, task: Task) => (
-      <Box flexDirection="row" gap={2}>
+      <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Text dimColor>
           {t(task.status === 'done' ? 'pane.doneItem' : 'pane.skippedItem', {
             title: task.title,
@@ -689,7 +690,7 @@ export const register: Register = (on, options) => {
       })
       return (
         <Box flexDirection="column">
-          <Box flexDirection="row" gap={1}>
+          <Box flexDirection="row" justifyContent="space-between" gap={2}>
             <Button
               key={groupKey}
               label={label}
@@ -711,7 +712,7 @@ export const register: Register = (on, options) => {
             <Box flexDirection="column" paddingLeft={INDENT}>
               {open.map(taskRow)}
               {done.length > 0 ? (
-                <Box flexDirection="row" gap={2}>
+                <Box flexDirection="row" justifyContent="space-between" gap={2}>
                   <Button
                     key={doneKey}
                     label={t('pane.doneSection', { fold: isDoneOpen ? '▾' : '▸', count: done.length })}

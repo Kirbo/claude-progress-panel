@@ -825,3 +825,21 @@ test("the pipeline line ends with its duration: live while running, GitLab's onc
   )
   await ui.unmount()
 })
+
+test('rows with an action are full-width, the action pushed to the right edge', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, {
+    tasks: [
+      { title: 'Alpha', status: 'done' },
+      { title: 'Beta', status: 'done' },
+    ],
+  })
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-me' })
+  const spread = (await ui.findAll({ type: 'Box' })).filter(b => b.props.justifyContent === 'space-between')
+  // the session header row, the Done row (Clear all) and one row per done task (✕)
+  expect(spread.length).toBe(4)
+  await ui.unmount()
+})
