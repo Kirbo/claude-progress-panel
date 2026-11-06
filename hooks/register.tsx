@@ -434,6 +434,16 @@ async function toggle($: EngineInterface, key: string, isOpenNow: boolean): Prom
   await update($, folds, all => ({ ...all, [key]: !isOpenNow }))
 }
 
+// The Pipelines section's fold is keyed by the pipelines' current states (`pipelines@<signature>`):
+// the person's choice holds until a state changes, then the default (open unless every pipeline
+// succeeded) applies again. Older signatures are dropped so the fold state does not pile up.
+async function toggleSection($: EngineInterface, key: string, isOpenNow: boolean): Promise<void> {
+  await update($, folds, all => {
+    const kept = Object.fromEntries(Object.entries(all).filter(([k]) => !k.startsWith('pipelines@')))
+    return { ...kept, [key]: !isOpenNow }
+  })
+}
+
 function lastActivity(file: SessionFile): number {
   return Date.parse(file.session.endedAt ?? file.updatedAt) || 0
 }
@@ -516,6 +526,22 @@ export const register: Register = (on, options) => {
         pipeline,
       })),
     )
+
+    const states = pipelineRows.map(r => r.pipeline.state)
+    const allSucceeded = states.length > 0 && states.every(st => st === 'success')
+    const sectionKey = `pipelines@${pipelineRows
+      .map(r => `${r.sessionId}:${r.pipeline.key}=${r.pipeline.state}`)
+      .sort()
+      .join('|')}`
+    const isSectionOpen = folded[sectionKey] ?? !allSucceeded
+    const stoppedOther = states.filter(st => st === 'canceled' || st === 'skipped').length
+    const sectionLabel = t('pane.pipelines', {
+      fold: isSectionOpen ? '▾' : '▸',
+      watching: states.filter(st => !isFinished(st)).length,
+      succeeded: states.filter(st => st === 'success').length,
+      failed: states.filter(st => st === 'failed').length,
+      rest: stoppedOther > 0 ? t('pane.pipelinesCanceled', { n: stoppedOther }) : '',
+    })
 
     const pipelineBlock = (sessionId: string, p: Pipeline) => {
       const key = `pipe:${sessionId}:${p.key}`
@@ -745,10 +771,17 @@ export const register: Register = (on, options) => {
         ) : null}
         {pipelineRows.length > 0 ? (
           <Box flexDirection="column" marginTop={1}>
-            <Text bold>{t('pane.pipelines')}</Text>
-            <Box flexDirection="column" paddingLeft={INDENT}>
-              {pipelineRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}
-            </Box>
+            <Button
+              key="pipelines"
+              label={sectionLabel}
+              plain
+              onPress={() => void toggleSection($, sectionKey, isSectionOpen)}
+            />
+            {isSectionOpen ? (
+              <Box flexDirection="column" paddingLeft={INDENT}>
+                {pipelineRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}
+              </Box>
+            ) : null}
           </Box>
         ) : null}
         <Box flexDirection="row" gap={2} marginTop={1}>

@@ -135,6 +135,10 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   shows the stage/job tree; ✕ on a finished one goes to the
   sidecar (`pipeline:<key>` + `finishedAt`), so the session's file keeps its one writer.
 - A `glab` failure (not installed, not logged in, no such pipeline) is shown on the pipeline.
+- The section header is a fold button with a summary (0.5.0): `Pipelines  N watching · N succeeded
+  · N failed` (+ canceled when any). It is folded by default once every pipeline succeeded and
+  open otherwise. The person's fold/unfold is stored under the pipelines' current state signature,
+  so it holds until a state changes — then the default applies again (news reopens the section).
 
 ## Out of scope / later
 

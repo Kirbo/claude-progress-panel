@@ -610,7 +610,9 @@ test('a watched pipeline shows live: progress bar, counts and every job', async 
   // Folded (the default, running or not): the header and the counts line only.
   const ui = await pane($)
   let lines = await texts(ui)
-  expect(lines).toContain('Pipelines')
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
+    '▾ Pipelines  1 watching · 0 succeeded · 0 failed',
+  )
   expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
     '▸ app #42 · main · running  ████░░░░ 2/4',
   )
@@ -713,7 +715,13 @@ test("another session's pipelines show read-only and are never polled here; ✕ 
   await world.clock.advance(30_000)
   expect(world.runs.filter(r => r[0] === 'glab')).toEqual([])
 
+  // Every pipeline succeeded: the section starts folded to its summary.
   const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
+    '▸ Pipelines  0 watching · 1 succeeded · 0 failed',
+  )
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()
+  await ui.press({ key: 'pipelines' })
   expect((await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' }))?.text).toBe(
     '▸ site #7 · main · success  ████████ 1/1',
   )
@@ -721,5 +729,62 @@ test("another session's pipelines show read-only and are never polled here; ✕ 
   expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()
   expect(disk.files.get(`${DIR}/s-other.json`)?.text).toBe(before)
   expect(sidecar(disk, 's-other').map(d => d.id)).toEqual(['pipeline:g/site#7'])
+  await ui.unmount()
+})
+
+test('the Pipelines section folds itself once every pipeline succeeded, and opens on news', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+
+  let ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
+    '▾ Pipelines  1 watching · 0 succeeded · 0 failed',
+  )
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' })).toBeTruthy()
+  await ui.unmount()
+
+  world.gitlab.set(PIPE, { id: 42, status: 'success', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'success']))
+  await world.clock.advance(15_000)
+  ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
+    '▸ Pipelines  0 watching · 1 succeeded · 0 failed',
+  )
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' })).toBeUndefined()
+
+  // The person's own unfold holds while nothing changes…
+  await ui.press({ key: 'pipelines' })
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' })).toBeTruthy()
+  await ui.press({ key: 'pipelines' })
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' })).toBeUndefined()
+  await ui.unmount()
+
+  // …and news (a new pipeline running) opens the section again.
+  world.gitlab.set('projects/g%2Fapp/pipelines/43', { id: 43, status: 'running', ref: 'next' })
+  world.gitlab.set('projects/g%2Fapp/pipelines/43/jobs?per_page=100', jobsOf(['lint', 'running']))
+  await update($, { watch: [{ project: 'g/app', pipeline: 43 }] })
+  ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
+    '▾ Pipelines  1 watching · 1 succeeded · 0 failed',
+  )
+  await ui.unmount()
+})
+
+test('a failed pipeline keeps the Pipelines section open', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'failed', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'failed']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
+    '▾ Pipelines  0 watching · 0 succeeded · 1 failed',
+  )
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' })).toBeTruthy()
   await ui.unmount()
 })
