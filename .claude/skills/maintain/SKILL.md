@@ -27,10 +27,13 @@ least 1 day old.**
      uses an engine feature newer than the stated minimum (check the changelog / `types/`), and say
      so in the report.
 4. **CI pins in `.gitlab-ci.yml`** (the `check` job):
-   - Image digest (`buildpack-deps:bookworm-curl@sha256:...`): re-resolve the tag,
-     `docker buildx imagetools inspect buildpack-deps:bookworm-curl --format '{{.Manifest.Digest}}'`
-     (or `skopeo inspect --format '{{.Digest}}' docker://buildpack-deps:bookworm-curl`), and set the
+   - Image (`node:<ver>-bookworm@sha256:...`): its Node version follows `mise.toml`'s `node` pin
+     (bump both together). Re-resolve the tag,
+     `docker buildx imagetools inspect node:<ver>-bookworm --format '{{.Manifest.Digest}}'`
+     (or `skopeo inspect --format '{{.Digest}}' docker://node:<ver>-bookworm`), and set the
      digest only if the new image is at least a day old. The digest is a multi-arch index digest.
+     Keep a full (non-slim) Debian image: mise's Node needs `libatomic`, and the job needs curl +
+     git without an `apt-get` step.
    - `MISE_VERSION` + `MISE_SHA256`: newest mise release at least a day old
      (`mise ls-remote github:jdx/mise --json`). Download
      `https://github.com/jdx/mise/releases/download/<V>/SHASUMS256.txt`, take the sha256 on the
