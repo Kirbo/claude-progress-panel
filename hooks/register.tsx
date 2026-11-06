@@ -29,6 +29,7 @@ import {
   parseJobs,
   parsePipeline,
   progressBar,
+  stageGroups,
   visiblePipelines,
 } from './pipelines'
 
@@ -69,11 +70,14 @@ const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> =
   running: { sign: '●', color: 'yellow' },
   queued: { sign: '○' },
   skipped: { sign: '–' },
-  canceled: { sign: '⊘' },
-  manual: { sign: '▶' },
+  canceled: { sign: '×' },
+  manual: { sign: '»' },
   unknown: { sign: '?' },
 }
+// One indent step (columns) per level: section → item → details → jobs.
+const INDENT = 2
 const COUNT_ORDER: JobState[] = ['running', 'queued', 'skipped', 'success', 'failed', 'canceled', 'manual']
+const COUNT_COLOR: Partial<Record<JobState, string>> = { running: 'yellow', success: 'green', failed: 'red' }
 // Always shown, even at 0 (the rest only when present): the line reads the same way every time.
 const ALWAYS_COUNTED = new Set<JobState>(['running', 'queued', 'skipped', 'success', 'failed'])
 
@@ -518,7 +522,6 @@ export const register: Register = (on, options) => {
       const finished = isFinished(p.state)
       const isOpen = folded[key] ?? !finished
       const counts = jobCounts(p.jobs)
-      const mark = JOB_MARK[p.state]
       const label = t('pipe.header', {
         fold: isOpen ? '▾' : '▸',
         label: p.label,
@@ -529,9 +532,9 @@ export const register: Register = (on, options) => {
         finished: counts.finished,
         total: counts.total,
       })
-      const countLine = COUNT_ORDER.filter(s => ALWAYS_COUNTED.has(s) || counts[s] > 0)
-        .map(s => t(`pipe.count.${s}`, { n: counts[s] }))
-        .join(' · ')
+      const countParts = COUNT_ORDER.filter(s => ALWAYS_COUNTED.has(s) || counts[s] > 0)
+      // Names padded to the widest in this pipeline, so the times line up in a column.
+      const width = Math.max(0, ...p.jobs.map(j => j.name.length))
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" gap={1}>
@@ -550,19 +553,44 @@ export const register: Register = (on, options) => {
               />
             ) : null}
           </Box>
-          {isOpen && p.error ? <Text color="red">{`  ${p.error}`}</Text> : null}
-          {isOpen && counts.total > 0 ? <Text color={mark.color} dimColor>{`  ${countLine}`}</Text> : null}
-          {isOpen
-            ? p.jobs.map(j => {
-                const jm = JOB_MARK[j.state]
-                const duration = isFinished(j.state) ? formatDuration(j.durationS) : ''
-                return (
-                  <Text color={jm.color}>
-                    {`  ${t(duration ? 'pipe.jobTimed' : 'pipe.job', { glyph: jm.sign, name: j.name, duration })}`}
-                  </Text>
-                )
-              })
-            : null}
+          {isOpen ? (
+            <Box flexDirection="column" paddingLeft={INDENT * 2}>
+              {p.error ? <Text color="red">{p.error}</Text> : null}
+              {counts.total > 0 ? (
+                <Text>
+                  {countParts.flatMap((state, i) => [
+                    i > 0 ? <Text dimColor>{' · '}</Text> : null,
+                    <Text
+                      color={counts[state] > 0 ? COUNT_COLOR[state] : undefined}
+                      dimColor={counts[state] === 0}
+                    >
+                      {t(`pipe.count.${state}`, { n: counts[state] })}
+                    </Text>,
+                  ])}
+                </Text>
+              ) : null}
+              {stageGroups(p.jobs).map(group => (
+                <Box flexDirection="column">
+                  <Text dimColor>{group.stage}</Text>
+                  <Box flexDirection="column" paddingLeft={INDENT}>
+                    {group.jobs.map(j => {
+                      const jm = JOB_MARK[j.state]
+                      const duration = isFinished(j.state) ? formatDuration(j.durationS) : ''
+                      return (
+                        <Text color={jm.color}>
+                          {t(duration ? 'pipe.jobTimed' : 'pipe.job', {
+                            glyph: jm.sign,
+                            name: duration ? j.name.padEnd(width) : j.name,
+                            duration,
+                          })}
+                        </Text>
+                      )
+                    })}
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          ) : null}
         </Box>
       )
     }
@@ -574,7 +602,11 @@ export const register: Register = (on, options) => {
           <Text color={mark.color} bold>
             {`${mark.sign} ${task.title}`}
           </Text>
-          {task.note ? <Text dimColor>{`  ${task.note}`}</Text> : null}
+          {task.note ? (
+            <Box paddingLeft={INDENT}>
+              <Text dimColor>{task.note}</Text>
+            </Box>
+          ) : null}
         </Box>
       )
     }
@@ -622,7 +654,7 @@ export const register: Register = (on, options) => {
         done: done.length,
       })
       return (
-        <Box flexDirection="column" marginTop={1}>
+        <Box flexDirection="column">
           <Box flexDirection="row" gap={1}>
             <Button
               key={groupKey}
@@ -642,7 +674,7 @@ export const register: Register = (on, options) => {
             ) : null}
           </Box>
           {isOpen ? (
-            <Box flexDirection="column" paddingLeft={2}>
+            <Box flexDirection="column" paddingLeft={INDENT}>
               {open.map(taskRow)}
               {done.length > 0 ? (
                 <Box flexDirection="row" gap={2}>
@@ -662,7 +694,11 @@ export const register: Register = (on, options) => {
                   />
                 </Box>
               ) : null}
-              {isDoneOpen ? done.map(task => doneRow(id, task)) : null}
+              {isDoneOpen ? (
+                <Box flexDirection="column" paddingLeft={INDENT}>
+                  {done.map(task => doneRow(id, task))}
+                </Box>
+              ) : null}
             </Box>
           ) : null}
         </Box>
@@ -684,28 +720,34 @@ export const register: Register = (on, options) => {
             <Text bold inverse color="magenta">
               {t('pane.needsYou', { count: needs.length })}
             </Text>
-            {needs.map(n => (
-              <Text bold color="magenta">
-                {t('pane.needsYouItem', { project: n.project, item: n.item })}
-              </Text>
-            ))}
+            <Box flexDirection="column" paddingLeft={INDENT}>
+              {needs.map(n => (
+                <Text bold color="magenta">
+                  {t('pane.needsYouItem', { project: n.project, item: n.item })}
+                </Text>
+              ))}
+            </Box>
           </Box>
         ) : null}
         {live.some(f => f.now) ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>{t('pane.now')}</Text>
-            {live
-              .filter(f => f.now)
-              .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-              .map(f => (
-                <Text>{t('pane.nowItem', { project: f.session.project, now: f.now ?? '' })}</Text>
-              ))}
+            <Box flexDirection="column" paddingLeft={INDENT}>
+              {live
+                .filter(f => f.now)
+                .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+                .map(f => (
+                  <Text>{t('pane.nowItem', { project: f.session.project, now: f.now ?? '' })}</Text>
+                ))}
+            </Box>
           </Box>
         ) : null}
         {pipelineRows.length > 0 ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold>{t('pane.pipelines')}</Text>
-            {pipelineRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}
+            <Box flexDirection="column" paddingLeft={INDENT}>
+              {pipelineRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}
+            </Box>
           </Box>
         ) : null}
         <Box flexDirection="row" gap={2} marginTop={1}>
@@ -718,7 +760,9 @@ export const register: Register = (on, options) => {
             onPress={() => void cycleSort($, options)}
           />
         </Box>
-        {ordered.map(group)}
+        <Box flexDirection="column" paddingLeft={INDENT}>
+          {ordered.map(group)}
+        </Box>
       </Box>
     )
   })

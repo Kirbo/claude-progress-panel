@@ -245,7 +245,7 @@ test('every session shows: newest update, needs-you from all, one now line each,
   expect(lines).toContain('• site: Approve the deploy')
   expect(lines.indexOf('app · Writing tests')).toBeLessThan(lines.indexOf('site · Deploying'))
   expect(lines).toContain('✗ Deploy')
-  expect(lines).toContain('  waits for approval')
+  expect(lines).toContain('waits for approval')
   expect(lines).toContain('● Build')
   expect(lines[0]).toMatch(/^updated \d\d:\d\d · app · checked \d\d:\d\d:\d\d$/)
   expect(world.status.at(-1)).toBe('⚠ 2 need you')
@@ -611,13 +611,15 @@ test('a watched pipeline shows live: progress bar, counts and every job', async 
   const lines = await texts(ui)
   expect(lines).toContain('Pipelines')
   expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
-    '▾ app #42 · main · running  ▰▰▰▰▱▱▱▱ 2/4',
+    '▾ app #42 · main · running  ████░░░░ 2/4',
   )
-  expect(lines).toContain('  1 running · 1 queued · 1 skipped · 1 passed · 0 failed')
-  expect(lines).toContain('  ✓ lint  10s')
-  expect(lines).toContain('  ● test')
-  expect(lines).toContain('  ○ build')
-  expect(lines).toContain('  – docs  13s')
+  expect(lines).toContain('1 running · 1 queued · 1 skipped · 1 passed · 0 failed')
+  // Jobs sit under their stage; names are padded so the times line up.
+  expect(lines).toContain('build')
+  expect(lines).toContain('✓ lint   10s')
+  expect(lines).toContain('● test')
+  expect(lines).toContain('○ build')
+  expect(lines).toContain('– docs   13s')
   await ui.unmount()
 })
 
@@ -644,7 +646,7 @@ test('the session polls its unfinished pipelines every 15 s and stops once they 
 
   const ui = await pane($)
   expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
-    '▸ app #42 · main · failed  ▰▰▰▰▰▰▰▰ 1/1',
+    '▸ app #42 · main · failed  ████████ 1/1',
   )
   await ui.unmount()
 })
@@ -674,7 +676,7 @@ test('a glab failure shows on the pipeline instead of breaking the pane', async 
   await start($)
   await update($, { watch: [{ project: 'g/none', pipeline: 9 }] })
   const ui = await pane($)
-  expect(await texts(ui)).toContain('  glab: 404 Not Found')
+  expect(await texts(ui)).toContain('glab: 404 Not Found')
   await ui.unmount()
 })
 
@@ -704,7 +706,7 @@ test("another session's pipelines show read-only and are never polled here; ✕ 
 
   const ui = await pane($)
   expect((await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' }))?.text).toBe(
-    '▸ site #7 · main · success  ▰▰▰▰▰▰▰▰ 1/1',
+    '▸ site #7 · main · success  ████████ 1/1',
   )
   await ui.press({ key: 'unpipe:s-other:g/site#7' })
   expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()

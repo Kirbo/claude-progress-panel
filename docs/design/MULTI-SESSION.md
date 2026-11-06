@@ -127,7 +127,10 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   finished state. Other panes read the result from the file (no extra GitLab calls).
 - States: GitLab's statuses fold into queued / running / success / failed / canceled / skipped /
   manual. Header: `label #id · ref · state  ▰▰▱▱ finished/total`, finished = success + failed +
-  canceled + skipped. Then the counts line and one line per job (duration once finished).
+  canceled + skipped. Then the counts line (each state in its colour, zeros dimmed) and the jobs
+  grouped by stage in pipeline order (GitLab lists newest first; sorted by job id), names padded
+  so the durations line up. Layout (0.4.1): one indent step per level — section → item → details →
+  jobs — for Needs you, Now, Pipelines and Sessions alike.
   Running pipelines start unfolded, finished ones folded; ✕ on a finished one goes to the
   sidecar (`pipeline:<key>` + `finishedAt`), so the session's file keeps its one writer.
 - A `glab` failure (not installed, not logged in, no such pipeline) is shown on the pipeline.

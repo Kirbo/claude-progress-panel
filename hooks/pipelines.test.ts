@@ -10,6 +10,7 @@ import {
   parseJobs,
   parsePipeline,
   progressBar,
+  stageGroups,
   visiblePipelines,
 } from './pipelines'
 
@@ -61,10 +62,22 @@ test('jobCounts: finished / total and one count per state', () => {
   })
 })
 
+test('stageGroups keeps pipeline order and groups each stage once', () => {
+  const groups = stageGroups([
+    { name: 'img', stage: 'images', state: 'success', durationS: 1 },
+    { name: 'check', stage: 'verify', state: 'queued', durationS: null },
+    { name: 'img2', stage: 'images', state: 'running', durationS: null },
+  ])
+  expect(groups.map(g => [g.stage, g.jobs.map(j => j.name)])).toEqual([
+    ['images', ['img', 'img2']],
+    ['verify', ['check']],
+  ])
+})
+
 test('progressBar fills by finished share; formatDuration reads like a timer', () => {
-  expect(progressBar(4, 8, 8)).toBe('▰▰▰▰▱▱▱▱')
-  expect(progressBar(0, 0, 4)).toBe('▱▱▱▱')
-  expect(progressBar(9, 8, 4)).toBe('▰▰▰▰')
+  expect(progressBar(4, 8, 8)).toBe('████░░░░')
+  expect(progressBar(0, 0, 4)).toBe('░░░░')
+  expect(progressBar(9, 8, 4)).toBe('████')
   expect(formatDuration(26)).toBe('26s')
   expect(formatDuration(393.4)).toBe('6m33s')
   expect(formatDuration(3720)).toBe('1h02m')
@@ -83,10 +96,11 @@ test('parsePipeline / parseJobs read glab api output and refuse anything else', 
     parsePipeline(JSON.stringify([{ id: 7, status: 'success', ref: 'next', sha: 's', web_url: 'u' }]))?.id,
   ).toBe(7)
 
+  // GitLab lists jobs newest first; the pane wants pipeline order (oldest id first).
   const jobs = parseJobs(
     JSON.stringify([
-      { name: 'b', stage: 'build', status: 'success', duration: 12.5 },
-      { name: 'a', stage: 'test', status: 'pending', duration: null },
+      { id: 12, name: 'a', stage: 'test', status: 'pending', duration: null },
+      { id: 11, name: 'b', stage: 'build', status: 'success', duration: 12.5 },
       { bad: true },
     ]),
   )

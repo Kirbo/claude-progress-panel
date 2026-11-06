@@ -5,32 +5,35 @@ the newest update, what **needs you** (from any session, highlighted), one **now
 session, and each session's tasks grouped and foldable, with a Done list you can clear.
 
 ```
-┌ Progress ──────────────────────────────────────────────────┐
-│ updated 22:05 · api · checked 22:08:14                     │
-│                                                            │
-│ ⚠ Needs you (1)                                            │
-│ • api: Push OK for the release branch                      │
-│                                                            │
-│ Now                                                        │
-│ api · Waiting for CI, then pushing the release branch      │
-│ web · Refactoring the settings view                        │
-│                                                            │
-│ Pipelines                                                  │
-│ ▾ api #3038537023 · main · running  ▰▰▰▰▱▱▱▱ 4/8           │
-│     2 running · 1 queued · 1 skipped · 3 passed · 0 failed │
-│     ✓ build-image:release:arm64  26s                       │
-│     ● build-image:windows:arm64                            │
-│                                                            │
-│ Sessions  Sort: status                                     │
-│ ▾ api (this session) · 22:05 · 2 open · 3 done             │
-│     ✗ macOS build                                          │
-│       EPERM on the app icon — runner restarted             │
-│     ● Screenshot refresh                                   │
-│     ▾ Done (3)  Clear all                                  │
-│       ✓ Prefill images  21:58  ✕                           │
-│ ▸ web · 22:01 · 4 open · 0 done                            │
-│ ▸ docs · ended 19:40 · 0 open · 6 done  ✕                  │
-└────────────────────────────────────────────────────────────┘
+┌ Progress ──────────────────────────────────────────────────────┐
+│ updated 22:05 · api · checked 22:08:14                         │
+│                                                                │
+│ ⚠ Needs you (1)                                                │
+│   • api: Push OK for the release branch                        │
+│                                                                │
+│ Now                                                            │
+│   api · Waiting for CI, then pushing the release branch        │
+│   web · Refactoring the settings view                          │
+│                                                                │
+│ Pipelines                                                      │
+│   ▾ api #3038537023 · main · running  ████░░░░ 4/8             │
+│       2 running · 1 queued · 1 skipped · 3 passed · 0 failed   │
+│       images                                                   │
+│         ✓ build-image:linux:amd64    1m18s                     │
+│         ● build-image:windows:arm64                            │
+│       verify                                                   │
+│         ○ check                                                │
+│                                                                │
+│ Sessions  Sort: status                                         │
+│   ▾ api (this session) · 22:05 · 2 open · 3 done               │
+│     ✗ macOS build                                              │
+│       EPERM on the app icon — runner restarted                 │
+│     ● Screenshot refresh                                       │
+│     ▾ Done (3)  Clear all                                      │
+│       ✓ Prefill images  21:58  ✕                               │
+│   ▸ web · 22:01 · 4 open · 0 done                              │
+│   ▸ docs · ended 19:40 · 0 open · 6 done  ✕                    │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 It is a Claude Code plugin: a hooks module that draws the pane and gives the agent a
@@ -100,8 +103,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 - **Pipelines:** the agent can `watch` a GitLab CI pipeline (by id, or by commit sha before the
   pipeline exists). The session that watches it polls it through your own `glab` every 15 s until it
   finishes (GitLab cannot push to a local plugin), writes it into its file, and every pane shows
-  it: a progress bar of finished / all jobs, the counts per state and every job with its result and
-  time. Finished pipelines fold; ✕ removes one. Needs [`glab`](https://gitlab.com/gitlab-org/cli)
+  it: a progress bar of finished / all jobs, the counts per state (coloured) and every job, grouped
+  by stage in pipeline order, with its result and time. Finished pipelines fold; ✕ removes one. Needs [`glab`](https://gitlab.com/gitlab-org/cli)
   on PATH and logged in (`glab auth status`).
 - **Upgrading from 0.1:** the single `~/.claude/progress.json` is no longer read.
 

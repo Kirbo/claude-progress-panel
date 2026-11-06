@@ -46,7 +46,7 @@ export function jobCounts(jobs: readonly PipelineJob[]): JobCounts {
 
 export function progressBar(finished: number, total: number, width = 8): string {
   const filled = total > 0 ? Math.min(width, Math.round((finished / total) * width)) : 0
-  return '▰'.repeat(filled) + '▱'.repeat(width - filled)
+  return '█'.repeat(filled) + '░'.repeat(width - filled)
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -84,15 +84,20 @@ export function parsePipeline(text: string): PipelineHead | undefined {
   }
 }
 
-/** `glab api …/pipelines/<id>/jobs` → the jobs (retried attempts are not listed by GitLab). */
+/**
+ * `glab api …/pipelines/<id>/jobs` → the jobs in pipeline order. GitLab lists them newest first, so
+ * they are sorted by job id, oldest first (retried attempts are not listed by GitLab).
+ */
 export function parseJobs(text: string): PipelineJob[] | undefined {
   const raw = json(text)
   if (!Array.isArray(raw)) return undefined
+  const id = (j: Record<string, unknown>) => (typeof j.id === 'number' ? j.id : 0)
   return raw
     .filter(
       (j): j is Record<string, unknown> =>
         typeof j === 'object' && j !== null && typeof j.name === 'string' && typeof j.status === 'string',
     )
+    .sort((a, b) => id(a) - id(b))
     .map(j => ({
       name: j.name as string,
       stage: typeof j.stage === 'string' ? j.stage : '',
@@ -151,4 +156,15 @@ export function visiblePipelines(list: readonly Pipeline[], entries: readonly Di
         d => d.id === `pipeline:${p.key}` && p.finishedAt !== undefined && d.doneAt === p.finishedAt,
       ),
   )
+}
+
+/** The jobs grouped by stage, stages in the order they first appear (pipeline order). */
+export function stageGroups(jobs: readonly PipelineJob[]): { stage: string; jobs: PipelineJob[] }[] {
+  const groups: { stage: string; jobs: PipelineJob[] }[] = []
+  for (const j of jobs) {
+    const group = groups.find(g => g.stage === j.stage)
+    if (group) group.jobs.push(j)
+    else groups.push({ stage: j.stage, jobs: [j] })
+  }
+  return groups
 }
