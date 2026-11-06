@@ -6,7 +6,10 @@ workflow:
     - if: $CI_COMMIT_TAG
 
 check:
-  image: jdxcode/mise:2026.11.2@sha256:39cd8aad519a3dbc860eceb64dfd8cb5efe4cdbb8ad741a6867b544b2787b79c
+  image:
+    name: jdxcode/mise:2026.11.2@sha256:39cd8aad519a3dbc860eceb64dfd8cb5efe4cdbb8ad741a6867b544b2787b79c
+    # The image's entrypoint is mise itself; the runner needs a shell.
+    entrypoint: [""]
   variables:
     MISE_LOCKED: "1"
     MISE_YES: "1"
