@@ -104,7 +104,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   pipeline exists). The session that watches it polls it through your own `glab` every 15 s until it
   finishes (GitLab cannot push to a local plugin), writes it into its file, and every pane shows
   it: a progress bar of finished / all jobs, the counts per state (coloured) and every job, grouped
-  by stage in pipeline order, with its result and time. Finished pipelines fold; ✕ removes one. Needs [`glab`](https://gitlab.com/gitlab-org/cli)
+  by stage in pipeline order, with its result and time. A pipeline starts folded — its header and counts — and a press opens every job; ✕ removes
+  a finished one. Needs [`glab`](https://gitlab.com/gitlab-org/cli)
   on PATH and logged in (`glab auth status`).
 - **Upgrading from 0.1:** the single `~/.claude/progress.json` is no longer read.
 

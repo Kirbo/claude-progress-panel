@@ -520,7 +520,8 @@ export const register: Register = (on, options) => {
     const pipelineBlock = (sessionId: string, p: Pipeline) => {
       const key = `pipe:${sessionId}:${p.key}`
       const finished = isFinished(p.state)
-      const isOpen = folded[key] ?? !finished
+      // Folded by default (compact): header + counts; a press opens the stage/job tree.
+      const isOpen = folded[key] ?? false
       const counts = jobCounts(p.jobs)
       const label = t('pipe.header', {
         fold: isOpen ? '▾' : '▸',
@@ -553,44 +554,44 @@ export const register: Register = (on, options) => {
               />
             ) : null}
           </Box>
-          {isOpen ? (
-            <Box flexDirection="column" paddingLeft={INDENT * 2}>
-              {p.error ? <Text color="red">{p.error}</Text> : null}
-              {counts.total > 0 ? (
-                <Text>
-                  {countParts.flatMap((state, i) => [
-                    i > 0 ? <Text dimColor>{' · '}</Text> : null,
-                    <Text
-                      color={counts[state] > 0 ? COUNT_COLOR[state] : undefined}
-                      dimColor={counts[state] === 0}
-                    >
-                      {t(`pipe.count.${state}`, { n: counts[state] })}
-                    </Text>,
-                  ])}
-                </Text>
-              ) : null}
-              {stageGroups(p.jobs).map(group => (
-                <Box flexDirection="column">
-                  <Text dimColor>{group.stage}</Text>
-                  <Box flexDirection="column" paddingLeft={INDENT}>
-                    {group.jobs.map(j => {
-                      const jm = JOB_MARK[j.state]
-                      const duration = isFinished(j.state) ? formatDuration(j.durationS) : ''
-                      return (
-                        <Text color={jm.color}>
-                          {t(duration ? 'pipe.jobTimed' : 'pipe.job', {
-                            glyph: jm.sign,
-                            name: duration ? j.name.padEnd(width) : j.name,
-                            duration,
-                          })}
-                        </Text>
-                      )
-                    })}
+          <Box flexDirection="column" paddingLeft={INDENT * 2}>
+            {p.error ? <Text color="red">{p.error}</Text> : null}
+            {counts.total > 0 ? (
+              <Text>
+                {countParts.flatMap((state, i) => [
+                  i > 0 ? <Text dimColor>{' · '}</Text> : null,
+                  <Text
+                    color={counts[state] > 0 ? COUNT_COLOR[state] : undefined}
+                    dimColor={counts[state] === 0}
+                  >
+                    {t(`pipe.count.${state}`, { n: counts[state] })}
+                  </Text>,
+                ])}
+              </Text>
+            ) : null}
+            {isOpen
+              ? stageGroups(p.jobs).map(group => (
+                  <Box flexDirection="column">
+                    <Text dimColor>{group.stage}</Text>
+                    <Box flexDirection="column" paddingLeft={INDENT}>
+                      {group.jobs.map(j => {
+                        const jm = JOB_MARK[j.state]
+                        const duration = isFinished(j.state) ? formatDuration(j.durationS) : ''
+                        return (
+                          <Text color={jm.color}>
+                            {t(duration ? 'pipe.jobTimed' : 'pipe.job', {
+                              glyph: jm.sign,
+                              name: duration ? j.name.padEnd(width) : j.name,
+                              duration,
+                            })}
+                          </Text>
+                        )
+                      })}
+                    </Box>
                   </Box>
-                </Box>
-              ))}
-            </Box>
-          ) : null}
+                ))
+              : null}
+          </Box>
         </Box>
       )
     }

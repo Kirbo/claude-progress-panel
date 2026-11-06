@@ -607,14 +607,23 @@ test('a watched pipeline shows live: progress bar, counts and every job', async 
   const answer = await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
   expect(answer).toMatchObject({ result: expect.stringContaining('watching g/app#42') })
 
+  // Folded (the default, running or not): the header and the counts line only.
   const ui = await pane($)
-  const lines = await texts(ui)
+  let lines = await texts(ui)
   expect(lines).toContain('Pipelines')
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+    '▸ app #42 · main · running  ████░░░░ 2/4',
+  )
+  expect(lines).toContain('1 running · 1 queued · 1 skipped · 1 passed · 0 failed')
+  expect(lines).not.toContain('✓ lint   10s')
+
+  // Unfolded: the jobs under their stage, names padded so the times line up.
+  await ui.press({ key: 'pipe:s-me:g/app#42' })
   expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
     '▾ app #42 · main · running  ████░░░░ 2/4',
   )
+  lines = await texts(ui)
   expect(lines).toContain('1 running · 1 queued · 1 skipped · 1 passed · 0 failed')
-  // Jobs sit under their stage; names are padded so the times line up.
   expect(lines).toContain('build')
   expect(lines).toContain('✓ lint   10s')
   expect(lines).toContain('● test')
