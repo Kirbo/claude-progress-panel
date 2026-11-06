@@ -6,19 +6,24 @@ workflow:
     - if: $CI_COMMIT_TAG
 
 check:
-  image:
-    name: jdxcode/mise:2026.11.2@sha256:39cd8aad519a3dbc860eceb64dfd8cb5efe4cdbb8ad741a6867b544b2787b79c
-    # The image's entrypoint is mise itself; the runner needs a shell.
-    entrypoint: [""]
+  # Debian + curl + CA certs; pinned by digest. (The jdxcode/mise image has no shell.)
+  image: buildpack-deps:bookworm-curl@sha256:58021c2a0204361b62a23d2e0244d144d74c29af2d678e2a1f7e6611885d6949
   variables:
+    MISE_VERSION: v2026.11.2
+    # sha256 of mise-$MISE_VERSION-linux-x64 from the release's SHASUMS256.txt — update both together.
+    MISE_SHA256: 62cad463c1413f05398ca339168a8f655120b6f0b0b8adce3bc6758bafaf0602
     MISE_LOCKED: "1"
     MISE_YES: "1"
+    MISE_DATA_DIR: $CI_PROJECT_DIR/.mise-cache
   cache:
     key:
       files: [mise.lock]
     paths: [.mise-cache/]
   before_script:
-    - export MISE_DATA_DIR="$CI_PROJECT_DIR/.mise-cache"
+    - curl -fsSL -o /usr/local/bin/mise "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-x64"
+    - echo "${MISE_SHA256}  /usr/local/bin/mise" | sha256sum -c -
+    - chmod +x /usr/local/bin/mise
+    - mise trust --yes .
     - mise install
   script:
     - mise exec -- biome ci .
