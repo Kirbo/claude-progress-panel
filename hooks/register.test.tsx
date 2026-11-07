@@ -238,6 +238,7 @@ test("every session's system prompt tells it to keep its entry current — only 
   // The rule itself: the task list first, statuses as they move, the asks, every push watched.
   expect(section?.text).toMatch(/first tool call/i)
   expect(section?.text).toContain('needsYou')
+  expect(section?.text).toContain('`order`')
   expect(section?.text).toContain('watch')
 
   // No tool (not offered to this thread): nothing to report through, no section.
@@ -588,20 +589,31 @@ test(
   },
 )
 
-test('the sort Button cycles status → title → created → done and remembers it', async ($, on) => {
+test('the sort Button cycles plan → status → title → created → done and remembers it', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
   await start($)
-  await update($, {
-    tasks: [
-      { title: 'b-task', status: 'todo' },
-      { title: 'a-task', status: 'doing' },
-    ],
-  })
+  // b first, a a second later: "created" then has an order of its own, apart from the plan's.
+  await update($, { tasks: [{ title: 'b-task', status: 'todo' }] })
+  await world.clock.advance(1000)
+  await update($, { tasks: [{ title: 'a-task', status: 'doing' }] })
 
-  const ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'sort' }))?.text).toBe('Sort: status')
+  let ui = await pane($)
+  // The default: the plan, the order the session will do them (the order it listed them).
+  expect((await ui.find({ type: 'Button', key: 'sort' }))?.text).toBe('Sort: plan')
   let lines = await texts(ui)
+  expect(lines.indexOf('○ b-task')).toBeLessThan(lines.indexOf('● a-task'))
+  const answer = await update($, { order: ['t2', 't1'] })
+  expect(JSON.stringify(answer)).not.toContain('order:')
+  expect(read(disk, `${DIR}/s-me.json`).tasks.map(t => t.id)).toEqual(['t2', 't1'])
+  await ui.unmount()
+  ui = await pane($)
+  lines = await texts(ui)
+  expect(lines.indexOf('● a-task')).toBeLessThan(lines.indexOf('○ b-task'))
+
+  await ui.press({ key: 'sort' })
+  expect((await ui.find({ type: 'Button', key: 'sort' }))?.text).toBe('Sort: status')
+  lines = await texts(ui)
   expect(lines.indexOf('● a-task')).toBeLessThan(lines.indexOf('○ b-task'))
 
   await ui.press({ key: 'sort' })
@@ -610,7 +622,7 @@ test('the sort Button cycles status → title → created → done and remembers
   expect((await ui.find({ type: 'Button', key: 'sort' }))?.text).toBe('Sort: created')
   lines = await texts(ui)
   expect(lines.indexOf('○ b-task')).toBeLessThan(lines.indexOf('● a-task'))
-  expect(world.store.get('sortTasksBy')).toBe('created')
+  expect(world.store.get('sortTasksBy-2')).toBe('created')
   await ui.unmount()
 })
 

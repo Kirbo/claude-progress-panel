@@ -27,6 +27,7 @@ send only what changed:
 | `needsYou` | replaces your asks — only what the USER must do/decide; `[]` once answered |
 | `tasks`    | upserts `{ id?, title?, status?, note? }` — by `id`, or by exact `title`   |
 | `remove`   | task ids to delete (mistakes, not finished work — finish with `done`)      |
+| `order`    | task ids (or exact titles) in the order you will do them; the rest follow  |
 | `watch`    | CI to follow live — GitLab: `{ project: "group/name", pipeline: <id> }` or `{ project, sha }`; GitHub Actions: `{ provider: "github", project: "owner/repo", run: <id> }` or `{ provider: "github", project, sha }`; optional `label` |
 | `unwatch`  | pipeline keys (`group/name#<id>`, `group/name@<sha>`, `gh:owner/repo#<id>`, `gh:owner/repo@<sha>`) to stop showing |
 
@@ -51,7 +52,8 @@ finishes — do not poll it yourself just to update the pane. You still read the
 ## The routine
 
 - **Start of multi-step work:** your FIRST tool call is one call with `now` and the planned tasks
-  (`todo`) — on your own, never waiting to be asked. The plugin adds this rule to every session's
+  (`todo`), listed in the order you will do them — on your own, never waiting to be asked. The
+  pane's default sort is that plan order: when it changes, send `order`. The plugin adds this rule to every session's
   system prompt (section `progress-panel:reporting`), so it holds without loading this skill.
 - **Each change:** mark the task `doing` when you start it, `done` (with a one-line outcome in
   `note`: commit hash, pipeline id) when verified, `blocked` with the reason when stuck.

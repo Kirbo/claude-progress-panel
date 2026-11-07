@@ -186,6 +186,8 @@ test('sortTasks orders by status, title, created or done', () => {
     task({ id: 'c', title: 'gamma', status: 'blocked', createdAt: iso(T0 + 1) }),
   ]
   expect(sortTasks(tasks, 'status').map(t => t.id)).toEqual(['c', 'b', 'a'])
+  // The plan: the order the session lists them in (the order it will do them).
+  expect(sortTasks(tasks, 'plan').map(t => t.id)).toEqual(['a', 'b', 'c'])
   expect(sortTasks(tasks, 'title').map(t => t.id)).toEqual(['b', 'a', 'c'])
   expect(sortTasks(tasks, 'created').map(t => t.id)).toEqual(['c', 'b', 'a'])
   const done = [
@@ -228,4 +230,27 @@ test('isBlank: nothing reported — no tasks, now, asks or pipelines; any one of
   expect(isBlank({ ...blank, tasks: [task({})] })).toBe(false)
   const pipelines = [{ key: 'g/p#1' }] as unknown as SessionFile['pipelines']
   expect(isBlank({ ...blank, pipelines })).toBe(false)
+})
+
+test("applyUpdate's `order` puts the named tasks first, in that order; the rest keep theirs after", () => {
+  const at = iso(T0)
+  let file = applyUpdate(
+    fresh(),
+    { tasks: [{ title: 'one' }, { title: 'two' }, { title: 'three' }, { title: 'four' }] },
+    at,
+  ).file
+  expect(file.tasks.map(t => t.id)).toEqual(['t1', 't2', 't3', 't4'])
+  // By id or exact title; new tasks in the same call can be placed too.
+  const r = applyUpdate(file, { tasks: [{ title: 'zero' }], order: ['t3', 'zero', 't1', 'nope'] }, at)
+  file = r.file
+  expect(file.tasks.map(t => t.title)).toEqual(['three', 'zero', 'one', 'two', 'four'])
+  expect(r.errors).toEqual(['order: no task nope'])
+  // Listed twice: the first place counts.
+  expect(applyUpdate(file, { order: ['t2', 't2'] }, at).file.tasks.map(t => t.id)).toEqual([
+    't2',
+    't3',
+    't5',
+    't1',
+    't4',
+  ])
 })

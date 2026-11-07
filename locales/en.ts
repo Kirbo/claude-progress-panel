@@ -55,6 +55,7 @@ export const en = {
   'pane.forget': '  ✕  ',
   'status.needsYou': '⚠ {count} need you',
   'toast.needsYou': '{project} needs you: {item}',
+  'sort.plan': 'plan',
   'sort.status': 'status',
   'sort.title': 'title',
   'sort.created': 'created',
@@ -62,7 +63,7 @@ export const en = {
   'prompt.reporting': [
     '# Progress pane',
     "A Progress pane beside every Claude Code session on this machine shows what each session is doing. This session's entry is written only through the `mcp__progress-panel__progress_update` tool. Keep it current on your own, without being asked:",
-    '- As soon as a task takes more than one step, your first tool call is progress_update with `now` and the task list (one task per unit of work: diagnose, fix, verify, push…).',
+    '- As soon as a task takes more than one step, your first tool call is progress_update with `now` and the task list (one task per unit of work: diagnose, fix, verify, push…), listed in the order you will do them. When that order changes (a new ask goes first, you reshuffle), send `order` with the task ids in the new order — the pane lists tasks in that order by default.',
     '- Move each task as it changes: `doing` when you start it, `done` with a one-line outcome (commit, pipeline) once verified, `blocked` with the reason. Keep `now` true.',
     '- Everything only the user can do or decide (an approval, a push OK, a login, a choice) goes in `needsYou` the moment it comes up; send `[]` once it is answered.',
     '- After every git push to a repo with CI, `watch` that push by its commit sha.',

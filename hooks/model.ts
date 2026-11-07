@@ -6,11 +6,19 @@ export type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task }
 
 export const STATUSES = ['todo', 'doing', 'blocked', 'done', 'skipped'] as const satisfies readonly Status[]
 
-export const SORTS = ['status', 'title', 'created', 'done'] as const
+// `plan` first: the default, the order the session lists its tasks in — the order it will do them.
+export const SORTS = ['plan', 'status', 'title', 'created', 'done'] as const
 export type SortBy = (typeof SORTS)[number]
 
 export type TaskInput = { id?: string; title?: string; status?: string; note?: string }
-export type UpdateInput = { now?: string; needsYou?: string[]; tasks?: TaskInput[]; remove?: string[] }
+export type UpdateInput = {
+  now?: string
+  needsYou?: string[]
+  tasks?: TaskInput[]
+  remove?: string[]
+  /** Task ids (or exact titles) in the order the session will do them; the rest keep theirs after. */
+  order?: string[]
+}
 
 export function isClosed(status: Status): boolean {
   return status === 'done' || status === 'skipped'
@@ -109,6 +117,8 @@ export function applyUpdate(
       doneAt,
     }
   })
+
+  if (input.order) tasks = reorder(tasks, input.order, errors)
 
   return {
     file: {
@@ -217,10 +227,23 @@ export function pruneDone(file: SessionFile, hours: number, nowMs: number): Sess
 const STATUS_ORDER: Record<Status, number> = { blocked: 0, doing: 1, todo: 2, done: 3, skipped: 4 }
 const time = (iso: string | null) => (iso ? Date.parse(iso) || 0 : 0)
 
+/** The named tasks (id or exact title) first, in that order; every other keeps its place after them. */
+function reorder(tasks: Task[], order: readonly string[], errors: string[]): Task[] {
+  const named: Task[] = []
+  for (const name of order) {
+    const task = tasks.find(t => t.id === name) ?? tasks.find(t => t.title === name)
+    if (!task) errors.push(`order: no task ${name}`)
+    else if (!named.includes(task)) named.push(task)
+  }
+  return [...named, ...tasks.filter(t => !named.includes(t))]
+}
+
 export function sortTasks(tasks: readonly Task[], by: SortBy): Task[] {
   const list = [...tasks]
   const newestDone = (a: Task, b: Task) => time(b.doneAt) - time(a.doneAt)
   switch (by) {
+    case 'plan':
+      return list
     case 'title':
       return list.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }))
     case 'created':

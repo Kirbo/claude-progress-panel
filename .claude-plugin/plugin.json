@@ -37,8 +37,8 @@
       "type": "string",
       "title": "Sort tasks by",
       "description": "The starting order; the pane's Sort button changes it.",
-      "options": ["status", "title", "created", "done"],
-      "default": "status",
+      "options": ["plan", "status", "title", "created", "done"],
+      "default": "plan",
       "required": false
     }
   }

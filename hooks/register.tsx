@@ -65,7 +65,8 @@ const ARCHIVE_AFTER_MS = 3_600_000
 // Similar-run estimates are cached in the plugin's store this long, per project + ref + source.
 const ESTIMATE_TTL_MS = 24 * 3_600_000
 const FINISHED_KEY = 'pipelines-finished'
-const SORT_KEY = 'sortTasksBy'
+// `-2` (0.14.0): `plan` became the default, so a choice remembered from before starts over once.
+const SORT_KEY = 'sortTasksBy-2'
 
 const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {} as Loaded, {
   shape: 'sessions-3',
@@ -150,6 +151,12 @@ const INPUT_SCHEMA = {
       },
     },
     remove: { type: 'array', items: { type: 'string' } },
+    order: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'Task ids (or exact titles) in the order you will do them; the pane lists them so. The rest keep their order after them.',
+    },
     watch: {
       type: 'array',
       description:
@@ -730,7 +737,7 @@ async function sortBy($: EngineInterface, options: PluginOptions): Promise<SortB
     asSort(await read($, sorting)) ??
     asSort(await $.store.get(SORT_KEY)) ??
     asSort(optionString(options, 'sortTasksBy')) ??
-    'status'
+    'plan'
   )
 }
 
@@ -841,6 +848,7 @@ export const register: Register = (on, options) => {
       needsYou: input.needsYou,
       tasks: input.tasks,
       remove: input.remove,
+      order: input.order,
       watch: input.watch,
       unwatch: input.unwatch,
     })
@@ -1092,7 +1100,7 @@ export const register: Register = (on, options) => {
       )
       const done = sortTasks(
         shown.filter(x => isClosed(x.status)),
-        by === 'status' ? 'done' : by,
+        by === 'status' || by === 'plan' ? 'done' : by,
       )
       const groupKey = `group:${id}`
       const doneKey = `done:${id}`
