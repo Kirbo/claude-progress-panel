@@ -156,11 +156,10 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   element to GitLab's `web_url` (the pipeline's, and each job's — the jobs API carries `web_url`,
   verified against the real API 2026-11-07, stored as the job's `url`). On the terminal it is an
   OSC 8 hyperlink, so the terminal opens the browser on the person's click; the plugin never runs
-  an opener itself. A pipeline or job without a `web_url` draws no link. Hover (0.9.1, asked for
-  2026-11-07: "easier to see which link belongs to which job"): every pipeline header and job row
-  is its own hover scope (a keyed Box) — the pointer lights the whole row (`backgroundColor:
-  'subtle'`, a theme key, so dim on dark and light themes) and underlines the job's text; the
-  surface applies it, no hook runs.
+  an opener itself. A pipeline or job without a `web_url` draws no link. Hover rows (0.9.1) were
+  removed in 0.10.1: the keyed hover scopes left every Button in the pane unclickable on the
+  terminal (reported 2026-11-07 — no accordion opened), and the plugin tests press by key, so they
+  could not see it.
 - Duration (0.5.1): running → now − GitLab's `started_at` (ticks with the pane's 2 s redraw);
   finished → GitLab's `duration` (as its UI shows), else `finished_at − started_at`; omitted
   before the pipeline has started.

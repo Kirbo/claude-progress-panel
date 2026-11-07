@@ -116,8 +116,7 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   counts — and a press opens every job; ✕ removes
   a finished one. The `↗` at the right edge of a pipeline, and of each job when unfolded, is a
   link to its GitLab page: click it to open it in your browser (an OSC 8 terminal hyperlink — the
-  terminal opens it; in a terminal without link support the address is printed after it). The
-  row under the pointer is highlighted, so it is clear which row a `↗` belongs to. GitHub runs
+  terminal opens it; in a terminal without link support the address is printed after it). GitHub runs
   look the same, with two differences: their jobs list flat (GitHub has no stages), and the
   estimate averages earlier successful runs of the same workflow, branch and event. Needs
   [`glab`](https://gitlab.com/gitlab-org/cli) for GitLab and/or [`gh`](https://cli.github.com) for
