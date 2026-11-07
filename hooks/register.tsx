@@ -29,7 +29,6 @@ import {
   isFinished,
   jobCounts,
   jobEstimatesFrom,
-  parseDurations,
   parseJobs,
   parsePipeline,
   parseSampleIds,
@@ -385,7 +384,8 @@ async function estimateFor(
   exceptId: number,
   nowMs: number,
 ): Promise<Estimates> {
-  const key = `estimate:${project}@${ref}:${source ?? '*'}`
+  // `estimate2:` — 0.8.0 read durations from the list (GitLab has none there) and cached nulls.
+  const key = `estimate2:${project}@${ref}:${source ?? '*'}`
   const cached = (await $.store.get(key)) as CachedEstimate | undefined
   if (cached && typeof cached.atMs === 'number' && nowMs - cached.atMs < ESTIMATE_TTL_MS)
     return { s: cached.s ?? null, jobs: cached.jobs ?? {} }
@@ -396,13 +396,17 @@ async function estimateFor(
     }&per_page=6`,
   )
   if (list.text === undefined) return { s: null, jobs: {} }
-  const s = estimateFrom(parseDurations(list.text, exceptId))
+  const durations: number[] = []
   const runs: PipelineJob[][] = []
   for (const id of parseSampleIds(list.text, exceptId)) {
+    const head = await glabApi($, `projects/${encodeURIComponent(project)}/pipelines/${id}`)
+    const d = head.text === undefined ? undefined : parsePipeline(head.text)?.durationS
+    if (typeof d === 'number' && d > 0) durations.push(d)
     const jobs = await glabApi($, `projects/${encodeURIComponent(project)}/pipelines/${id}/jobs?per_page=100`)
     const parsed = jobs.text === undefined ? undefined : parseJobs(jobs.text)
     if (parsed) runs.push(parsed)
   }
+  const s = estimateFrom(durations)
   const jobEstimates = jobEstimatesFrom(runs)
   await $.store.set(key, { atMs: nowMs, s, jobs: jobEstimates } satisfies CachedEstimate)
   return { s, jobs: jobEstimates }
@@ -422,7 +426,7 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
   if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'glab: unreadable pipeline' }
   const id = parsed.id
   const estimate =
-    p.estimateS === undefined && parsed.ref
+    p.estimateS == null && parsed.ref && !isFinished(parsed.state)
       ? await estimateFor($, p.project, parsed.ref, parsed.source, id, Date.parse(at))
       : undefined
   const jobsText = await glabApi($, `projects/${project}/pipelines/${id}/jobs?per_page=100`)

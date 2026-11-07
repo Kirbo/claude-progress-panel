@@ -98,35 +98,17 @@ export function parsePipeline(text: string): PipelineHead | undefined {
   }
 }
 
-/** Durations (s) of up to 5 earlier pipelines from a `pipelines?status=success` list, skipping `exceptId`. */
-export function parseDurations(text: string, exceptId: number): number[] {
-  const raw = json(text)
-  if (!Array.isArray(raw)) return []
-  return raw
-    .filter(
-      (p): p is { id: number; duration: number } =>
-        typeof p === 'object' &&
-        p !== null &&
-        p.id !== exceptId &&
-        typeof p.duration === 'number' &&
-        p.duration > 0,
-    )
-    .slice(0, 5)
-    .map(p => p.duration)
-}
-
-/** The ids of the same up-to-5 earlier pipelines parseDurations reads (their jobs give job estimates). */
+/**
+ * The ids of up to 5 earlier pipelines from a `pipelines?status=success` list, never `exceptId`.
+ * GitLab's list carries no duration: each sample's details (`pipelines/<id>`) give it.
+ */
 export function parseSampleIds(text: string, exceptId: number): number[] {
   const raw = json(text)
   if (!Array.isArray(raw)) return []
   return raw
     .filter(
-      (p): p is { id: number; duration: number } =>
-        typeof p === 'object' &&
-        p !== null &&
-        p.id !== exceptId &&
-        typeof p.duration === 'number' &&
-        p.duration > 0,
+      (p): p is { id: number } =>
+        typeof p === 'object' && p !== null && typeof p.id === 'number' && p.id !== exceptId,
     )
     .slice(0, 5)
     .map(p => p.id)

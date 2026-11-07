@@ -139,10 +139,13 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   success folds to its one header line (running / failed ones keep the counts line). A pipeline
   that succeeded more than 1 h ago moves into a folded `Finished (N)` row at the end of the
   section; one press lists them. Actions (✕) are right-aligned, padded to a five-column hitbox.
-- Estimate (0.7.0): on its first refresh the watching session looks up up to 5 earlier successful
-  pipelines of the same project + ref + source (`pipelines?ref=…&status=success&source=…`), skips
-  the pipeline itself, and stores their average as `estimateS` (null when there are none). The
-  lookup is cached in the plugin's `$.store` for 24 h per project + ref + source, so the next
+- Estimate (0.7.0, fixed 0.8.1): on its first refresh the watching session lists up to 5 earlier
+  successful pipelines of the same project + ref + source (`pipelines?ref=…&status=success&source=…`),
+  skips the pipeline itself, reads each one's details (`pipelines/<id>` — GitLab's LIST carries no
+  `duration`, verified against the real API 2026-11-07; 0.7.0–0.8.0 read it from the list and so
+  never had an estimate) and stores their average as `estimateS` (null when there are none; a
+  running pipeline with none retries, the cache keeping that free). The
+  lookup is cached in the plugin's `$.store` (`estimate2:` keys) for 24 h per project + ref + source, so the next
   pipeline of that kind costs no call. A running pipeline's line reads `elapsed / ~estimate`.
   Job estimates (0.8.0): the same lookup also reads those sample runs' jobs (one call each, at most
   5, cached with the rest) and stores each job name's average over the runs where it succeeded as

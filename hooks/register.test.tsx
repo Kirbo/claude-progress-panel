@@ -912,10 +912,13 @@ test('a running pipeline shows elapsed / estimate, the estimate fetched once and
   const started = new Date(T0 - 293_000).toISOString()
   world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main', source: 'push', started_at: started })
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  // Like GitLab: the list has no duration — each sample's details do.
   world.gitlab.set('projects/g%2Fapp/pipelines?ref=main&status=success&source=push&per_page=6', [
-    { id: 41, duration: 1900 },
-    { id: 40, duration: 2060 },
+    { id: 41, status: 'success' },
+    { id: 40, status: 'success' },
   ])
+  world.gitlab.set('projects/g%2Fapp/pipelines/41', { id: 41, status: 'success', duration: 1900 })
+  world.gitlab.set('projects/g%2Fapp/pipelines/40', { id: 40, status: 'success', duration: 2060 })
   await start($)
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
 
@@ -942,7 +945,7 @@ test('a running pipeline shows elapsed / estimate, the estimate fetched once and
   expect(listCalls()).toBe(1)
 
   // Once the cached estimate is older than 24 h, the next new pipeline asks again.
-  const key = 'estimate:g/app@main:push'
+  const key = 'estimate2:g/app@main:push'
   world.store.set(key, { ...(world.store.get(key) as object), atMs: T0 - 25 * HOUR })
   world.gitlab.set('projects/g%2Fapp/pipelines/44', {
     id: 44,
@@ -994,9 +997,11 @@ test('unfolded jobs show elapsed / estimate while running and ~estimate while qu
     { id: 1, name: 'setup', stage: 'test', status: 'success', duration: 12 },
   ])
   world.gitlab.set('projects/g%2Fapp/pipelines?ref=main&status=success&source=push&per_page=6', [
-    { id: 41, duration: 700 },
-    { id: 40, duration: 760 },
+    { id: 41, status: 'success' },
+    { id: 40, status: 'success' },
   ])
+  world.gitlab.set('projects/g%2Fapp/pipelines/41', { id: 41, status: 'success', duration: 700 })
+  world.gitlab.set('projects/g%2Fapp/pipelines/40', { id: 40, status: 'success', duration: 760 })
   world.gitlab.set('projects/g%2Fapp/pipelines/41/jobs?per_page=100', [
     { id: 13, name: 'build', stage: 'build', status: 'success', duration: 540 },
     { id: 12, name: 'lint', stage: 'test', status: 'success', duration: 110 },
@@ -1015,4 +1020,29 @@ test('unfolded jobs show elapsed / estimate while running and ~estimate while qu
   expect(lines).toContain('● lint   1m05s / ~2m')
   expect(lines).toContain('○ build  ~10m')
   await ui.unmount()
+})
+
+test('a pipeline left without an estimate gets one once similar runs exist (the cache aged out)', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  const list = 'projects/g%2Fapp/pipelines?ref=main&status=success&source=push&per_page=6'
+  world.gitlab.set(PIPE, {
+    id: 42,
+    status: 'running',
+    ref: 'main',
+    source: 'push',
+    started_at: new Date(T0 - 60_000).toISOString(),
+  })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  world.gitlab.set(list, [])
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.estimateS).toBeNull()
+
+  world.gitlab.set(list, [{ id: 41, status: 'success' }])
+  world.gitlab.set('projects/g%2Fapp/pipelines/41', { id: 41, status: 'success', duration: 1980 })
+  const key = 'estimate2:g/app@main:push'
+  world.store.set(key, { ...(world.store.get(key) as object), atMs: T0 - 25 * HOUR })
+  await world.clock.advance(15_000)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.estimateS).toBe(1980)
 })
