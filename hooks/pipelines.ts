@@ -1,12 +1,25 @@
 // CI pipelines a session watches: the pure parts (GitLab answers → states, counts, the bar). The
 // session's own timer fetches them through `glab` (register.tsx).
 
-import type { Dismissal, JobState, Pipeline, PipelineJob } from '../types'
+import type { Dismissal, JobState, Pipeline, PipelineJob, PipelineProvider } from '../types'
 import { baseName } from './paths'
 
-export type { JobState, Pipeline, PipelineJob }
+export type { JobState, Pipeline, PipelineJob, PipelineProvider }
 
-export type WatchInput = { project?: string; pipeline?: number; sha?: string; label?: string }
+export type WatchInput = {
+  provider?: PipelineProvider
+  project?: string
+  pipeline?: number
+  /** GitHub: the workflow run id (`pipeline` is accepted too). */
+  run?: number
+  sha?: string
+  label?: string
+}
+
+/** A watched pipeline's key: GitLab's `project#id` / `project@sha`, GitHub's with a `gh:` prefix. */
+export function pipelineKey(provider: PipelineProvider, project: string, ref: string): string {
+  return `${provider === 'github' ? 'gh:' : ''}${project}${ref}`
+}
 
 const QUEUED = new Set(['created', 'pending', 'waiting_for_resource', 'preparing', 'scheduled'])
 
@@ -191,21 +204,30 @@ export function applyWatch(
     else errors.push(`unwatch: no pipeline ${key}`)
   }
   watch.forEach((w, i) => {
+    const provider = w.provider ?? 'gitlab'
+    if (provider !== 'gitlab' && provider !== 'github') {
+      errors.push(`watch[${i}]: unknown provider ${String(provider)} (gitlab or github)`)
+      return
+    }
     const project = (w.project ?? '').trim()
     if (!project) {
-      errors.push(`watch[${i}]: a pipeline needs a project (group/name)`)
+      errors.push(
+        `watch[${i}]: a pipeline needs a project (${provider === 'github' ? 'owner/repo' : 'group/name'})`,
+      )
       return
     }
-    const id = typeof w.pipeline === 'number' && w.pipeline > 0 ? w.pipeline : null
+    const given = provider === 'github' ? (w.run ?? w.pipeline) : w.pipeline
+    const id = typeof given === 'number' && given > 0 ? given : null
     const sha = w.sha?.trim()
     if (id === null && !sha) {
-      errors.push(`watch[${i}]: give a pipeline id or a commit sha`)
+      errors.push(`watch[${i}]: give a ${provider === 'github' ? 'run' : 'pipeline'} id or a commit sha`)
       return
     }
-    const key = id !== null ? `${project}#${id}` : `${project}@${sha}`
+    const key = pipelineKey(provider, project, id !== null ? `#${id}` : `@${sha}`)
     if (next.some(p => p.key === key)) return
     next.push({
       key,
+      ...(provider === 'github' ? { provider } : {}),
       project,
       id,
       ...(sha ? { sha } : {}),

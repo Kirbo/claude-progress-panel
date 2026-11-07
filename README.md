@@ -70,6 +70,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   `progress-panel` skill tells it how. To make it the default for every task, add a line like this
   to your `~/.claude/CLAUDE.md`:
   `Keep the progress panel (progress-panel skill) current during multi-step work.`
+- **For the agent:** the skill's rule — after every `git push` to a repo that has CI
+  (`.gitlab-ci.yml` or `.github/workflows/`), `watch` that push by its commit sha at once
+  (`{ project, sha }` for GitLab, `{ provider: "github", project: "owner/repo", sha }` for GitHub).
 - Every `▾`/`▸` line folds; **Sort** cycles status → title → created → done (remembered); **✕**
   removes a done task (or an ended session), **Clear all** empties a Done list.
 
@@ -100,9 +103,10 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   yellow with "(stale)": the pane stopped refreshing, so what it shows may be old.
 - A session marks its entry ended when it closes; ended entries are dimmed and folded, and are
   removed after `keepEndedSessionsDays`.
-- **Pipelines:** the agent can `watch` a GitLab CI pipeline (by id, or by commit sha before the
-  pipeline exists). The session that watches it polls it through your own `glab` every 15 s until it
-  finishes (GitLab cannot push to a local plugin), writes it into its file, and every pane shows
+- **Pipelines:** the agent can `watch` a GitLab CI pipeline or a GitHub Actions workflow run (by
+  id, or by commit sha before it exists) — the bundled skill tells it to watch every push to a repo
+  that has CI. The session that watches it polls it through your own `glab` (GitLab) or `gh`
+  (GitHub) every 15 s until it finishes (neither forge can push to a local plugin), writes it into its file, and every pane shows
   it: a progress bar of finished / all jobs, how long it has run (live, beside an estimate from the average of
   up to 5 earlier successful runs of the same branch and trigger, cached 24 h; GitLab's duration
   once finished), the counts per state (coloured) and every job, grouped
@@ -113,8 +117,11 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   a finished one. The `↗` at the right edge of a pipeline, and of each job when unfolded, is a
   link to its GitLab page: click it to open it in your browser (an OSC 8 terminal hyperlink — the
   terminal opens it; in a terminal without link support the address is printed after it). The
-  row under the pointer is highlighted, so it is clear which row a `↗` belongs to. Needs [`glab`](https://gitlab.com/gitlab-org/cli)
-  on PATH and logged in (`glab auth status`).
+  row under the pointer is highlighted, so it is clear which row a `↗` belongs to. GitHub runs
+  look the same, with two differences: their jobs list flat (GitHub has no stages), and the
+  estimate averages earlier successful runs of the same workflow, branch and event. Needs
+  [`glab`](https://gitlab.com/gitlab-org/cli) for GitLab and/or [`gh`](https://cli.github.com) for
+  GitHub, on PATH and logged in (`glab auth status`, `gh auth status`).
 - **Upgrading from 0.1:** the single `~/.claude/progress.json` is no longer read.
 
 ## Develop

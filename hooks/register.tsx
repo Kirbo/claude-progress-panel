@@ -2,6 +2,7 @@ import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 
 import type { Folds, Loaded, SortChoice } from '../types'
+import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
 import { t } from './i18n'
 import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
 import {
@@ -20,7 +21,7 @@ import {
   visibleTasks,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
-import type { JobState, Pipeline, PipelineJob, WatchInput } from './pipelines'
+import type { JobState, Pipeline, PipelineHead, PipelineJob, WatchInput } from './pipelines'
 import {
   applyWatch,
   estimateFrom,
@@ -130,14 +131,21 @@ const INPUT_SCHEMA = {
     remove: { type: 'array', items: { type: 'string' } },
     watch: {
       type: 'array',
-      description: 'GitLab CI pipelines to follow live in the pane.',
+      description:
+        'CI pipelines to follow live in the pane: GitLab CI pipelines (the default) or GitHub Actions workflow runs (provider "github"). After every git push to a repo with CI, watch that push by its commit sha.',
       items: {
         type: 'object',
         additionalProperties: false,
         required: ['project'],
         properties: {
-          project: { type: 'string', description: 'group/name (full path)' },
-          pipeline: { type: 'integer', description: 'pipeline id' },
+          provider: {
+            type: 'string',
+            enum: ['gitlab', 'github'],
+            description: 'gitlab (default) or github (GitHub Actions)',
+          },
+          project: { type: 'string', description: 'GitLab group/name (full path) or GitHub owner/repo' },
+          pipeline: { type: 'integer', description: 'GitLab pipeline id (GitHub: same as run)' },
+          run: { type: 'integer', description: 'GitHub Actions workflow run id' },
           sha: { type: 'string', description: 'commit sha, when the id is not known yet' },
           label: { type: 'string', description: 'short name shown in the pane' },
         },
@@ -362,17 +370,25 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
     : text
 }
 
-// One `glab api <path>`: the parsed JSON text, or the CLI's error as one line.
-async function glabApi($: EngineInterface, path: string): Promise<{ text?: string; error?: string }> {
-  const ran = await $.process.run(['glab', 'api', path]).catch((err: unknown) => ({
+// One `<cli> api <path>` (`glab` for GitLab, `gh` for GitHub): the JSON text, or the CLI's error
+// as one line.
+async function cliApi(
+  $: EngineInterface,
+  cli: 'glab' | 'gh',
+  path: string,
+): Promise<{ text?: string; error?: string }> {
+  const ran = await $.process.run([cli, 'api', path]).catch((err: unknown) => ({
     exitCode: 127,
     stdout: '',
     stderr: err instanceof Error ? err.message : String(err),
   }))
   if (ran.exitCode === 0) return { text: ran.stdout }
   const line = (ran.stderr || ran.stdout).trim().split('\n').pop() ?? ''
-  return { error: line || `glab exited ${ran.exitCode}` }
+  return { error: line || `${cli} exited ${ran.exitCode}` }
 }
+
+const glabApi = ($: EngineInterface, path: string) => cliApi($, 'glab', path)
+const ghApi = ($: EngineInterface, path: string) => cliApi($, 'gh', path)
 
 type CachedEstimate = { atMs: number; s: number | null; jobs?: Record<string, number> }
 type Estimates = { s: number | null; jobs: Record<string, number> }
@@ -416,8 +432,98 @@ async function estimateFor(
   return { s, jobs: jobEstimates }
 }
 
+// GitHub: the average duration of up to 5 earlier successful runs of the same workflow, branch
+// and event (read from the runs list itself — GitHub lists updated_at and run_started_at), and per
+// job name from those runs' jobs; cached like GitLab's.
+async function ghEstimateFor(
+  $: EngineInterface,
+  project: string,
+  workflowId: number,
+  ref: string,
+  event: string | undefined,
+  exceptId: number,
+  nowMs: number,
+): Promise<Estimates> {
+  const key = `estimate-gh:${project}@${workflowId}:${ref}:${event ?? '*'}`
+  const cached = (await $.store.get(key)) as CachedEstimate | undefined
+  if (cached && typeof cached.atMs === 'number' && nowMs - cached.atMs < ESTIMATE_TTL_MS)
+    return { s: cached.s ?? null, jobs: cached.jobs ?? {} }
+  const list = await ghApi(
+    $,
+    `repos/${project}/actions/workflows/${workflowId}/runs?branch=${encodeURIComponent(ref)}${
+      event ? `&event=${encodeURIComponent(event)}` : ''
+    }&status=success&per_page=6`,
+  )
+  if (list.text === undefined) return { s: null, jobs: {} }
+  const samples = ghEstimateSamples(list.text, exceptId)
+  const runs: PipelineJob[][] = []
+  for (const { id } of samples) {
+    const jobs = await ghApi($, `repos/${project}/actions/runs/${id}/jobs?per_page=100`)
+    const parsed = jobs.text === undefined ? undefined : parseGhJobs(jobs.text)
+    if (parsed) runs.push(parsed)
+  }
+  const s = estimateFrom(samples.map(x => x.durationS))
+  const jobEstimates = jobEstimatesFrom(runs)
+  await $.store.set(key, { atMs: nowMs, s, jobs: jobEstimates } satisfies CachedEstimate)
+  return { s, jobs: jobEstimates }
+}
+
+// One GitHub Actions run's head and jobs (finding the newest run of the commit first, when only the
+// sha is known) — the same Pipeline shape as GitLab's.
+async function refreshGithubRun($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
+  const head =
+    p.id === null
+      ? await ghApi(
+          $,
+          `repos/${p.project}/actions/runs?head_sha=${encodeURIComponent(p.sha ?? '')}&per_page=1`,
+        )
+      : await ghApi($, `repos/${p.project}/actions/runs/${p.id}`)
+  const parsed = head.text === undefined ? undefined : parseGhRun(head.text)
+  if (!parsed && p.id === null && !head.error) return { ...p, checkedAt: at }
+  if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'gh: unreadable workflow run' }
+  const id = parsed.id
+  const estimate =
+    p.estimateS == null && parsed.ref && parsed.workflowId !== undefined && !isFinished(parsed.state)
+      ? await ghEstimateFor($, p.project, parsed.workflowId, parsed.ref, parsed.source, id, Date.parse(at))
+      : undefined
+  const jobsText = await ghApi($, `repos/${p.project}/actions/runs/${id}/jobs?per_page=100`)
+  const jobs: PipelineJob[] = (jobsText.text === undefined ? undefined : parseGhJobs(jobsText.text)) ?? p.jobs
+  return merged(p, parsed, id, estimate, jobs, jobsText.error, at)
+}
+
+// The refreshed pipeline: the head's fields over the stored ones (an old error cleared).
+function merged(
+  p: Pipeline,
+  parsed: PipelineHead & { workflowId?: number },
+  id: number,
+  estimate: Estimates | undefined,
+  jobs: PipelineJob[],
+  jobsError: string | undefined,
+  at: string,
+): Pipeline {
+  const { error: _cleared, ...rest } = p
+  return {
+    ...rest,
+    id,
+    state: parsed.state,
+    ...(parsed.ref ? { ref: parsed.ref } : {}),
+    ...(parsed.url ? { url: parsed.url } : {}),
+    ...(parsed.startedAt ? { startedAt: parsed.startedAt } : {}),
+    ...(parsed.pipelineFinishedAt ? { pipelineFinishedAt: parsed.pipelineFinishedAt } : {}),
+    ...(parsed.durationS !== undefined ? { durationS: parsed.durationS } : {}),
+    ...(parsed.source ? { source: parsed.source } : {}),
+    ...(parsed.workflowId !== undefined ? { workflowId: parsed.workflowId } : {}),
+    ...(estimate !== undefined ? { estimateS: estimate.s, jobEstimates: estimate.jobs } : {}),
+    jobs,
+    checkedAt: at,
+    ...(isFinished(parsed.state) && !p.finishedAt ? { finishedAt: at } : {}),
+    ...(jobsError ? { error: jobsError } : {}),
+  }
+}
+
 // Fetches one pipeline's head and jobs (finding it by commit first, when only the sha is known).
 async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
+  if (p.provider === 'github') return refreshGithubRun($, p, at)
   const project = encodeURIComponent(p.project)
   // By commit, GitLab's list answer already carries the newest pipeline's status: no second call.
   const head =
@@ -435,23 +541,7 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
       : undefined
   const jobsText = await glabApi($, `projects/${project}/pipelines/${id}/jobs?per_page=100`)
   const jobs: PipelineJob[] = (jobsText.text === undefined ? undefined : parseJobs(jobsText.text)) ?? p.jobs
-  const { error: _cleared, ...rest } = p
-  return {
-    ...rest,
-    id,
-    state: parsed.state,
-    ...(parsed.ref ? { ref: parsed.ref } : {}),
-    ...(parsed.url ? { url: parsed.url } : {}),
-    ...(parsed.startedAt ? { startedAt: parsed.startedAt } : {}),
-    ...(parsed.pipelineFinishedAt ? { pipelineFinishedAt: parsed.pipelineFinishedAt } : {}),
-    ...(parsed.durationS !== undefined ? { durationS: parsed.durationS } : {}),
-    ...(parsed.source ? { source: parsed.source } : {}),
-    ...(estimate !== undefined ? { estimateS: estimate.s, jobEstimates: estimate.jobs } : {}),
-    jobs,
-    checkedAt: at,
-    ...(isFinished(parsed.state) && !p.finishedAt ? { finishedAt: at } : {}),
-    ...(jobsText.error ? { error: jobsText.error } : {}),
-  }
+  return merged(p, parsed, id, estimate, jobs, jobsText.error, at)
 }
 
 // The session's own unfinished pipelines, refreshed and saved (only when something moved).
@@ -701,8 +791,9 @@ export const register: Register = (on, options) => {
             {isOpen
               ? stageGroups(p.jobs).map(group => (
                   <Box flexDirection="column">
-                    <Text dimColor>{group.stage}</Text>
-                    <Box flexDirection="column" paddingLeft={INDENT}>
+                    {/* GitHub runs have no stages: their jobs list flat, without a heading. */}
+                    {group.stage ? <Text dimColor>{group.stage}</Text> : null}
+                    <Box flexDirection="column" paddingLeft={group.stage ? INDENT : 0}>
                       {group.jobs.map(j => {
                         const jm = JOB_MARK[j.state]
                         const est = p.jobEstimates?.[j.name]

@@ -27,8 +27,8 @@ send only what changed:
 | `needsYou` | replaces your asks — only what the USER must do/decide; `[]` once answered |
 | `tasks`    | upserts `{ id?, title?, status?, note? }` — by `id`, or by exact `title`   |
 | `remove`   | task ids to delete (mistakes, not finished work — finish with `done`)      |
-| `watch`    | GitLab pipelines to follow live: `{ project: "group/name", pipeline: <id> }` or `{ project, sha }`, optional `label` |
-| `unwatch`  | pipeline keys (`group/name#<id>`, or `group/name@<sha>`) to stop showing   |
+| `watch`    | CI to follow live — GitLab: `{ project: "group/name", pipeline: <id> }` or `{ project, sha }`; GitHub Actions: `{ provider: "github", project: "owner/repo", run: <id> }` or `{ provider: "github", project, sha }`; optional `label` |
+| `unwatch`  | pipeline keys (`group/name#<id>`, `group/name@<sha>`, `gh:owner/repo#<id>`, `gh:owner/repo@<sha>`) to stop showing |
 
 - `status`: `todo` (○), `doing` (●), `blocked` (✗ — say why in `note`), `done` (✓), `skipped` (–).
 - New tasks need a `title`; the tool assigns ids (`t1`, `t2`, …) and answers with the full list —
@@ -37,11 +37,16 @@ send only what changed:
 
 ## Pipelines
 
-Whenever you push and the pipeline matters (you will report on it, or wait for it), `watch` it in
-the same call that sets `now`: by id when you know it, else by the pushed commit's `sha` (the
-plugin finds the pipeline once GitLab creates it). The plugin then refreshes it through the user's
-`glab` every 15 s until it finishes — do not poll it yourself just to update the pane. You still
-read the result yourself (e.g. `glab api …/pipelines/<id>/jobs`) before reporting on it.
+**After EVERY `git push` to a repo that has CI, `watch` the push at once** — whether or not you
+will report on it. CI = a `.gitlab-ci.yml` (GitLab) or any `.github/workflows/*.yml` (GitHub
+Actions; use `provider: "github"` and `project: "owner/repo"`). Watch in the same call that sets
+`now`: by id when you know it, else by the pushed commit's `sha` (`git rev-parse HEAD` of what you
+pushed) — the plugin finds the pipeline / run once the forge creates it. A push that starts several
+GitHub workflows: watch by sha shows the newest run; add the others by `run` id if they matter.
+
+The plugin then refreshes it through the user's `glab` (GitLab) or `gh` (GitHub) every 15 s until it
+finishes — do not poll it yourself just to update the pane. You still read the result yourself
+(e.g. `glab api …/pipelines/<id>/jobs`, `gh run view <id>`) before reporting on it.
 
 ## The routine
 

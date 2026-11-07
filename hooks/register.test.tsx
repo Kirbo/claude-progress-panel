@@ -113,8 +113,19 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
   })
   const runs: string[][] = []
   const gitlab = new Map<string, unknown>()
+  const github = new Map<string, unknown>()
   on('process.run', (_, e) => {
     runs.push([...e.argv])
+    if (e.argv[0] === 'gh') {
+      // `gh api <path>`: answered from the fake GitHub (or the CLI's 404 when the path is unknown).
+      const body = github.get(e.argv[2] as string)
+      return {
+        value:
+          body === undefined
+            ? { exitCode: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' }
+            : { exitCode: 0, stdout: JSON.stringify(body), stderr: '' },
+      } as never
+    }
     if (e.argv[0] === 'glab') {
       // `glab api <path>`: answered from the fake GitLab (or a CLI failure when the path is unknown).
       const body = gitlab.get(e.argv[2] as string)
@@ -133,6 +144,7 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
   return {
     clock,
     gitlab,
+    github,
     runs,
     store,
     status,
@@ -1101,5 +1113,103 @@ test('a pipeline or job GitLab gave no address draws no link', async ($, on) => 
   await ui.press({ key: 'pipe:s-me:g/app#42' })
   expect(await ui.findAll({ type: 'Link' })).toEqual([])
   expect(await texts(ui)).toContain('● lint')
+  await ui.unmount()
+})
+
+test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, ↗ links, estimate', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  const REPO = 'repos/Kirbo/ha'
+  const started = new Date(T0 - 30_000).toISOString()
+  const run = {
+    id: 900,
+    name: 'Validate',
+    status: 'in_progress',
+    conclusion: null,
+    head_branch: 'main',
+    head_sha: 'abc123',
+    event: 'push',
+    workflow_id: 77,
+    run_started_at: started,
+    updated_at: started,
+    html_url: 'https://github.com/Kirbo/ha/actions/runs/900',
+  }
+  world.github.set(`${REPO}/actions/runs?head_sha=abc123&per_page=1`, {
+    total_count: 1,
+    workflow_runs: [run],
+  })
+  world.github.set(`${REPO}/actions/runs/900`, run)
+  world.github.set(`${REPO}/actions/runs/900/jobs?per_page=100`, {
+    total_count: 2,
+    jobs: [
+      {
+        id: 2,
+        name: 'Lint',
+        status: 'in_progress',
+        conclusion: null,
+        started_at: started,
+        completed_at: null,
+        html_url: 'https://github.com/Kirbo/ha/actions/runs/900/job/2',
+      },
+      {
+        id: 1,
+        name: 'Tests',
+        status: 'completed',
+        conclusion: 'success',
+        started_at: started,
+        completed_at: new Date(T0 - 10_000).toISOString(),
+        html_url: 'https://github.com/Kirbo/ha/actions/runs/900/job/1',
+      },
+    ],
+  })
+  // Similar runs: the same workflow, branch and event, successful — durations from the list.
+  world.github.set(`${REPO}/actions/workflows/77/runs?branch=main&event=push&status=success&per_page=6`, {
+    total_count: 2,
+    workflow_runs: [
+      {
+        ...run,
+        id: 899,
+        status: 'completed',
+        conclusion: 'success',
+        run_started_at: started,
+        updated_at: new Date(T0 + 30_000).toISOString(),
+      },
+      {
+        ...run,
+        id: 898,
+        status: 'completed',
+        conclusion: 'success',
+        run_started_at: started,
+        updated_at: new Date(T0 + 90_000).toISOString(),
+      },
+    ],
+  })
+  world.github.set(`${REPO}/actions/runs/899/jobs?per_page=100`, { total_count: 0, jobs: [] })
+  world.github.set(`${REPO}/actions/runs/898/jobs?per_page=100`, { total_count: 0, jobs: [] })
+  await start($)
+  await update($, { watch: [{ provider: 'github', project: 'Kirbo/ha', sha: 'abc123' }] })
+
+  const saved = read(disk, `${DIR}/s-me.json`).pipelines?.[0]
+  expect(saved?.key).toBe('gh:Kirbo/ha@abc123')
+  expect(saved?.provider).toBe('github')
+  expect(saved?.id).toBe(900)
+  expect(saved?.state).toBe('running')
+  expect(saved?.estimateS).toBe(90)
+  // Only `gh` was asked — never `glab` for a GitHub run.
+  expect(world.runs.some(r => r[0] === 'glab')).toBe(false)
+
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:gh:Kirbo/ha@abc123' }))?.text).toBe(
+    '▸ ha #900 · main · running  ████░░░░ 1/2 · 30s / ~2m',
+  )
+  await ui.press({ key: 'pipe:s-me:gh:Kirbo/ha@abc123' })
+  const hrefs = (await ui.findAll({ type: 'Link' })).map(l => l.props.href)
+  expect(hrefs).toEqual([
+    'https://github.com/Kirbo/ha/actions/runs/900',
+    'https://github.com/Kirbo/ha/actions/runs/900/job/1',
+    'https://github.com/Kirbo/ha/actions/runs/900/job/2',
+  ])
+  // Flat: no empty stage heading between the counts and the jobs.
+  expect(await texts(ui)).not.toContain('')
   await ui.unmount()
 })

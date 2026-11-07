@@ -253,3 +253,25 @@ test('job estimates: each job name averaged over the similar runs where it succe
     },
   ])
 })
+
+test('applyWatch: a GitHub run by id or by commit, keyed apart from GitLab (gh:owner/repo…)', () => {
+  const { list, errors } = applyWatch(
+    [],
+    [
+      { provider: 'github', project: 'Kirbo/switchboard-ha', run: 42328151166 },
+      { provider: 'github', project: 'Kirbo/switchboard-ha', pipeline: 42328151166 },
+      { provider: 'github', project: 'Kirbo/switchboard-ha', sha: '8e6b5df', label: 'ha' },
+      // GitLab stays the default, and the same numbers never collide with a GitHub run.
+      { project: 'Kirbo/switchboard-ha', pipeline: 42328151166 },
+      { provider: 'bitbucket' as never, project: 'x/y', pipeline: 1 },
+    ],
+    [],
+    iso(T0),
+  )
+  expect(list.map(p => [p.key, p.provider, p.id, p.label])).toEqual([
+    ['gh:Kirbo/switchboard-ha#42328151166', 'github', 42328151166, 'switchboard-ha'],
+    ['gh:Kirbo/switchboard-ha@8e6b5df', 'github', null, 'ha'],
+    ['Kirbo/switchboard-ha#42328151166', undefined, 42328151166, 'switchboard-ha'],
+  ])
+  expect(errors).toEqual(['watch[4]: unknown provider bitbucket (gitlab or github)'])
+})

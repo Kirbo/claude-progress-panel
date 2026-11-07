@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitLab links in 0.9.0
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -168,6 +168,35 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   · N failed` (+ canceled when any). It is folded by default once every pipeline succeeded and
   open otherwise. The person's fold/unfold is stored under the pipelines' current state signature,
   so it holds until a state changes — then the default applies again (news reopens the section).
+
+## GitHub Actions (0.10.0)
+
+Asked for 2026-11-07: "add support for GitHub pipelines, similarly to the current GitLab pipeline"
+— and every push to a repo with CI is watched (the bundled skill's rule).
+
+- **Watch input:** `{ provider: "github", project: "owner/repo", run: <id> }` (`pipeline` is
+  accepted as the run id) or `{ provider: "github", project, sha }`. No `provider` = GitLab, so
+  every older call and file stays valid. Keys carry a `gh:` prefix (`gh:owner/repo#<runId>`,
+  `gh:owner/repo@<sha>`), so a GitHub run never collides with a GitLab pipeline of the same number.
+  The stored pipeline gets `provider: "github"` and `workflowId`.
+- **Fetch:** the watching session asks the user's `gh api`: `repos/<o>/<r>/actions/runs/<id>`, or
+  `…/actions/runs?head_sha=<sha>&per_page=1` (the newest run of the commit — a push that starts
+  several workflows shows the newest; others can be watched by id), then
+  `…/actions/runs/<id>/jobs?per_page=100`. Same 15 s cadence, same stop on finish.
+- **States:** GitHub splits `status` (queued / requested / pending / waiting / in_progress /
+  completed) from `conclusion`. In progress → running; waiting (an environment approval) → manual;
+  completed → success / neutral = success, failure / timed_out / startup_failure = failed,
+  cancelled / stale = canceled, skipped, action_required = manual; anything else → queued.
+- **Durations** (verified against the real API 2026-11-07): a run has no duration field;
+  `updated_at − run_started_at` of a completed run equals the `…/timing` endpoint's
+  `run_duration_ms`, so no extra call. A job's is `completed_at − started_at`; a queued job's
+  `started_at` is not a start and is ignored.
+- **Jobs** have no stage: they list flat (no heading), in job-id order, with their `html_url` as
+  the `↗` link and the same hover rows.
+- **Estimate:** `…/actions/workflows/<workflow_id>/runs?branch=<ref>&event=<event>&status=success&per_page=6`
+  (`/actions/runs` ignores a `workflow_id` filter) — up to 5 runs other than this one, durations
+  read from the list itself (unlike GitLab, no detail call), plus each sample's jobs for the job
+  estimates; cached 24 h under `estimate-gh:<repo>@<workflow>:<ref>:<event>`.
 
 ## Out of scope / later
 

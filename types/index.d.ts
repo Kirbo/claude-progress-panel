@@ -35,10 +35,19 @@ export type PipelineJob = {
   url?: string
 }
 
-/** A CI pipeline the session watches; the session's own timer refreshes it through `glab`. */
+/** Where a watched pipeline lives: GitLab CI (the default) or GitHub Actions. */
+export type PipelineProvider = 'gitlab' | 'github'
+
+/**
+ * A CI pipeline the session watches; the session's own timer refreshes it through `glab` (GitLab)
+ * or `gh` (GitHub Actions, where a "pipeline" is one workflow run).
+ */
 export type Pipeline = {
-  /** `project#id`, or `project@sha` until the pipeline of that commit is found. */
+  /** `project#id`, or `project@sha` until the pipeline of that commit is found; GitHub runs carry
+   *  a `gh:` prefix (`gh:owner/repo#<runId>`). */
   key: string
+  /** Absent = GitLab (every pipeline written before 0.10.0). */
+  provider?: PipelineProvider
   project: string
   id: number | null
   sha?: string
@@ -54,8 +63,11 @@ export type Pipeline = {
   startedAt?: string
   pipelineFinishedAt?: string
   durationS?: number
-  /** How GitLab triggered it (push, schedule, web, …) — similar runs are matched on it. */
+  /** How it was triggered (GitLab's source / GitHub's event: push, schedule, …) — similar runs
+   *  are matched on it. */
   source?: string
+  /** GitHub only: the workflow the run belongs to — similar runs are that workflow's. */
+  workflowId?: number
   /** Average duration (s) of up to 5 earlier successful runs of the same ref + source; null = none. */
   estimateS?: number | null
   /** Per job name: the average duration (s) in those similar runs where that job succeeded. */
