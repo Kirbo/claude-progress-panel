@@ -11,6 +11,14 @@ It is a Claude Code plugin: a hooks module that draws the pane and gives the age
 never leaves your machine: they share a local folder. The plugin's only network call of its own is
 the update check (below); pipelines are read by your own `glab` / `gh` / `tea` / command.
 
+> **A personal tool, shared as is.** I built it for how I work — several sessions at once, in a
+> wide terminal, waiting on CI — and publish it in case it helps someone else. Best effort: issues
+> and merge requests are welcome on
+> [GitLab](https://gitlab.com/KirboDev/agentic-coding/claude-progress-panel/-/issues), but there are
+> no promises of support or of keeping up with every Claude Code change. Worth knowing before you
+> install: it asks every session to keep its entry current, which costs a few tokens and a tool
+> call every few steps; it needs a recent Claude Code; and the pane wants a wide terminal.
+
 ## Install
 
 Needs Claude Code **2.1.318 or newer**.
@@ -21,6 +29,10 @@ In a terminal (any directory):
 claude plugin marketplace add https://gitlab.com/KirboDev/agentic-coding/claude-progress-panel.git
 claude plugin install progress-panel@claude-progress-panel --scope user
 ```
+
+(The [GitHub mirror](https://github.com/Kirbo/claude-progress-panel) works too:
+`claude plugin marketplace add Kirbo/claude-progress-panel`. GitLab is where it is developed and
+where the release notes live.)
 
 Or inside a Claude Code session:
 

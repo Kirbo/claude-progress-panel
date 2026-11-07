@@ -91,4 +91,9 @@ How to _use_ the panel during a task is the bundled skill:
   --line-height 1.3 -o docs/screenshots/pane.png pane.ansi < /dev/null` (stdin closed, or it waits).
 - Scripts (`scripts/*.mjs`) are plain Node with no dependencies, tested with `node --test scripts/`.
 - Commits: Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
+- **GitHub mirror** (`github.com/Kirbo/claude-progress-panel`, remote `github`; read-only copy for
+  discovery — issues and MRs live on GitLab, its issues/wiki are off): after every push of `main`
+  to `origin`, and once CI's release job has tagged it, run `git fetch --tags origin && git push
+  github main --tags` so the mirror never lags. GitLab stays canonical (`repository` in the
+  manifest, the update check, the Releases).
 - Public repo: no secrets, hostnames, private URLs or personal paths in code, docs or tests.
