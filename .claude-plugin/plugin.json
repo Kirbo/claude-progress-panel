@@ -40,6 +40,22 @@
       "default": "",
       "required": false
     },
+    "paneColumns": {
+      "type": "string",
+      "title": "Sidebar width (columns)",
+      "description": "How wide the pane opens when docked beside a fullscreen chat (Claude Code caps it at 45% of the terminal; dragging its edge wins). 0 = Claude Code's default.",
+      "options": ["0", "48", "60", "72", "84", "96", "110"],
+      "default": "84",
+      "required": false
+    },
+    "paneRows": {
+      "type": "string",
+      "title": "Height above the prompt (rows)",
+      "description": "How tall the pane opens when a narrow terminal shows it full width above the prompt (dragging it wins). 0 = Claude Code's default (a third).",
+      "options": ["0", "12", "16", "20", "24", "30", "40"],
+      "default": "20",
+      "required": false
+    },
     "sortTasksBy": {
       "type": "string",
       "title": "Sort tasks by",

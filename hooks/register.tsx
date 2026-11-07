@@ -256,6 +256,21 @@ function optionNumber(options: PluginOptions, name: string, fallback: number): n
   return Number.isFinite(n) && n >= 0 ? n : fallback
 }
 
+// The pane's open request: its id and title, plus the size the settings ask for — the sidebar's
+// width beside a fullscreen transcript and the block's height above the prompt. Requests, not grants:
+// Claude Code caps the width (45 % of the terminal) and a size the person dragged to wins. 0 = ask
+// for none (Claude Code's own default).
+function paneArgs(options: PluginOptions): { id: string; title: string; columns?: number; rows?: number } {
+  const columns = optionNumber(options, 'paneColumns', 84)
+  const rows = optionNumber(options, 'paneRows', 20)
+  return {
+    id: PANE,
+    title: t('pane.title'),
+    ...(columns > 0 ? { columns } : {}),
+    ...(rows > 0 ? { rows } : {}),
+  }
+}
+
 function optionString(options: PluginOptions, name: string): string {
   const raw = options[name]
   return typeof raw === 'string' ? raw : ''
@@ -1079,7 +1094,7 @@ export const register: Register = (on, options) => {
     detached(ownManifest($))
     detached(checkRelease($))
     $.clock.every(3_600_000, () => detached(checkRelease($)))
-    void $.ui.open({ id: PANE, title: t('pane.title') })
+    void $.ui.open(paneArgs(options))
     return next(e)
   })
 
@@ -1136,7 +1151,7 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'progress' }, async $ => {
     await scan($, options)
-    await $.ui.open({ id: PANE, title: t('pane.title') })
+    await $.ui.open(paneArgs(options))
     return { text: t('command.opened') }
   })
 

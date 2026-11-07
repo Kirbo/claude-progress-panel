@@ -73,7 +73,12 @@ function engine(
   const toasts: string[] = []
   on('command.register', () => ({ value: { command: 'progress' } }))
   on('tool.register', () => ({ value: { tool: TOOL } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  // Every pane open, as asked (the sizes it requests included).
+  const opened: Record<string, unknown>[] = []
+  on('ui.open', (_, e) => {
+    opened.push({ ...(e as unknown as Record<string, unknown>) })
+    return { value: { isPlaced: true } }
+  })
   on('ui.status', (_, e) => {
     status.push(e.text)
     return { value: undefined }
@@ -214,6 +219,7 @@ function engine(
     github,
     tea,
     agents,
+    opened,
     programs,
     net,
     web,
@@ -609,6 +615,26 @@ test("an agent the session doesn't list still reports, under its id", async ($, 
     label: 'agent abcdef12',
   })
 })
+
+test('the pane asks for a sidebar width and an inline height — 84 columns and 20 rows by default', async ($, on) => {
+  const world = engine(on, makeDisk())
+  await start($)
+  expect(world.opened.at(-1)).toMatchObject({ id: 'progress', columns: 84, rows: 20 })
+  await $.command.run({ command: 'progress' } as never)
+  expect(world.opened.at(-1)).toMatchObject({ id: 'progress', columns: 84, rows: 20 })
+})
+
+test(
+  'the pane sizes follow the settings; 0 leaves the size to Claude Code',
+  { options: { paneColumns: '110', paneRows: '0' } },
+  async ($, on) => {
+    const world = engine(on, makeDisk())
+    await start($)
+    const asked = world.opened.at(-1) ?? {}
+    expect(asked.columns).toBe(110)
+    expect('rows' in asked).toBe(false)
+  },
+)
 
 test('resolveProgressDir: the option wins, ~ expands, else <config dir>/progress', () => {
   expect(resolveProgressDir('/abs/dir/', { home: '/h' })).toBe('/abs/dir')

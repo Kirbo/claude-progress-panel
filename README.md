@@ -48,7 +48,10 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 ## Use
 
 - The pane opens by itself when a session starts in a terminal at least ~144 columns wide; on a
-  narrower one (or after closing it) type **`/progress`**.
+  narrower one (or after closing it) type **`/progress`**. In a fullscreen terminal from 110 columns
+  it docks beside the chat as a sidebar — drag its edge (or resize it with the keyboard) and Claude
+  Code keeps that width; on a narrower one it sits full width above the prompt, its height likewise
+  draggable. Its starting size comes from the settings below.
 - **Every session reports on its own.** The plugin adds a short rule to each session's system
   prompt: on any task with more than one step the agent's first call sets `now` and the task
   list, **in the order it will do them**; it moves each task as it goes, gives a task its
@@ -146,6 +149,8 @@ folded "Finished" row.
 | `keepEndedSessionsDays` | 0 (never), 1, 3, 7, 14, 30              | 7                      |
 | `sortTasksBy`           | plan, status, title, created, done      | plan                   |
 | `ciCommand`             | a command line (see Pipelines)          | (off)                  |
+| `paneColumns`           | sidebar width: 0 (Claude Code's), 48–110 | 84                     |
+| `paneRows`              | height above the prompt: 0 (a third), 12–40 | 20                 |
 
 The environment variable `PROGRESS_PANEL_DIR` overrides `progressDir` for one session (a demo
 or test folder) without moving everyone else's.
