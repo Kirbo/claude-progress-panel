@@ -1192,8 +1192,11 @@ export const register: Register = (on, options) => {
     const pipelineBlock = (sessionId: string, p: Pipeline) => {
       const key = `pipe:${sessionId}:${p.key}`
       const finished = isFinished(p.state)
-      // Folded by default (compact): header + counts; a press opens the stage/job tree.
-      const isOpen = folded[key] ?? false
+      // Folded by default (compact): header + counts; a press opens the stage/job tree. The choice is
+      // kept per run state: unfolded while running, a pipeline folds again once it finishes (it
+      // would otherwise reopen unfolded when a new pipeline opens the section).
+      const foldKey = finished ? `${key}@${p.finishedAt ?? 'finished'}` : key
+      const isOpen = folded[foldKey] ?? false
       const counts = jobCounts(p.jobs)
       const label = t('pipe.header', {
         fold: isOpen ? '▾' : '▸',
@@ -1233,13 +1236,13 @@ export const register: Register = (on, options) => {
             gap={2}
             hover={ROW_HOVER}
           >
-            <Button key={key} label={label} plain onPress={() => void toggle($, key, isOpen)} />
+            <Button key={key} label={label} plain onPress={() => void toggle($, foldKey, isOpen)} />
             <Box flexDirection="row">
               <Button
                 key={`pipestate:${key}`}
                 label={status}
                 plain
-                onPress={() => void toggle($, key, isOpen)}
+                onPress={() => void toggle($, foldKey, isOpen)}
               />
               {openLink(p.url)}
               {finished && p.finishedAt ? (

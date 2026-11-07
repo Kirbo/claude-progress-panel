@@ -1276,6 +1276,29 @@ test('a watched pipeline shows live: progress bar, counts and every job', async 
   await ui.unmount()
 })
 
+test('a pipeline unfolded while it ran folds again once it finishes; a press opens it again', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  let ui = await pane($)
+  await ui.press({ key: 'pipe:s-me:g/app#42' })
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('▾ app #42 · main')
+  await ui.unmount()
+
+  world.gitlab.set(PIPE, { id: 42, status: 'success', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'success']))
+  await world.clock.advance(15_000)
+  ui = await pane($)
+  await ui.press({ key: 'pipelines' })
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('▸ app #42 · main')
+  await ui.press({ key: 'pipe:s-me:g/app#42' })
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('▾ app #42 · main')
+  await ui.unmount()
+})
+
 test('the session polls its unfinished pipelines every 15 s and stops once they finish', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)

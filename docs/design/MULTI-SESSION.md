@@ -305,6 +305,9 @@ a local plugin.)
 - **Repo headings per list:** the open list groups by repo only when its OPEN tasks span more
   than one repo; the Done list groups the same way on its own (`▾ <repo>  N done`, open by
   default, each foldable). No prefixes.
+- **A finished pipeline folds again (0.16.1):** a pipeline's fold choice is kept per run state
+  (`pipe:<session>:<key>` while running, `…@<finishedAt>` once finished), so one unfolded while it
+  ran no longer reopens unfolded when a new pipeline opens the section.
 - **Filter highlight:** while the filter is on, every hit in a title, note, detail, step or done
   row is drawn `inverse` (`splitMatches`); a foldable task's title moves beside its fold arrow as
   text (a Button label cannot be styled), and a hit inside its detail or steps unfolds it until the
