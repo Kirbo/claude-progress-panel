@@ -228,7 +228,10 @@ function optionString(options: PluginOptions, name: string): string {
 async function progressDir($: EngineInterface, options: PluginOptions): Promise<string | undefined> {
   const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE'))
   const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
-  return resolveProgressDir(optionString(options, 'progressDir'), { home, configDir })
+  // The environment wins over the setting: a demo or test session points at its own folder
+  // without moving every other session's (the setting is per user).
+  const override = (await $.env.get('PROGRESS_PANEL_DIR')) ?? ''
+  return resolveProgressDir(override.trim() || optionString(options, 'progressDir'), { home, configDir })
 }
 
 async function nowIso($: EngineInterface): Promise<string> {

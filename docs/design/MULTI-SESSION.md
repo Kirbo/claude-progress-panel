@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -232,6 +232,55 @@ Asked for 2026-11-07: "add support for GitHub pipelines, similarly to the curren
   (`/actions/runs` ignores a `workflow_id` filter) — up to 5 runs other than this one, durations
   read from the list itself (unlike GitLab, no detail call), plus each sample's jobs for the job
   estimates; cached 24 h under `estimate-gh:<repo>@<workflow>:<ref>:<event>`.
+
+## Forges, hosts and any CI (0.14.0)
+
+Asked for 2026-11-07: "usable for everyone, for any git repository", including repos behind
+authorization.
+
+- **Auth:** the plugin never calls an API itself; it runs the person's own CLI (`glab`, `gh`,
+  `tea`) or command, with their login — private repos work for anyone who can read them.
+- **Host:** `watch` takes `host`; without it a watch of the session's own repo takes the host of
+  its `origin` remote (`hooks/forges.ts` `parseRemote`: scp-style, ssh:// and https://; an ssh
+  config alias — no dot — names none; `ssh.github.com` / `altssh.gitlab.com` map to the web hosts),
+  else the forge's public host. Every glab / gh call passes `--hostname`, so the answer never
+  depends on the directory the command runs in (an orphan is polled from another session's
+  repo). Keys carry a non-public host: `git.example.com/team/app#7`, `gh:ghe.example.com/o/r#9`.
+- **Gitea / Forgejo** (`provider: "gitea"`, host required): `tea api --login <login> <path>`, the
+  login whose URL is on the host (`tea login list --output json`, cached a minute). Gitea's API is
+  GitHub-shaped; Forgejo's has its own names (`commit_sha`, `prettyref`, `started`/`stopped` with
+  Go's zero time for unset, nanosecond `duration`, a plain job list without times) — both from the
+  servers' swagger (gitea.com 1.25, codeberg.org Forgejo 17), `hooks/gitea.ts`. No estimates yet.
+- **Custom CI command** (`provider: "command"`): the `ciCommand` setting only — never the tool's
+  input, so no session can make another pane run a command. Split on whitespace, placeholders
+  filled inside their own argument, no shell; a project starting with `-` is refused. Output: the
+  JSON in the README (`hooks/command.ts`); nothing / `{}` = not created yet.
+- `$.process.run` is CLI-only: on a surface with no local CLI, pipelines cannot refresh; the rest
+  of the pane works.
+
+## Sessions and tasks (0.14.0)
+
+- **Name:** the plugin API has no call for the session's name, but the classic SessionStart (a
+  resumed session) and UserPromptSubmit events carry `session_title`; the latest is stored as
+  `session.title` and drawn over the repo/folder name. A `/rename` shows from the next prompt.
+- **Plan order** (`sort: plan`, the default; the store key moved to `sortTasksBy-2` once so the new
+  default applies): tasks in the order the session lists them; the tool's `order` (ids or exact
+  titles) puts the named ones first, the rest after in their order.
+- **Details and steps:** `detail` (text) and `steps` (`{ title, status }`, replaced whole) make a
+  task a fold — mark, title Button, `██░░ n/m` closed steps on the right; unfolded: detail, then
+  each step with its mark.
+- **Repos:** `repo` on a task; when a session's tasks span several repos, open tasks group under
+  `▾ <repo>  N open` (plan order, each repo where its first task stands; untagged = the session's
+  `project`) and Done rows read `<repo> · <title>`.
+- **Filter:** an Input beside Sessions (pane state `filter`): case-insensitive over title, note,
+  detail and step titles, open and done; a session without a match is hidden while it is on.
+- **Transcript:** a `ui.render` hook on `ToolUse` / `ToolResult` draws a progress_update call as
+  one dim line (`◦ Progress · <now> · N tasks · watching N pipelines`) and hides its result;
+  expanded (ctrl+o), errored or interrupted calls draw the engine's own rows.
+- **Releases:** CI's `release` job on main — every `version` without a `v<version>` tag gets a
+  GitLab Release at the commit that first carried it, notes from git-cliff over the commits since
+  the previous bump (`scripts/release.mjs`, `cliff.toml`); job token; the first run backfilled
+  0.1.0 → 0.13.1.
 
 ## Out of scope / later
 

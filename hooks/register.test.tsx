@@ -824,6 +824,18 @@ test('the sort Button cycles plan → status → title → created → done and 
   await ui.unmount()
 })
 
+test(
+  'PROGRESS_PANEL_DIR moves the store over the setting (a demo or test folder)',
+  { options: { progressDir: '~/status' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    engine(on, disk, { env: { HOME: '/home/me', PROGRESS_PANEL_DIR: '~/demo/' } })
+    await start($)
+    await update($, { now: 'x' })
+    expect(disk.files.has('/home/me/demo/s-me.json')).toBe(true)
+  },
+)
+
 test('CLAUDE_CONFIG_DIR moves the store', async ($, on) => {
   const disk = makeDisk()
   engine(on, disk, { env: { HOME: '/home/me', CLAUDE_CONFIG_DIR: '/cfg' } })

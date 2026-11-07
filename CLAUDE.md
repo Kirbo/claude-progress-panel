@@ -79,6 +79,16 @@ How to _use_ the panel during a task is the bundled skill:
   `.age-recipients`, public keys, is in the repo). `node scripts/seal.mjs status|unseal|verify`.
 - **Maintenance (`/maintain`, `.claude/skills/maintain/`):** toolchain + CI pin bumps (releases at
   least 1 day old), docs reconciliation, all gates.
+- **Screenshots** (`docs/screenshots/pane.png`, shown in the README): demo data, never a real
+  session's store, captured from a headless session — no window opens. Regenerate after a visible
+  change, in one go (the demo's "running" pipeline gets polled after a minute):
+  `node scripts/screenshot-demo.mjs <empty dir>`, then in tmux (`mise exec tmux@3.7c --`, own
+  socket `-L panel-demo`, 190×60) run `PROGRESS_PANEL_DIR=<dir> claude --plugin-dir . --settings
+  '{"enabledPlugins":{"progress-panel@claude-progress-panel":false}}'` from a folder Claude Code
+  already trusts, wait for the pane, `tmux capture-pane -e -p > full.ansi`, kill the server,
+  `node scripts/ansi-crop.mjs full.ansi <pane's first column> 84 1 30 > pane.ansi`, and render with
+  `mise exec aqua:charmbracelet/freeze@0.2.2 -- freeze --window --padding 24 --font.size 14
+  --line-height 1.3 -o docs/screenshots/pane.png pane.ansi < /dev/null` (stdin closed, or it waits).
 - Scripts (`scripts/*.mjs`) are plain Node with no dependencies, tested with `node --test scripts/`.
 - Commits: Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
 - Public repo: no secrets, hostnames, private URLs or personal paths in code, docs or tests.

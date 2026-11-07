@@ -42,14 +42,19 @@ send only what changed:
 ## Pipelines
 
 **After EVERY `git push` to a repo that has CI, `watch` the push at once** — whether or not you
-will report on it. CI = a `.gitlab-ci.yml` (GitLab) or any `.github/workflows/*.yml` (GitHub
-Actions; use `provider: "github"` and `project: "owner/repo"`). Watch in the same call that sets
+will report on it. CI = a `.gitlab-ci.yml` (GitLab), any `.github/workflows/*.yml` (GitHub
+Actions: `provider: "github"`, `project: "owner/repo"`), any `.gitea/workflows/` or
+`.forgejo/workflows/` (`provider: "gitea"`, `project: "owner/repo"`), or another CI the user set
+up a **Custom CI command** for (`provider: "command"`, `project` = the name that command knows).
+**Host:** a watch of the session's own repo takes its `origin` remote's host by itself; for any
+other repo on a self-hosted forge (GitLab, GitHub Enterprise, Gitea/Forgejo) add `host`
+(`"git.example.com"`). Gitea/Forgejo always need one (given, or the own repo's). Watch in the same call that sets
 `now`: by id when you know it, else by the pushed commit's `sha` (`git rev-parse HEAD` of what you
 pushed) — the plugin finds the pipeline / run once the forge creates it. A push that starts several
 GitHub workflows: watch by sha shows the newest run; add the others by `run` id if they matter.
 
-The plugin then refreshes it through the user's `glab` (GitLab) or `gh` (GitHub) every 15 s until it
-finishes — do not poll it yourself just to update the pane. You still read the result yourself
+The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), `tea`
+(Gitea/Forgejo) or their custom command every 15 s until it finishes — do not poll it yourself just to update the pane. You still read the result yourself
 (e.g. `glab api …/pipelines/<id>/jobs`, `gh run view <id>`) before reporting on it.
 
 ## The routine
