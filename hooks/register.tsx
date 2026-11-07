@@ -567,7 +567,7 @@ export const register: Register = (on, options) => {
   }).catch(() => ({ result: t('tool.failed') }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button } = $.ui.resolve(e)
+    const { Box, Text, Button, Link } = $.ui.resolve(e)
     const all = await read($, sessions)
     const folded = await read($, folds)
     const lastCheck = await read($, checked)
@@ -616,6 +616,15 @@ export const register: Register = (on, options) => {
       rest: stoppedOther > 0 ? t('pane.pipelinesCanceled', { n: stoppedOther }) : '',
     })
 
+    // A ↗ that opens a GitLab page in the browser: the surface's own hyperlink (OSC 8 on the
+    // terminal), so the click is the terminal's — nothing opens unless the person clicks it.
+    const openLink = (url: string | undefined) =>
+      url ? (
+        <Text dimColor>
+          <Link href={url} label={t('pipe.open')} />
+        </Text>
+      ) : null
+
     const pipelineBlock = (sessionId: string, p: Pipeline) => {
       const key = `pipe:${sessionId}:${p.key}`
       const finished = isFinished(p.state)
@@ -646,19 +655,22 @@ export const register: Register = (on, options) => {
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" gap={2}>
             <Button key={key} label={label} plain onPress={() => void toggle($, key, isOpen)} />
-            {finished && p.finishedAt ? (
-              <Button
-                key={`unpipe:${sessionId}:${p.key}`}
-                label={t('pipe.dismiss')}
-                plain
-                dimColor
-                onPress={() =>
-                  void dismiss($, options, sessionId, [
-                    { id: `pipeline:${p.key}`, doneAt: p.finishedAt ?? null },
-                  ])
-                }
-              />
-            ) : null}
+            <Box flexDirection="row">
+              {openLink(p.url)}
+              {finished && p.finishedAt ? (
+                <Button
+                  key={`unpipe:${sessionId}:${p.key}`}
+                  label={t('pipe.dismiss')}
+                  plain
+                  dimColor
+                  onPress={() =>
+                    void dismiss($, options, sessionId, [
+                      { id: `pipeline:${p.key}`, doneAt: p.finishedAt ?? null },
+                    ])
+                  }
+                />
+              ) : null}
+            </Box>
           </Box>
           <Box flexDirection="column" paddingLeft={INDENT * 2}>
             {p.error ? <Text color="red">{p.error}</Text> : null}
@@ -698,7 +710,7 @@ export const register: Register = (on, options) => {
                               : est !== undefined
                                 ? formatEstimate(est)
                                 : ''
-                        return (
+                        const line = (
                           <Text color={jm.color}>
                             {t(duration ? 'pipe.jobTimed' : 'pipe.job', {
                               glyph: jm.sign,
@@ -706,6 +718,14 @@ export const register: Register = (on, options) => {
                               duration,
                             })}
                           </Text>
+                        )
+                        return j.url ? (
+                          <Box flexDirection="row" justifyContent="space-between" gap={2}>
+                            {line}
+                            {openLink(j.url)}
+                          </Box>
+                        ) : (
+                          line
                         )
                       })}
                     </Box>

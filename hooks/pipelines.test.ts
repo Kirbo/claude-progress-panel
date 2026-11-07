@@ -238,10 +238,18 @@ test('job estimates: each job name averaged over the similar runs where it succe
           status: 'running',
           duration: null,
           started_at: '2026-11-06T20:00:00.000Z',
+          web_url: 'https://gitlab.com/g/a/-/jobs/1',
         },
       ]),
     ),
   ).toEqual([
-    { name: 'a', stage: 's', state: 'running', durationS: null, startedAt: '2026-11-06T20:00:00.000Z' },
+    {
+      name: 'a',
+      stage: 's',
+      state: 'running',
+      durationS: null,
+      startedAt: '2026-11-06T20:00:00.000Z',
+      url: 'https://gitlab.com/g/a/-/jobs/1',
+    },
   ])
 })

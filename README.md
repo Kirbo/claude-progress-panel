@@ -16,13 +16,13 @@ session, and each session's tasks grouped and foldable, with a Done list you can
 │   web · Refactoring the settings view                          │
 │                                                                │
 │ ▾ Pipelines  1 watching · 2 succeeded · 0 failed               │
-│   ▾ api #3038537023 · main · running  ████░░░░ 4/8 · 6m33s / ~9m│
+│   ▾ api #30385 · main · running  ████░░░░ 4/8 · 6m33s / ~9m ↗  │
 │       2 running · 1 queued · 1 skipped · 3 passed · 0 failed   │
 │       images                                                   │
-│         ✓ build-image:linux:amd64    1m18s                     │
-│         ● build-image:windows:arm64  1m10s / ~3m               │
+│         ✓ build-image:linux:amd64    1m18s                  ↗  │
+│         ● build-image:windows:arm64  1m10s / ~3m            ↗  │
 │       verify                                                   │
-│         ○ check                                                │
+│         ○ check                                             ↗  │
 │                                                                │
 │ Sessions  Sort: status                                         │
 │   ▾ api (this session) · 22:05 · 2 open · 3 done               │
@@ -110,7 +110,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   all of them succeeded (it opens again on news). Pipelines are listed newest first; a success folds to one line, and one that succeeded more
   than an hour ago moves into a folded "Finished" row. A pipeline starts folded — its header and
   counts — and a press opens every job; ✕ removes
-  a finished one. Needs [`glab`](https://gitlab.com/gitlab-org/cli)
+  a finished one. The `↗` at the right edge of a pipeline, and of each job when unfolded, is a
+  link to its GitLab page: click it to open it in your browser (an OSC 8 terminal hyperlink — the
+  terminal opens it; in a terminal without link support the address is printed after it). Needs [`glab`](https://gitlab.com/gitlab-org/cli)
   on PATH and logged in (`glab auth status`).
 - **Upgrading from 0.1:** the single `~/.claude/progress.json` is no longer read.
 

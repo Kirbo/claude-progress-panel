@@ -582,10 +582,12 @@ const PIPE = 'projects/g%2Fapp/pipelines/42'
 
 function jobsOf(...states: [string, string][]): unknown[] {
   return states.map(([name, status], i) => ({
+    id: 100 + i,
     name,
     stage: 'build',
     status,
     duration: status === 'running' ? null : 10 + i,
+    web_url: `https://gitlab.example/g/app/-/jobs/${100 + i}`,
   }))
 }
 
@@ -1045,4 +1047,50 @@ test('a pipeline left without an estimate gets one once similar runs exist (the 
   world.store.set(key, { ...(world.store.get(key) as object), atMs: T0 - 25 * HOUR })
   await world.clock.advance(15_000)
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.estimateS).toBe(1980)
+})
+
+test('a pipeline and each unfolded job carry a ↗ link to GitLab, on the right edge', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, {
+    id: 42,
+    status: 'running',
+    ref: 'main',
+    web_url: 'https://gitlab.example/g/app/-/pipelines/42',
+  })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'success'], ['test', 'running']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+
+  const ui = await pane($)
+  const hrefs = async () => (await ui.findAll({ type: 'Link' })).map(l => l.props.href)
+  // Folded: the pipeline's own link only, beside its header.
+  expect(await hrefs()).toEqual(['https://gitlab.example/g/app/-/pipelines/42'])
+  const link = await ui.find({ type: 'Link' })
+  expect(link?.props.label).toBe(' ↗ ')
+
+  // Unfolded: one per job too, the job rows spread so the link sits at the right edge.
+  await ui.press({ key: 'pipe:s-me:g/app#42' })
+  expect(await hrefs()).toEqual([
+    'https://gitlab.example/g/app/-/pipelines/42',
+    'https://gitlab.example/g/app/-/jobs/100',
+    'https://gitlab.example/g/app/-/jobs/101',
+  ])
+  // The job lines read as before: the link is a sibling, not part of the job's text.
+  expect(await texts(ui)).toContain('✓ lint  10s')
+  await ui.unmount()
+})
+
+test('a pipeline or job GitLab gave no address draws no link', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, [{ id: 1, name: 'lint', stage: 'build', status: 'running' }])
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  const ui = await pane($)
+  await ui.press({ key: 'pipe:s-me:g/app#42' })
+  expect(await ui.findAll({ type: 'Link' })).toEqual([])
+  expect(await texts(ui)).toContain('● lint')
+  await ui.unmount()
 })

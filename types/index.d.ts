@@ -31,6 +31,8 @@ export type PipelineJob = {
   durationS: number | null
   /** When the job started (GitLab's started_at) — a running job's elapsed time counts from it. */
   startedAt?: string
+  /** The job's page on GitLab (its web_url) — the pane's ↗ link. */
+  url?: string
 }
 
 /** A CI pipeline the session watches; the session's own timer refreshes it through `glab`. */

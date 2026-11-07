@@ -173,6 +173,7 @@ export function parseJobs(text: string): PipelineJob[] | undefined {
       state: jobState(j.status as string),
       durationS: typeof j.duration === 'number' ? j.duration : null,
       ...(typeof j.started_at === 'string' ? { startedAt: j.started_at } : {}),
+      ...(typeof j.web_url === 'string' ? { url: j.web_url } : {}),
     }))
 }
 

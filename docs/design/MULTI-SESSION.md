@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitLab links in 0.9.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -151,6 +151,12 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   5, cached with the rest) and stores each job name's average over the runs where it succeeded as
   `jobEstimates`. Unfolded, a running job reads `elapsed / ~estimate` (from its `started_at`), a
   queued one `~estimate`, a finished one its real time; a job without history shows none.
+- Links (0.9.0, asked for 2026-11-07: "open the one I want to view"): a `↗` at the right edge of
+  every pipeline's header, and of every job row when unfolded, is the surface's own `Link`
+  element to GitLab's `web_url` (the pipeline's, and each job's — the jobs API carries `web_url`,
+  verified against the real API 2026-11-07, stored as the job's `url`). On the terminal it is an
+  OSC 8 hyperlink, so the terminal opens the browser on the person's click; the plugin never runs
+  an opener itself. A pipeline or job without a `web_url` draws no link.
 - Duration (0.5.1): running → now − GitLab's `started_at` (ticks with the pane's 2 s redraw);
   finished → GitLab's `duration` (as its UI shows), else `finished_at − started_at`; omitted
   before the pipeline has started.

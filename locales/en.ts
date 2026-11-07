@@ -22,6 +22,8 @@ export const en = {
   'pipe.durationEstimate': ' · {d} / {e}',
   'pipe.ref': ' · {ref}',
   'pipe.dismiss': '  ✕  ',
+  // Opens the pipeline's / job's GitLab page in the browser (an OSC 8 link; padded like ✕ for a wider hitbox).
+  'pipe.open': ' ↗ ',
   'pipe.state.queued': 'queued',
   'pipe.state.running': 'running',
   'pipe.state.success': 'success',
