@@ -76,7 +76,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   (`{ project, sha }` for GitLab, `{ provider: "github", project: "owner/repo", sha }` for GitHub).
 - Every `▾`/`▸` line folds; **Sort** cycles plan (the default: the order the agent will do them) →
   status → title → created → done (remembered); **Filter tasks** beside it keeps only the tasks
-  whose title, note, detail or steps hold what you type (sessions without a match step aside); **✕**
+  whose title, note, detail or steps hold what you type (sessions without a match step aside); a
+  session whose tasks span several repos groups them under one foldable heading per repo; **✕**
   removes a done task (or an ended session), **Clear all** (shown while its Done list is open) empties it. A
   pipeline's state, progress and times sit on the right of its row, beside `↗` / `✕`; pressing
   them folds it like its name does.

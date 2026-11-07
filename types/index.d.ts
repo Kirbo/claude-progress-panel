@@ -13,6 +13,8 @@ export type Task = {
   note?: string
   /** A longer description, shown when the task is unfolded. */
   detail?: string
+  /** The repo the task belongs to, when the session works in several; absent = the session's own. */
+  repo?: string
   /** Subtasks, shown when unfolded; the title counts the closed ones (`n/m`). */
   steps?: Step[]
   createdAt: string

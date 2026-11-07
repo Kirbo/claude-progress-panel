@@ -11,6 +11,7 @@ import {
   applyUpdate,
   formatClock,
   formatTime,
+  groupByRepo,
   isBlank,
   isClosed,
   matchesTask,
@@ -151,6 +152,11 @@ const INPUT_SCHEMA = {
           title: { type: 'string' },
           status: { type: 'string', enum: ['todo', 'doing', 'blocked', 'done', 'skipped'] },
           note: { type: 'string' },
+          repo: {
+            type: 'string',
+            description:
+              'The repo this task belongs to (its name), when the session works in more than one; the pane groups tasks by it. "" clears.',
+          },
           detail: {
             type: 'string',
             description: 'A longer description, shown when the person unfolds the task; "" clears it.',
@@ -1145,11 +1151,11 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const doneRow = (sessionId: string, task: Task) => (
+    const doneRow = (sessionId: string, task: Task, repo?: string) => (
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Text dimColor>
           {t(task.status === 'done' ? 'pane.doneItem' : 'pane.skippedItem', {
-            title: task.title,
+            title: repo ? t('pane.repoTask', { repo, title: task.title }) : task.title,
             when: formatTime(task.doneAt ?? task.updatedAt, nowMs),
           })}
         </Text>
@@ -1175,6 +1181,9 @@ export const register: Register = (on, options) => {
         shown.filter(x => isClosed(x.status)),
         by === 'status' || by === 'plan' ? 'done' : by,
       )
+      // Tasks of several repos group by repo (in plan order, open and done alike).
+      const repos = groupByRepo(sortTasks(shown, by === 'status' ? 'plan' : by), file.session.project)
+      const repoOf = (task: Task) => (repos.length > 1 ? task.repo || file.session.project : undefined)
       const groupKey = `group:${id}`
       const doneKey = `done:${id}`
       const isOpen = folded[groupKey] ?? ended === null
@@ -1209,7 +1218,36 @@ export const register: Register = (on, options) => {
           </Box>
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT}>
-              {open.map(task => taskRow(id, task))}
+              {repos.length > 1
+                ? repos.map(({ repo, tasks }) => {
+                    const repoKey = `repo:${id}:${repo}`
+                    const isRepoOpen = folded[repoKey] ?? true
+                    const openHere = sortTasks(
+                      tasks.filter(x => !isClosed(x.status)),
+                      by,
+                    )
+                    if (openHere.length === 0) return null
+                    return (
+                      <Box flexDirection="column">
+                        <Button
+                          key={repoKey}
+                          label={t('pane.repoGroup', {
+                            fold: isRepoOpen ? '▾' : '▸',
+                            repo,
+                            open: openHere.length,
+                          })}
+                          plain
+                          onPress={() => void toggle($, repoKey, isRepoOpen)}
+                        />
+                        {isRepoOpen ? (
+                          <Box flexDirection="column" paddingLeft={INDENT}>
+                            {openHere.map(task => taskRow(id, task))}
+                          </Box>
+                        ) : null}
+                      </Box>
+                    )
+                  })
+                : open.map(task => taskRow(id, task))}
               {done.length > 0 ? (
                 <Box flexDirection="row" justifyContent="space-between" gap={2}>
                   <Button
@@ -1233,7 +1271,7 @@ export const register: Register = (on, options) => {
               ) : null}
               {isDoneOpen ? (
                 <Box flexDirection="column" paddingLeft={INDENT}>
-                  {done.map(task => doneRow(id, task))}
+                  {done.map(task => doneRow(id, task, repoOf(task)))}
                 </Box>
               ) : null}
             </Box>

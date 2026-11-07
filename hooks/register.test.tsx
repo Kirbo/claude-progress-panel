@@ -661,6 +661,44 @@ test('the Filter beside Sessions keeps only the tasks whose text matches, open a
   await ui.unmount()
 })
 
+test("a session's tasks group by repo once they span more than one; untagged ones are the session's own", async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, {
+    tasks: [
+      { title: 'Fix the race', repo: 'claude-progress-panel' },
+      { title: 'Push next' },
+      { title: 'Write the README', repo: 'claude-progress-panel' },
+      { title: 'Ship 0.13', repo: 'claude-progress-panel', status: 'done' },
+    ],
+  })
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'repo:s-me:claude-progress-panel' }))?.text).toBe(
+    '▾ claude-progress-panel  2 open',
+  )
+  expect((await ui.find({ type: 'Button', key: 'repo:s-me:app' }))?.text).toBe('▾ app  1 open')
+  let lines = await texts(ui)
+  // In plan order, each repo where its first task stands.
+  expect(lines.indexOf('○ Fix the race')).toBeLessThan(lines.indexOf('○ Write the README'))
+  expect(lines.indexOf('○ Write the README')).toBeLessThan(lines.indexOf('○ Push next'))
+  await ui.press({ key: 'done:s-me' })
+  expect((await texts(ui)).some(l => l.startsWith('✓ claude-progress-panel · Ship 0.13'))).toBe(true)
+
+  // A repo folds on its own.
+  await ui.press({ key: 'repo:s-me:claude-progress-panel' })
+  lines = await texts(ui)
+  expect(lines).not.toContain('○ Fix the race')
+  expect(lines).toContain('○ Push next')
+  await ui.unmount()
+
+  // One repo only: no sub-groups.
+  await update($, { tasks: [{ id: 't2', repo: 'claude-progress-panel' }] })
+  const one = await pane($)
+  expect(await one.find({ type: 'Button', key: 'repo:s-me:claude-progress-panel' })).toBeUndefined()
+  await one.unmount()
+})
+
 test('the sort Button cycles plan → status → title → created → done and remembers it', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)

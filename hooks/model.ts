@@ -18,6 +18,8 @@ export type TaskInput = {
   note?: string
   /** A longer description; '' clears it. */
   detail?: string
+  /** The repo the task belongs to (its name); '' clears it. */
+  repo?: string
   /** Subtasks, replacing the task's whole list; [] clears it. */
   steps?: StepInput[]
 }
@@ -119,7 +121,7 @@ export function applyUpdate(
     const old = tasks[at] as Task
     const next = status ?? old.status
     const doneAt = isClosed(next) ? (isClosed(old.status) ? old.doneAt : nowIso) : null
-    const { detail: _d, steps: _s, ...kept } = old
+    const { detail: _d, steps: _s, repo: _r, ...kept } = old
     tasks[at] = {
       ...kept,
       ...extras(old, patch, i, errors),
@@ -240,14 +242,30 @@ export function pruneDone(file: SessionFile, hours: number, nowMs: number): Sess
 const STATUS_ORDER: Record<Status, number> = { blocked: 0, doing: 1, todo: 2, done: 3, skipped: 4 }
 const time = (iso: string | null) => (iso ? Date.parse(iso) || 0 : 0)
 
+/**
+ * A session's tasks by repo, each repo where its first task stands (`repo` absent = `own`); one
+ * group when they all share one repo.
+ */
+export function groupByRepo(tasks: readonly Task[], own: string): { repo: string; tasks: Task[] }[] {
+  const groups: { repo: string; tasks: Task[] }[] = []
+  for (const task of tasks) {
+    const repo = task.repo || own
+    const group = groups.find(g => g.repo === repo)
+    if (group) group.tasks.push(task)
+    else groups.push({ repo, tasks: [task] })
+  }
+  return groups
+}
+
 /** A task's detail and steps after a patch: given ones replace, '' / [] clear, absent ones stay. */
 function extras(
-  old: Pick<Task, 'detail' | 'steps'>,
+  old: Pick<Task, 'detail' | 'steps' | 'repo'>,
   patch: TaskInput,
   i: number,
   errors: string[],
-): Pick<Task, 'detail' | 'steps'> {
+): Pick<Task, 'detail' | 'steps' | 'repo'> {
   const detail = patch.detail !== undefined ? patch.detail : old.detail
+  const repo = patch.repo !== undefined ? patch.repo.trim() : old.repo
   let steps = old.steps
   if (patch.steps !== undefined) {
     steps = [] as Step[]
@@ -262,7 +280,11 @@ function extras(
       }
     }
   }
-  return { ...(detail ? { detail } : {}), ...(steps && steps.length > 0 ? { steps } : {}) }
+  return {
+    ...(detail ? { detail } : {}),
+    ...(steps && steps.length > 0 ? { steps } : {}),
+    ...(repo ? { repo } : {}),
+  }
 }
 
 /** Whether a task's text holds the query (case-insensitive: title, note, detail, step titles); a blank query matches all. */

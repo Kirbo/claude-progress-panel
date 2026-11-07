@@ -313,3 +313,11 @@ test('matchesTask: case-insensitive over title, note, detail and step titles; bl
   for (const q of ['ship', 'ci', 'TAG', 'push', '', '  ']) expect(matchesTask(t, q)).toBe(true)
   expect(matchesTask(t, 'deploy')).toBe(false)
 })
+
+test('applyUpdate: a task takes the repo it belongs to; "" clears it', () => {
+  const at = iso(T0)
+  let file = applyUpdate(fresh(), { tasks: [{ title: 'x', repo: ' claude-progress-panel ' }] }, at).file
+  expect(file.tasks[0]?.repo).toBe('claude-progress-panel')
+  file = applyUpdate(file, { tasks: [{ id: 't1', repo: '' }] }, at).file
+  expect(file.tasks[0]?.repo).toBeUndefined()
+})
