@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -281,6 +281,16 @@ authorization.
   GitLab Release at the commit that first carried it, notes from git-cliff over the commits since
   the previous bump (`scripts/release.mjs`, `cliff.toml`); job token; the first run backfilled
   0.1.0 → 0.13.1.
+
+## Version and update notice (0.15.0)
+
+The header row's right corner: `v<version>` from the plugin's own manifest (`$.plugin.root`), and
+— when the newest GitLab Release of the manifest's `repository` is later — `v<newer> available`
+plus `↗` to its release page. The lookup (`releases?per_page=1`, anonymous, through
+`$.http.fetch`) runs at session start and hourly, but answers from the store (`latest-release`,
+shared by every session) while it is under 6 h old; a failure keeps the last answer. Skipped
+entirely under `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. (A deliberate poll: GitLab cannot push to
+a local plugin.)
 
 ## Out of scope / later
 

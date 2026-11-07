@@ -146,6 +146,8 @@ declare module 'claude-code' {
       sort: Shaped<SortChoice>
       /** The pane's task filter, as typed (empty = off). */
       filter: Shaped<string>
+      /** The plugin's newest release, as last looked up (null = not known). */
+      release: Shaped<{ version: string; url: string } | null>
       /** When this pane last listed the folder successfully (ms since the epoch; 0 = not yet). */
       checked: Shaped<number>
     }

@@ -7,8 +7,9 @@ session, and each session's tasks grouped and foldable, with a Done list you can
 ![The Progress pane: needs you, now, live pipelines and every session's tasks — grouped by repo, in plan order](docs/screenshots/pane.png)
 
 It is a Claude Code plugin: a hooks module that draws the pane and gives the agent a
-`progress_update` tool, plus a skill that teaches the agent when to call it. Nothing leaves your
-machine: sessions share a local folder.
+`progress_update` tool, plus a skill that teaches the agent when to call it. Your sessions' status
+never leaves your machine: they share a local folder. The plugin's only network call of its own is
+the update check (below); pipelines are read by your own `glab` / `gh` / `tea` / command.
 
 ## Install
 
@@ -54,6 +55,11 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   match step aside.
 - Every `▾`/`▸` line folds. **✕** removes a done task (or an ended session); **Clear all** (shown
   while its Done list is open) empties the list.
+- **Version and updates:** the pane's top-right corner shows the version it runs; when a newer
+  release exists it adds `vX.Y.Z available ↗`, linking that release's notes. The newest release is
+  looked up from this repository's GitLab Releases at most every 6 h, shared by every session on
+  the machine; `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` turns the check off.
+- **Closed the pane?** `/progress` in any session opens it again.
 - **In the transcript** a `progress_update` call is one quiet line (`◦ Progress · <now> · 2 tasks`);
   ctrl+o shows it in full.
 

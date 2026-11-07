@@ -47,6 +47,7 @@ import {
   stageGroups,
   visiblePipelines,
 } from './pipelines'
+import { isNewer, latestReleaseUrl, parseLatestRelease } from './update'
 
 const PANE = 'progress'
 const TOOL = 'progress_update'
@@ -78,6 +79,20 @@ const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {}
 })
 const SIDECAR = '.dismissed.json'
 const folds = atom({ plugin: 'progress-panel', key: 'folds' } as const, {} as Folds, { shape: 'folds-1' })
+// The newest release of the plugin (from the shared store or a check), drawn in the pane's corner.
+const releasing = atom(
+  { plugin: 'progress-panel', key: 'release' } as const,
+  null as { version: string; url: string } | null,
+  { shape: 'release-1' },
+)
+// The version this copy runs, read from its own manifest once.
+let manifest: { version: string; repository: string } | undefined
+// GitLab cannot push its releases to a local plugin, so the newest one is looked up — at most every
+// 6 h across every session on the machine (the answer is shared in the plugin's store).
+// poll-exception: no push from GitLab to a local plugin
+const RELEASE_CHECK_MS = 6 * 3_600_000
+const RELEASE_KEY = 'latest-release'
+
 // The text the person typed into the Filter beside Sessions: tasks without it are hidden.
 const filtering = atom({ plugin: 'progress-panel', key: 'filter' } as const, '', { shape: 'filter-1' })
 // When the last successful folder listing finished, so the header can show the pane is live.
@@ -348,6 +363,40 @@ async function forgetSession($: EngineInterface, options: PluginOptions, id: str
     const { [id]: _gone, ...rest } = all
     return rest
   })
+}
+
+async function ownManifest($: EngineInterface): Promise<{ version: string; repository: string }> {
+  if (!manifest) {
+    const text = await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`).catch(() => undefined)
+    let raw: { version?: unknown; repository?: unknown } = {}
+    try {
+      raw = text === undefined ? {} : JSON.parse(text)
+    } catch {
+      raw = {}
+    }
+    manifest = {
+      version: typeof raw.version === 'string' ? raw.version : '',
+      repository: typeof raw.repository === 'string' ? raw.repository : '',
+    }
+  }
+  return manifest
+}
+
+// The newest release: the shared answer when it is under 6 h old, else one look at GitLab (a
+// failure keeps the last answer). Never with nonessential traffic turned off.
+async function checkRelease($: EngineInterface): Promise<void> {
+  type Cached = { version: string; url: string; checkedAtMs: number }
+  const cached = (await $.store.get(RELEASE_KEY)) as Cached | undefined
+  const known =
+    cached && typeof cached.version === 'string' ? { version: cached.version, url: cached.url } : null
+  if (await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) return update($, releasing, () => known)
+  const nowMs = await $.clock.now()
+  if (cached && nowMs - cached.checkedAtMs < RELEASE_CHECK_MS) return update($, releasing, () => known)
+  const url = latestReleaseUrl((await ownManifest($)).repository)
+  const answer = url ? await $.http.fetch(url).catch(() => undefined) : undefined
+  const latest = answer?.ok ? parseLatestRelease(answer.text) : undefined
+  if (latest) await $.store.set(RELEASE_KEY, { ...latest, checkedAtMs: nowMs } satisfies Cached)
+  await update($, releasing, () => latest ?? known)
 }
 
 /** One line for a progress_update call in the transcript: its `now`, how many tasks, watches. */
@@ -922,6 +971,9 @@ export const register: Register = (on, options) => {
     await scan($, options)
     $.clock.every(REFRESH_MS, () => void scan($, options))
     $.clock.every(PIPELINE_POLL_MS, () => void pollAll($, options))
+    void ownManifest($)
+    void checkRelease($)
+    $.clock.every(3_600_000, () => void checkRelease($))
     void $.ui.open({ id: PANE, title: t('pane.title') })
     return next(e)
   })
@@ -1000,6 +1052,8 @@ export const register: Register = (on, options) => {
     const nowMs = await $.clock.now()
     const by = await sortBy($, options)
     const query = await read($, filtering)
+    const release = await read($, releasing)
+    const version = (await ownManifest($)).version
     const ordered = orderSessions(all, me)
     const live = ordered.filter(f => f.session.endedAt === null)
     const needs = liveNeeds(all)
@@ -1390,14 +1444,26 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column">
-        <Text dimColor>
-          {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs), project: sessionName(newest) })} · `}
-          {nowMs - lastCheck > STALE_AFTER_MS ? (
-            <Text color="yellow">{t('pane.checkedStale', { when: formatClock(lastCheck) })}</Text>
-          ) : (
-            t('pane.checked', { when: formatClock(lastCheck) })
-          )}
-        </Text>
+        <Box flexDirection="row" justifyContent="space-between" gap={2}>
+          <Text dimColor>
+            {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs), project: sessionName(newest) })} · `}
+            {nowMs - lastCheck > STALE_AFTER_MS ? (
+              <Text color="yellow">{t('pane.checkedStale', { when: formatClock(lastCheck) })}</Text>
+            ) : (
+              t('pane.checked', { when: formatClock(lastCheck) })
+            )}
+          </Text>
+          {/* The corner: this copy's version, and a newer release with a link to its notes. */}
+          <Box flexDirection="row" gap={1}>
+            {release && version && isNewer(release.version, version) ? (
+              <Box flexDirection="row">
+                <Text color="yellow">{t('pane.newerVersion', { version: release.version })}</Text>
+                {openLink(release.url)}
+              </Box>
+            ) : null}
+            {version ? <Text dimColor>{t('pane.version', { version })}</Text> : null}
+          </Box>
+        </Box>
         {needs.length > 0 ? (
           <Box flexDirection="column" marginTop={1}>
             <Text bold inverse color="magenta">

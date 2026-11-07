@@ -10,6 +10,9 @@ type On = Parameters<TestBody>[1]
 type $Test = Parameters<TestBody>[0]
 
 const T0 = Date.UTC(2026, 10, 6, 20, 0, 0)
+const PANEL_REPO = 'https://gitlab.com/KirboDev/agentic-coding/claude-progress-panel'
+const LATEST =
+  'https://gitlab.com/api/v4/projects/KirboDev%2Fagentic-coding%2Fclaude-progress-panel/releases?per_page=1'
 const HOUR = 3_600_000
 const DIR = '/home/me/.claude/progress'
 const TOOL = 'mcp__progress-panel__progress_update'
@@ -114,7 +117,22 @@ function engine(
   })
   on('fs.read', (_, e) => {
     const f = disk.files.get(e.path)
+    if (!f && e.path.endsWith('/.claude-plugin/plugin.json'))
+      return { value: JSON.stringify({ name: 'progress-panel', version: '0.14.0', repository: PANEL_REPO }) }
     return f ? { value: f.text } : { deny: `ENOENT: ${e.path}` }
+  })
+  // The web, as the plugin's $.http.fetch reaches it: answers by URL (else a 404), every fetch recorded.
+  const web = new Map<string, unknown>()
+  const fetched: string[] = []
+  on('http.fetch', (_, e) => {
+    fetched.push(e.url)
+    const body = web.get(e.url)
+    return {
+      value:
+        body === undefined
+          ? { status: 404, ok: false, headers: {}, text: '{"message":"404 Not Found"}' }
+          : { status: 200, ok: true, headers: {}, text: JSON.stringify(body) },
+    } as never
   })
   on('fs.write', (_, e) => {
     disk.tick += 1
@@ -192,6 +210,8 @@ function engine(
     tea,
     programs,
     net,
+    web,
+    fetched,
     runs,
     store,
     status,
@@ -333,6 +353,70 @@ test('the transcript draws a progress_update call as one quiet line, in full onl
   } as never)
   expect(await texts(result)).toEqual([])
   await result.unmount()
+})
+
+test("the pane's corner shows its version, and a newer release with a link to its notes", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.web.set(LATEST, [
+    { tag_name: 'v0.14.0', _links: { self: 'https://gitlab.com/p/-/releases/v0.14.0' } },
+  ])
+  await start($)
+  await update($, { now: 'x' })
+  let ui = await pane($)
+  expect(await ui.find({ type: 'Text', text: 'v0.14.0' })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /available/ })).toBeUndefined()
+  await ui.unmount()
+  expect(world.fetched).toEqual([LATEST])
+  expect(world.store.get('latest-release')).toMatchObject({ version: '0.14.0', checkedAtMs: T0 })
+  ui = await pane($)
+  await ui.unmount()
+  expect(world.fetched).toHaveLength(1)
+})
+
+test('a check older than 6 h (shared by every session) is made again; a newer release links its notes', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.store.set('latest-release', { version: '0.14.0', url: 'u', checkedAtMs: T0 - 7 * HOUR })
+  world.web.set(LATEST, [
+    { tag_name: 'v0.15.0', _links: { self: 'https://gitlab.com/p/-/releases/v0.15.0' } },
+  ])
+  await start($)
+  await update($, { now: 'x' })
+  expect(world.fetched).toEqual([LATEST])
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Text', text: /available/ }))?.text).toBe('v0.15.0 available')
+  const links = await ui.findAll({ type: 'Link' })
+  expect(links.some(l => l.props.href === 'https://gitlab.com/p/-/releases/v0.15.0')).toBe(true)
+  await ui.unmount()
+})
+
+test('a fresh shared check is reused; a failed one keeps the last answer', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.store.set('latest-release', { version: '0.15.0', url: 'u15', checkedAtMs: T0 - HOUR })
+  await start($)
+  expect(world.fetched).toEqual([])
+  world.store.set('latest-release', { version: '0.15.0', url: 'u15', checkedAtMs: T0 - 7 * HOUR })
+  await world.clock.advance(HOUR)
+  // The web answers 404: the old answer stays, so the pane still offers 0.15.0.
+  expect(world.fetched).toEqual([LATEST])
+  await update($, { now: 'x' })
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Text', text: /available/ }))?.text).toBe('v0.15.0 available')
+  await ui.unmount()
+})
+
+test('no update check when nonessential traffic is off; the version still shows', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk, { env: { HOME: '/home/me', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' } })
+  await start($)
+  await update($, { now: 'x' })
+  await world.clock.advance(HOUR)
+  expect(world.fetched).toEqual([])
+  const ui = await pane($)
+  expect(await ui.find({ type: 'Text', text: 'v0.14.0' })).toBeTruthy()
+  await ui.unmount()
 })
 
 test('resolveProgressDir: the option wins, ~ expands, else <config dir>/progress', () => {
@@ -1519,8 +1603,9 @@ test('rows with an action are full-width, the action pushed to the right edge', 
   const ui = await pane($)
   await ui.press({ key: 'done:s-me' })
   const spread = (await ui.findAll({ type: 'Box' })).filter(b => b.props.justifyContent === 'space-between')
-  // the session header row, the Done row (Clear all) and one row per done task (✕)
-  expect(spread.length).toBe(4)
+  // the pane header (its version in the corner), the session header row, the Done row (Clear all)
+  // and one row per done task (✕)
+  expect(spread.length).toBe(5)
   await ui.unmount()
 })
 

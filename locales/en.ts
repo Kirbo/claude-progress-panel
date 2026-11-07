@@ -22,6 +22,8 @@ export const en = {
   'call.asks_other': '{count} asks for you',
   'call.updated': 'updated',
   'pane.sessions': 'Sessions',
+  'pane.version': 'v{version}',
+  'pane.newerVersion': 'v{version} available',
   'pane.filter': 'Filter tasks',
   'pane.pipelines': '{fold} Pipelines  {watching} watching · {succeeded} succeeded · {failed} failed{rest}',
   'pane.pipelinesCanceled': ' · {n} canceled',
