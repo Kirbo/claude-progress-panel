@@ -74,6 +74,10 @@ const sorting = atom({ plugin: 'progress-panel', key: 'sort' } as const, '' as S
 // starts quiet again, seeded on its first scan).
 let seenNeeds: Set<string> | undefined
 
+/** A pointer over a pipeline or job row lights the whole row (a theme key: dim on dark and light
+ *  themes alike), so the ↗ at its right edge is visibly that row's. */
+const ROW_HOVER = { backgroundColor: 'subtle' } as const
+
 const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> = {
   success: { sign: '✓', color: 'green' },
   failed: { sign: '✗', color: 'red' },
@@ -653,7 +657,13 @@ export const register: Register = (on, options) => {
       const width = Math.max(0, ...p.jobs.map(j => j.name.length))
       return (
         <Box flexDirection="column">
-          <Box flexDirection="row" justifyContent="space-between" gap={2}>
+          <Box
+            key={`row:${key}`}
+            flexDirection="row"
+            justifyContent="space-between"
+            gap={2}
+            hover={ROW_HOVER}
+          >
             <Button key={key} label={label} plain onPress={() => void toggle($, key, isOpen)} />
             <Box flexDirection="row">
               {openLink(p.url)}
@@ -711,7 +721,7 @@ export const register: Register = (on, options) => {
                                 ? formatEstimate(est)
                                 : ''
                         const line = (
-                          <Text color={jm.color}>
+                          <Text color={jm.color} hover={{ underline: true }}>
                             {t(duration ? 'pipe.jobTimed' : 'pipe.job', {
                               glyph: jm.sign,
                               name: duration ? j.name.padEnd(width) : j.name,
@@ -719,13 +729,19 @@ export const register: Register = (on, options) => {
                             })}
                           </Text>
                         )
-                        return j.url ? (
-                          <Box flexDirection="row" justifyContent="space-between" gap={2}>
+                        // Every job row is its own hover scope: the row lights and its text
+                        // underlines, so the ↗ at the right edge reads as that row's.
+                        return (
+                          <Box
+                            key={`row:${key}:${group.stage}:${j.name}`}
+                            flexDirection="row"
+                            justifyContent="space-between"
+                            gap={2}
+                            hover={ROW_HOVER}
+                          >
                             {line}
                             {openLink(j.url)}
                           </Box>
-                        ) : (
-                          line
                         )
                       })}
                     </Box>

@@ -1078,6 +1078,15 @@ test('a pipeline and each unfolded job carry a ↗ link to GitLab, on the right 
   ])
   // The job lines read as before: the link is a sibling, not part of the job's text.
   expect(await texts(ui)).toContain('✓ lint  10s')
+  // Each row is its own hover scope (a keyed Box, unique among its siblings): the pointer lights
+  // the whole row, so the ↗ at its right edge reads as that row's. (The test kit hands a tree's
+  // props without the surface-only `hover` styles, so the scopes are what is pinned here.)
+  const rows = (await ui.findAll({ type: 'Box' })).filter(b => String(b.props.key ?? '').startsWith('row:'))
+  expect(rows.map(b => b.props.key)).toEqual([
+    'row:pipe:s-me:g/app#42',
+    'row:pipe:s-me:g/app#42:build:lint',
+    'row:pipe:s-me:g/app#42:build:test',
+  ])
   await ui.unmount()
 })
 
