@@ -17,6 +17,7 @@ import {
   pruneDone,
   sortTasks,
   splitMatches,
+  syncAgents,
   visibleTasks,
 } from './model'
 
@@ -405,4 +406,37 @@ test('applyAgentUpdate upserts one agent entry from a patch, never touching the 
   expect(file.agents?.[0]?.tasks[0]?.status).toBe('done')
   expect(file.agents?.[0]?.now).toBe('x')
   expect(file.tasks).toEqual([])
+})
+
+test('syncAgents lists a running subagent that never reports, and finishes one the list says ended', () => {
+  const at = iso(T0)
+  const listed = [
+    { id: 'r1', description: ' Audit: authz ', status: 'running' },
+    { id: 'd1', description: 'Already done', status: 'completed' },
+  ]
+  let file = syncAgents(fresh(), listed, at)
+  expect(file.agents).toEqual([
+    {
+      id: 'r1',
+      label: 'Audit: authz',
+      now: null,
+      tasks: [],
+      seq: 0,
+      startedAt: at,
+      updatedAt: at,
+      endedAt: null,
+    },
+  ])
+  // Nothing new: the same object back, so the caller skips the write.
+  expect(syncAgents(file, listed, iso(T0 + 1000))).toBe(file)
+  file = syncAgents(file, [{ id: 'r1', description: 'Audit: authz', status: 'failed' }], iso(T0 + 2000))
+  expect(file.agents?.[0]?.endedAt).toBe(iso(T0 + 2000))
+  // An entry the agent fed itself keeps its steps; one the list no longer names stays as it is.
+  let own = applyAgentUpdate(fresh(), { id: 'a1', label: 'Lane' }, { tasks: [{ title: 's' }] }, at).file
+  own = syncAgents(own, [{ id: 'a1', description: 'Lane', status: 'idle' }], at)
+  expect(own.agents?.[0]?.tasks).toHaveLength(1)
+  expect(syncAgents(own, [], at)).toBe(own)
+  expect(syncAgents(fresh(), [{ id: 'x', description: '', status: 'pending' }], at).agents?.[0]?.label).toBe(
+    'x',
+  )
 })

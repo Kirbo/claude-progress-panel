@@ -425,6 +425,48 @@ export function applyAgentUpdate(
   }
 }
 
+/** A subagent as the session lists it (`$.agent.list()`): its id, the Agent call's words, its state. */
+export type ListedAgent = { id: string; description: string; status: string }
+
+const AGENT_ENDED = new Set(['completed', 'failed', 'killed'])
+
+/**
+ * The session's subagents folded into its entries, so one that never reports (an agent without the
+ * progress tool, e.g. a read-only reviewer) still shows under Agents while it runs: a running one not
+ * yet known gets an entry labelled by its description, a known one the list says ended is finished.
+ * An agent the list no longer names is left as it is (SubagentStop finishes it). Unchanged when
+ * nothing differs, so the caller can skip the write.
+ */
+export function syncAgents(file: SessionFile, listed: readonly ListedAgent[], nowIso: string): SessionFile {
+  let agents = file.agents ?? []
+  let changed = false
+  for (const a of listed) {
+    const known = agents.find(x => x.id === a.id)
+    const ended = AGENT_ENDED.has(a.status)
+    if (!known) {
+      if (ended) continue
+      agents = [
+        ...agents,
+        {
+          id: a.id,
+          label: a.description.trim() || a.id.slice(0, 8),
+          now: null,
+          tasks: [],
+          seq: 0,
+          startedAt: nowIso,
+          updatedAt: nowIso,
+          endedAt: null,
+        },
+      ]
+      changed = true
+    } else if (ended && known.endedAt === null) {
+      agents = agents.map(x => (x.id === a.id ? { ...x, endedAt: nowIso, updatedAt: nowIso } : x))
+      changed = true
+    }
+  }
+  return changed ? { ...file, agents, updatedAt: nowIso } : file
+}
+
 /** The subagent that stopped, marked finished (unchanged when it is unknown or already finished). */
 export function endAgent(file: SessionFile, id: string, nowIso: string): SessionFile {
   const agent = file.agents?.find(a => a.id === id)

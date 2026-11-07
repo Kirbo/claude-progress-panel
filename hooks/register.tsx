@@ -29,6 +29,7 @@ import {
   sortTasks,
   splitMatches,
   stepCounts,
+  syncAgents,
   visibleTasks,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
@@ -495,6 +496,7 @@ async function announce($: EngineInterface, all: Loaded, me: string): Promise<vo
 async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
+  await syncOwnAgents($, dir)
   const entries = await $.fs.list(dir).catch(() => undefined)
   // A failed listing keeps what the pane knows; its `checked` stamp then ages into "stale".
   if (!entries) return
@@ -701,6 +703,19 @@ async function runAgentUpdate(
   const steps = entry ? entry.tasks : []
   const done = steps.filter(x => isClosed(x.status)).length
   return [t('tool.agentSaved', { done, total: steps.length }), ...errors].join('\n')
+}
+
+// This session's subagents into its own file, so one that never reports (no progress tool, e.g. a
+// read-only reviewer) still shows under Agents while it runs. Written only when something changed.
+async function syncOwnAgents($: EngineInterface, dir: string): Promise<void> {
+  const listed = await $.agent.list().catch(() => [])
+  if (listed.length === 0) return
+  const at = await nowIso($)
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const synced = syncAgents(own, listed, at)
+    if (synced !== own) await save($, dir, synced)
+  })
 }
 
 // One line per running subagent for the coordinator's answer: label, steps, estimate.

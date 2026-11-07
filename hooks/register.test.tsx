@@ -568,6 +568,28 @@ test("a subagent's progress lands under its coordinator's session, never among t
   expect(JSON.stringify(mine)).toContain('Lane A: scopes 3/4, ~5 min left')
 })
 
+test('a subagent that never reports (no progress tool) still shows under Agents while it runs', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'coordinating the audit' })
+  world.agents.push({ id: 'rev-1', description: 'Audit: authz', type: 'security-auditor', status: 'running' })
+  await world.clock.advance(2100)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => [a.label, a.endedAt])).toEqual([
+    ['Audit: authz', null],
+  ])
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe(
+    '▾ Agents  1 running · 0 finished',
+  )
+  expect(await texts(ui)).toContain('● Audit: authz')
+  await ui.unmount()
+  // The list says it ended: finished on the next scan, even without a SubagentStop.
+  world.agents[0] = { ...world.agents[0], status: 'completed' } as (typeof world.agents)[number]
+  await world.clock.advance(2100)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.endedAt).not.toBeNull()
+})
+
 test('a subagent that stops is marked finished and folded under Agents — and stays, never cleaned up', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
