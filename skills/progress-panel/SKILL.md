@@ -27,6 +27,8 @@ send only what changed:
 | `needsYou` | replaces your asks — only what the USER must do/decide; `[]` once answered |
 | `tasks`    | upserts `{ id?, title?, status?, note? }` — by `id`, or by exact `title`   |
 | `remove`   | task ids to delete (mistakes, not finished work — finish with `done`)      |
+| `tasks[].steps`  | subtasks `{ title, status? }`, the whole list each time (`[]` clears); the pane shows n/m |
+| `tasks[].detail` | a longer description, shown when the person unfolds the task (`""` clears)          |
 | `order`    | task ids (or exact titles) in the order you will do them; the rest follow  |
 | `watch`    | CI to follow live — GitLab: `{ project: "group/name", pipeline: <id> }` or `{ project, sha }`; GitHub Actions: `{ provider: "github", project: "owner/repo", run: <id> }` or `{ provider: "github", project, sha }`; optional `label` |
 | `unwatch`  | pipeline keys (`group/name#<id>`, `group/name@<sha>`, `gh:owner/repo#<id>`, `gh:owner/repo@<sha>`) to stop showing |

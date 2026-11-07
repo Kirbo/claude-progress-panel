@@ -1,6 +1,6 @@
 // The session file and every pure operation on it — no I/O here (see store.ts for that).
 
-import type { Dismissal, Pipeline, SessionFile, SessionInfo, SidecarFile, Status, Task } from '../types'
+import type { Dismissal, Pipeline, SessionFile, SessionInfo, SidecarFile, Status, Step, Task } from '../types'
 
 export type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task }
 
@@ -10,7 +10,17 @@ export const STATUSES = ['todo', 'doing', 'blocked', 'done', 'skipped'] as const
 export const SORTS = ['plan', 'status', 'title', 'created', 'done'] as const
 export type SortBy = (typeof SORTS)[number]
 
-export type TaskInput = { id?: string; title?: string; status?: string; note?: string }
+export type StepInput = { title?: string; status?: string }
+export type TaskInput = {
+  id?: string
+  title?: string
+  status?: string
+  note?: string
+  /** A longer description; '' clears it. */
+  detail?: string
+  /** Subtasks, replacing the task's whole list; [] clears it. */
+  steps?: StepInput[]
+}
 export type UpdateInput = {
   now?: string
   needsYou?: string[]
@@ -98,6 +108,7 @@ export function applyUpdate(
         title: patch.title,
         status: created,
         ...(patch.note ? { note: patch.note } : {}),
+        ...extras({}, patch, i, errors),
         createdAt: nowIso,
         updatedAt: nowIso,
         doneAt: isClosed(created) ? nowIso : null,
@@ -108,8 +119,10 @@ export function applyUpdate(
     const old = tasks[at] as Task
     const next = status ?? old.status
     const doneAt = isClosed(next) ? (isClosed(old.status) ? old.doneAt : nowIso) : null
+    const { detail: _d, steps: _s, ...kept } = old
     tasks[at] = {
-      ...old,
+      ...kept,
+      ...extras(old, patch, i, errors),
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.note !== undefined ? { note: patch.note } : {}),
       status: next,
@@ -226,6 +239,37 @@ export function pruneDone(file: SessionFile, hours: number, nowMs: number): Sess
 
 const STATUS_ORDER: Record<Status, number> = { blocked: 0, doing: 1, todo: 2, done: 3, skipped: 4 }
 const time = (iso: string | null) => (iso ? Date.parse(iso) || 0 : 0)
+
+/** A task's detail and steps after a patch: given ones replace, '' / [] clear, absent ones stay. */
+function extras(
+  old: Pick<Task, 'detail' | 'steps'>,
+  patch: TaskInput,
+  i: number,
+  errors: string[],
+): Pick<Task, 'detail' | 'steps'> {
+  const detail = patch.detail !== undefined ? patch.detail : old.detail
+  let steps = old.steps
+  if (patch.steps !== undefined) {
+    steps = [] as Step[]
+    for (const [j, step] of patch.steps.entries()) {
+      const title = typeof step?.title === 'string' ? step.title.trim() : ''
+      if (!title) {
+        errors.push(`tasks[${i}].steps[${j}]: a step needs a title`)
+      } else if (step.status !== undefined && !isStatus(step.status)) {
+        errors.push(`tasks[${i}].steps[${j}]: status must be one of ${STATUSES.join(', ')}`)
+      } else {
+        steps.push({ title, status: (step.status as Status | undefined) ?? 'todo' })
+      }
+    }
+  }
+  return { ...(detail ? { detail } : {}), ...(steps && steps.length > 0 ? { steps } : {}) }
+}
+
+/** How many of a task's steps are closed, of how many. */
+export function stepCounts(task: Pick<Task, 'steps'>): { closed: number; total: number } {
+  const steps = task.steps ?? []
+  return { closed: steps.filter(s => isClosed(s.status)).length, total: steps.length }
+}
 
 /** The named tasks (id or exact title) first, in that order; every other keeps its place after them. */
 function reorder(tasks: Task[], order: readonly string[], errors: string[]): Task[] {

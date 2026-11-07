@@ -3,11 +3,18 @@
 
 export type Status = 'todo' | 'doing' | 'blocked' | 'done' | 'skipped'
 
+/** One subtask of a task: a title and its own status. */
+export type Step = { title: string; status: Status }
+
 export type Task = {
   id: string
   title: string
   status: Status
   note?: string
+  /** A longer description, shown when the task is unfolded. */
+  detail?: string
+  /** Subtasks, shown when unfolded; the title counts the closed ones (`n/m`). */
+  steps?: Step[]
   createdAt: string
   updatedAt: string
   doneAt: string | null

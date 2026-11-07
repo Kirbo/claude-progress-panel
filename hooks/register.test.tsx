@@ -589,6 +589,44 @@ test(
   },
 )
 
+test('a task with details or subtasks folds open beneath its title, which shows n/m of its steps', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, {
+    tasks: [
+      {
+        title: 'Ship it',
+        status: 'doing',
+        detail: 'Push, then watch CI.',
+        steps: [
+          { title: 'push', status: 'done' },
+          { title: 'CI', status: 'doing' },
+        ],
+      },
+      { title: 'Plain one' },
+    ],
+  })
+  const ui = await pane($)
+  const key = 'task:s-me:t1'
+  expect((await ui.find({ type: 'Button', key }))?.text).toBe('▸ Ship it')
+  let lines = await texts(ui)
+  expect(lines).toContain('●')
+  expect(lines).toContain('████░░░░ 1/2')
+  expect(lines).not.toContain('Push, then watch CI.')
+  // A task with nothing more to show stays one plain line.
+  expect(lines).toContain('○ Plain one')
+  expect(await ui.find({ type: 'Button', key: 'task:s-me:t2' })).toBeUndefined()
+
+  await ui.press({ key })
+  expect((await ui.find({ type: 'Button', key }))?.text).toBe('▾ Ship it')
+  lines = await texts(ui)
+  expect(lines).toContain('Push, then watch CI.')
+  expect(lines).toContain('✓ push')
+  expect(lines).toContain('● CI')
+  await ui.unmount()
+})
+
 test('the sort Button cycles plan → status → title → created → done and remembers it', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)

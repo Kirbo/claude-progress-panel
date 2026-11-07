@@ -254,3 +254,49 @@ test("applyUpdate's `order` puts the named tasks first, in that order; the rest 
     't4',
   ])
 })
+
+test('applyUpdate: a task takes a longer detail and subtasks (steps), each patch replacing them', () => {
+  const at = iso(T0)
+  let r = applyUpdate(
+    fresh(),
+    {
+      tasks: [
+        {
+          title: 'Ship it',
+          detail: 'Push, then watch CI.\nInstall afterwards.',
+          steps: [{ title: 'push', status: 'done' }, { title: 'CI' }],
+        },
+      ],
+    },
+    at,
+  )
+  expect(r.errors).toEqual([])
+  expect(r.file.tasks[0]).toMatchObject({
+    detail: 'Push, then watch CI.\nInstall afterwards.',
+    steps: [
+      { title: 'push', status: 'done' },
+      { title: 'CI', status: 'todo' },
+    ],
+  })
+  // A later patch replaces the steps whole; '' / [] clear them; bad steps are reported.
+  r = applyUpdate(
+    r.file,
+    {
+      tasks: [
+        {
+          id: 't1',
+          steps: [{ title: 'CI', status: 'doing' }, { title: '' }, { title: 'x', status: 'nope' }],
+        },
+      ],
+    },
+    at,
+  )
+  expect(r.file.tasks[0]?.steps).toEqual([{ title: 'CI', status: 'doing' }])
+  expect(r.errors).toEqual([
+    'tasks[0].steps[1]: a step needs a title',
+    'tasks[0].steps[2]: status must be one of todo, doing, blocked, done, skipped',
+  ])
+  r = applyUpdate(r.file, { tasks: [{ id: 't1', detail: '', steps: [] }] }, at)
+  expect(r.file.tasks[0]?.detail).toBeUndefined()
+  expect(r.file.tasks[0]?.steps).toBeUndefined()
+})

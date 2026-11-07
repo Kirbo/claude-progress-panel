@@ -20,6 +20,7 @@ import {
   pruneDone,
   SORTS,
   sortTasks,
+  stepCounts,
   visibleTasks,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
@@ -147,6 +148,24 @@ const INPUT_SCHEMA = {
           title: { type: 'string' },
           status: { type: 'string', enum: ['todo', 'doing', 'blocked', 'done', 'skipped'] },
           note: { type: 'string' },
+          detail: {
+            type: 'string',
+            description: 'A longer description, shown when the person unfolds the task; "" clears it.',
+          },
+          steps: {
+            type: 'array',
+            description:
+              'Subtasks, replacing the whole list (send it all each time; [] clears). The task shows how many are done (n/m).',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                title: { type: 'string' },
+                status: { type: 'string', enum: ['todo', 'doing', 'blocked', 'done', 'skipped'] },
+              },
+              required: ['title'],
+            },
+          },
         },
       },
     },
@@ -1056,16 +1075,65 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const taskRow = (task: Task) => {
+    const taskRow = (sessionId: string, task: Task) => {
       const mark = MARK[task.status] ?? { sign: '?' }
+      const note = task.note ? (
+        <Box paddingLeft={INDENT}>
+          <Text dimColor>{task.note}</Text>
+        </Box>
+      ) : null
+      // Nothing more to show: one plain line.
+      if (!task.detail && !task.steps?.length)
+        return (
+          <Box flexDirection="column">
+            <Text color={mark.color} bold>
+              {`${mark.sign} ${task.title}`}
+            </Text>
+            {note}
+          </Box>
+        )
+      // Details or subtasks: the title folds them, its steps counted on the right like a pipeline's jobs.
+      const key = `task:${sessionId}:${task.id}`
+      const isOpen = folded[key] ?? false
+      const steps = stepCounts(task)
       return (
         <Box flexDirection="column">
-          <Text color={mark.color} bold>
-            {`${mark.sign} ${task.title}`}
-          </Text>
-          {task.note ? (
-            <Box paddingLeft={INDENT}>
-              <Text dimColor>{task.note}</Text>
+          <Box
+            key={`row:${key}`}
+            flexDirection="row"
+            justifyContent="space-between"
+            gap={2}
+            hover={ROW_HOVER}
+          >
+            <Box flexDirection="row" gap={1}>
+              <Text color={mark.color} bold>
+                {mark.sign}
+              </Text>
+              <Button
+                key={key}
+                label={t('pane.taskFold', { fold: isOpen ? '▾' : '▸', title: task.title })}
+                plain
+                onPress={() => void toggle($, key, isOpen)}
+              />
+            </Box>
+            {steps.total > 0 ? (
+              <Text dimColor>
+                {t('pane.taskSteps', {
+                  bar: progressBar(steps.closed, steps.total),
+                  closed: steps.closed,
+                  total: steps.total,
+                })}
+              </Text>
+            ) : null}
+          </Box>
+          {note}
+          {isOpen ? (
+            <Box flexDirection="column" paddingLeft={INDENT * 2}>
+              {task.detail ? <Text dimColor>{task.detail}</Text> : null}
+              {(task.steps ?? []).map(step => {
+                const m = MARK[step.status] ?? { sign: '?' }
+                return <Text color={m.color}>{`${m.sign} ${step.title}`}</Text>
+              })}
             </Box>
           ) : null}
         </Box>
@@ -1136,7 +1204,7 @@ export const register: Register = (on, options) => {
           </Box>
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT}>
-              {open.map(taskRow)}
+              {open.map(task => taskRow(id, task))}
               {done.length > 0 ? (
                 <Box flexDirection="row" justifyContent="space-between" gap={2}>
                   <Button
