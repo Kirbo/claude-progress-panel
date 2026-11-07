@@ -91,6 +91,10 @@ function exclusive<T>(work: () => Promise<T>): Promise<T> {
   return run
 }
 
+/** A pointer over a pipeline or job row lights the whole row (a theme key: dim on dark and light
+ *  themes alike), so the ↗ at its right edge is visibly that row's. */
+const ROW_HOVER = { backgroundColor: 'subtle' } as const
+
 const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> = {
   success: { sign: '✓', color: 'green' },
   failed: { sign: '✗', color: 'red' },
@@ -841,6 +845,9 @@ export const register: Register = (on, options) => {
         label: p.label,
         id: p.id ?? '?',
         ref: p.ref ? t('pipe.ref', { ref: p.ref }) : '',
+      })
+      // The state, bar, counts and times sit on the right, beside ↗ / ✕.
+      const status = t('pipe.status', {
         state: t(`pipe.state.${p.state}`),
         bar: progressBar(counts.finished, counts.total),
         finished: counts.finished,
@@ -863,9 +870,21 @@ export const register: Register = (on, options) => {
       const width = Math.max(0, ...p.jobs.map(j => j.name.length))
       return (
         <Box flexDirection="column">
-          <Box flexDirection="row" justifyContent="space-between" gap={2}>
+          <Box
+            key={`row:${key}`}
+            flexDirection="row"
+            justifyContent="space-between"
+            gap={2}
+            hover={ROW_HOVER}
+          >
             <Button key={key} label={label} plain onPress={() => void toggle($, key, isOpen)} />
             <Box flexDirection="row">
+              <Button
+                key={`pipestate:${key}`}
+                label={status}
+                plain
+                onPress={() => void toggle($, key, isOpen)}
+              />
               {openLink(p.url)}
               {finished && p.finishedAt ? (
                 <Button
@@ -922,7 +941,7 @@ export const register: Register = (on, options) => {
                                 ? formatEstimate(est)
                                 : ''
                         const line = (
-                          <Text color={jm.color}>
+                          <Text color={jm.color} hover={{ underline: true }}>
                             {t(duration ? 'pipe.jobTimed' : 'pipe.job', {
                               glyph: jm.sign,
                               name: duration ? j.name.padEnd(width) : j.name,
@@ -930,10 +949,16 @@ export const register: Register = (on, options) => {
                             })}
                           </Text>
                         )
-                        // The row spreads so the ↗ sits on the right edge. (No hover scope: 0.9.1's
-                        // keyed hover rows left every Button in the pane unclickable, 2026-11-07.)
+                        // Every job row is its own hover scope: the row lights and its text
+                        // underlines, so the ↗ at the right edge reads as that row's.
                         return (
-                          <Box flexDirection="row" justifyContent="space-between" gap={2}>
+                          <Box
+                            key={`row:${key}:${group.stage}:${j.name}`}
+                            flexDirection="row"
+                            justifyContent="space-between"
+                            gap={2}
+                            hover={ROW_HOVER}
+                          >
                             {line}
                             {openLink(j.url)}
                           </Box>
@@ -1038,13 +1063,16 @@ export const register: Register = (on, options) => {
                     dimColor
                     onPress={() => void toggle($, doneKey, isDoneOpen)}
                   />
-                  <Button
-                    key={`clear:${id}`}
-                    label={t('pane.clearAll')}
-                    plain
-                    dimColor
-                    onPress={() => void dismiss($, options, id, done)}
-                  />
+                  {/* Only while Done is open: nothing is cleared that the person cannot see. */}
+                  {isDoneOpen ? (
+                    <Button
+                      key={`clear:${id}`}
+                      label={t('pane.clearAll')}
+                      plain
+                      dimColor
+                      onPress={() => void dismiss($, options, id, done)}
+                    />
+                  ) : null}
                 </Box>
               ) : null}
               {isDoneOpen ? (

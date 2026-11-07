@@ -192,6 +192,14 @@ async function pane($: $Test) {
   return $.ui.mount({ ...PANE, surface: 'terminal' })
 }
 
+// A pipeline's line as read across the row: the header button (left), then its status button
+// (right-aligned beside ↗ / ✕).
+async function pipeLine(ui: Awaited<ReturnType<typeof pane>>, key: string): Promise<string | undefined> {
+  const header = (await ui.find({ type: 'Button', key }))?.text
+  const status = (await ui.find({ type: 'Button', key: `pipestate:${key}` }))?.text
+  return header === undefined ? undefined : `${header} · ${status}`
+}
+
 async function texts(ui: Awaited<ReturnType<typeof pane>>): Promise<string[]> {
   return (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 }
@@ -379,7 +387,10 @@ test('Done folds, shows done times; ✕ / Clear all go to the sidecar and stay g
 
   const ui = await pane($)
   expect(await ui.find({ type: 'Text', text: /Alpha/ })).toBeUndefined()
+  // Clear all shows only while Done is open: nothing is cleared that the person cannot see.
+  expect(await ui.find({ type: 'Button', key: 'clear:s-me' })).toBeUndefined()
   await ui.press({ key: 'done:s-me' })
+  expect(await ui.find({ type: 'Button', key: 'clear:s-me' })).toBeTruthy()
   const alpha = await ui.find({ type: 'Text', text: /^✓ Alpha/ })
   expect(alpha?.text).toMatch(/^✓ Alpha {2}\d\d:\d\d$/)
 
@@ -686,6 +697,25 @@ function jobsOf(...states: [string, string][]): unknown[] {
   }))
 }
 
+test("a pipeline's status sits on the right, beside ↗ / ✕, and folds the pipeline too", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main', web_url: 'https://gitlab.example/p/42' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  const ui = await pane($)
+  const row = (await ui.findAll({ type: 'Box' })).find(b => b.props.key === 'row:pipe:s-me:g/app#42')
+  expect(row?.props.justifyContent).toBe('space-between')
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('▸ app #42 · main')
+  expect((await ui.find({ type: 'Button', key: 'pipestate:pipe:s-me:g/app#42' }))?.text).toBe(
+    'running  ░░░░░░░░ 0/1',
+  )
+  await ui.press({ key: 'pipestate:pipe:s-me:g/app#42' })
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('▾ app #42 · main')
+  await ui.unmount()
+})
+
 test('a watched pipeline shows live: progress bar, counts and every job', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
@@ -710,17 +740,13 @@ test('a watched pipeline shows live: progress bar, counts and every job', async 
   expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
     '▾ Pipelines  1 watching · 0 succeeded · 0 failed',
   )
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
-    '▸ app #42 · main · running  ████░░░░ 2/4',
-  )
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('▸ app #42 · main · running  ████░░░░ 2/4')
   expect(lines).toContain('1 running · 1 queued · 1 skipped · 1 passed · 0 failed')
   expect(lines).not.toContain('✓ lint   10s')
 
   // Unfolded: the jobs under their stage, names padded so the times line up.
   await ui.press({ key: 'pipe:s-me:g/app#42' })
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
-    '▾ app #42 · main · running  ████░░░░ 2/4',
-  )
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('▾ app #42 · main · running  ████░░░░ 2/4')
   lines = await texts(ui)
   expect(lines).toContain('1 running · 1 queued · 1 skipped · 1 passed · 0 failed')
   expect(lines).toContain('build')
@@ -755,7 +781,7 @@ test('the session polls its unfinished pipelines every 15 s and stops once they 
   expect(calls()).toBe(4)
 
   const ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe(
     `▸ app #42 · main · failed  ████████ 1/1 · ${formatTime(isoAt(T0 + 15_000), T0 + 75_000)}`,
   )
   await ui.unmount()
@@ -855,7 +881,7 @@ test("another session's finished pipelines show read-only and are never polled h
   )
   expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()
   await ui.press({ key: 'pipelines' })
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' }))?.text).toBe(
+  expect(await pipeLine(ui, 'pipe:s-other:g/site#7')).toBe(
     `▸ site #7 · main · success  ████████ 1/1 · ${formatTime(isoAt(T0), T0)}`,
   )
   await ui.press({ key: 'unpipe:s-other:g/site#7' })
@@ -919,7 +945,7 @@ test("a stopped session's unfinished pipeline is refreshed by any pane, into its
     '▸ Pipelines  0 watching · 1 succeeded · 0 failed',
   )
   await ui.press({ key: 'pipelines' })
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' }))?.text).toBe(
+  expect(await pipeLine(ui, 'pipe:s-other:g/site#7')).toBe(
     `▸ site #7 · main · success  ████████ 1/1 · 1m09s · ${formatTime(isoAt(T0 + 15_000), T0 + 15_000)}`,
   )
 
@@ -1009,7 +1035,7 @@ test("a finished pipeline's line ends with when it finished: GitLab's time, else
   engine(on, disk)
   await start($)
   const ui = await pane($)
-  const line = async (n: number) => (await ui.find({ type: 'Button', key: `pipe:s-other:g/site#${n}` }))?.text
+  const line = async (n: number) => await pipeLine(ui, `pipe:s-other:g/site#${n}`)
   expect(await line(7)).toMatch(new RegExp(` · ${formatTime(isoAt(T0 - 1_800_000), T0)}$`))
   expect(formatTime(isoAt(T0 - 30 * HOUR), T0)).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/)
   expect(await line(8)).toMatch(new RegExp(` · ${formatTime(isoAt(T0 - 30 * HOUR), T0)}$`))
@@ -1089,9 +1115,7 @@ test("the pipeline line ends with its duration: live while running, GitLab's onc
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
 
   let ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
-    '▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s',
-  )
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s')
   await ui.unmount()
 
   world.gitlab.set(PIPE, {
@@ -1106,7 +1130,7 @@ test("the pipeline line ends with its duration: live while running, GitLab's onc
   await world.clock.advance(15_000)
   ui = await pane($)
   await ui.press({ key: 'pipelines' })
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe(
     `▸ app #42 · main · success  ████████ 1/1 · 1m10s · ${formatTime(isoAt(T0 + 10_000), T0 + 15_000)}`,
   )
   await ui.unmount()
@@ -1207,7 +1231,7 @@ test('a running pipeline shows elapsed / estimate, the estimate fetched once and
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
 
   const ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe(
     '▸ app #42 · main · running  ░░░░░░░░ 0/1 · 4m53s / ~33m',
   )
   await ui.unmount()
@@ -1258,9 +1282,7 @@ test('with no similar history the line shows the elapsed time only', async ($, o
   await start($)
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
   const ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
-    '▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s',
-  )
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s')
   await ui.unmount()
 })
 
@@ -1360,6 +1382,15 @@ test('a pipeline and each unfolded job carry a ↗ link to GitLab, on the right 
   ])
   // The job lines read as before: the link is a sibling, not part of the job's text.
   expect(await texts(ui)).toContain('✓ lint  10s')
+  // Each row is its own hover scope (a keyed Box, unique among its siblings): the pointer lights
+  // the whole row, so the ↗ at its right edge reads as that row's. (The test kit hands a tree's
+  // props without the surface-only `hover` styles, so the scopes are what is pinned here.)
+  const rows = (await ui.findAll({ type: 'Box' })).filter(b => String(b.props.key ?? '').startsWith('row:'))
+  expect(rows.map(b => b.props.key)).toEqual([
+    'row:pipe:s-me:g/app#42',
+    'row:pipe:s-me:g/app#42:build:lint',
+    'row:pipe:s-me:g/app#42:build:test',
+  ])
   await ui.unmount()
 })
 
@@ -1460,7 +1491,7 @@ test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, �
   expect(world.runs.some(r => r[0] === 'glab')).toBe(false)
 
   const ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:gh:Kirbo/ha@abc123' }))?.text).toBe(
+  expect(await pipeLine(ui, 'pipe:s-me:gh:Kirbo/ha@abc123')).toBe(
     '▸ ha #900 · main · running  ████░░░░ 1/2 · 30s / ~2m',
   )
   await ui.press({ key: 'pipe:s-me:gh:Kirbo/ha@abc123' })

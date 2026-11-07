@@ -19,13 +19,14 @@ Sessions                              [Sort: status]
 ▾ switchboard (this session) · 22:05 · 2 open · 5 done
     ✗ macOS build — runner restarted
     ● Screenshot refresh — capture running
-    ▸ Done (5)                          [Clear all]
+    ▸ Done (5)                          ← [Clear all] only while open
 ▸ panel · ended 21:40 · 0 open · 3 done            ← dimmed
 ```
 
 - Every `▾`/`▸` line is a Button that folds its part. Defaults: live sessions open, ended
   sessions folded, every Done section folded. Fold state is per pane (`$.state`).
 - Done rows read `✓ title  YYYY-MM-DD HH:MM  [✕]` (time the task was done, local time).
+- "Clear all" shows only while its Done section is open (0.14.0): nothing is cleared unseen.
 - The pane scrolls when taller than its window (the engine's own scrolling).
 - With anything in Needs you, the status line reads `⚠ N need you`; an item that appears from
   another session also raises a toast once.
@@ -158,7 +159,7 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   session then stops polling what already finished). Two panes may both poll an orphan in the
   same 15 s tick; the cost is one duplicate read, the results are identical.
 - States: GitLab's statuses fold into queued / running / success / failed / canceled / skipped /
-  manual. Header: `label #id · ref · state  ██░░ finished/total · duration`, finished = success + failed +
+  manual. Header: `label #id · ref` on the left; `state  ██░░ finished/total · duration` on the right beside `↗` / `✕` (0.14.0; a second Button, folding like the name), finished = success + failed +
   canceled + skipped; a finished pipeline's header ends with `· HH:MM` (0.12.0) — when it finished,
   GitLab's own time else when it was seen to finish, with the date once that is not today, like a
   done task's time. Then the counts line (each state in its colour, zeros dimmed) and the jobs
@@ -190,10 +191,11 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   element to GitLab's `web_url` (the pipeline's, and each job's — the jobs API carries `web_url`,
   verified against the real API 2026-11-07, stored as the job's `url`). On the terminal it is an
   OSC 8 hyperlink, so the terminal opens the browser on the person's click; the plugin never runs
-  an opener itself. A pipeline or job without a `web_url` draws no link. Hover rows (0.9.1) were
-  removed in 0.10.1: the keyed hover scopes left every Button in the pane unclickable on the
-  terminal (reported 2026-11-07 — no accordion opened), and the plugin tests press by key, so they
-  could not see it.
+  an opener itself. A pipeline or job without a `web_url` draws no link. Hover (0.9.1, asked for
+  2026-11-07: "easier to see which link belongs to which job"): every pipeline header and job row
+  is its own hover scope (a keyed Box) — the pointer lights the whole row (`backgroundColor:
+  'subtle'`, a theme key, so dim on dark and light themes) and underlines the job's text; the
+  surface applies it, no hook runs.
 - Duration (0.5.1): running → now − GitLab's `started_at` (ticks with the pane's 2 s redraw);
   finished → GitLab's `duration` (as its UI shows), else `finished_at − started_at`; omitted
   before the pipeline has started.

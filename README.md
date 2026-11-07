@@ -16,7 +16,7 @@ session, and each session's tasks grouped and foldable, with a Done list you can
 │   web · Refactoring the settings view                          │
 │                                                                │
 │ ▾ Pipelines  1 watching · 2 succeeded · 0 failed               │
-│   ▾ api #30385 · main · running  ████░░░░ 4/8 · 6m33s / ~9m ↗  │
+│   ▾ api #30385 · main   running  ████░░░░ 4/8 · 6m33s / ~9m ↗  │
 │       2 running · 1 queued · 1 skipped · 3 passed · 0 failed   │
 │       images                                                   │
 │         ✓ build-image:linux:amd64    1m18s                  ↗  │
@@ -75,7 +75,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   (`.gitlab-ci.yml` or `.github/workflows/`), `watch` that push by its commit sha at once
   (`{ project, sha }` for GitLab, `{ provider: "github", project: "owner/repo", sha }` for GitHub).
 - Every `▾`/`▸` line folds; **Sort** cycles status → title → created → done (remembered); **✕**
-  removes a done task (or an ended session), **Clear all** empties a Done list.
+  removes a done task (or an ended session), **Clear all** (shown while its Done list is open) empties it. A
+  pipeline's state, progress and times sit on the right of its row, beside `↗` / `✕`; pressing
+  them folds it like its name does.
 
 ### Settings
 
@@ -117,7 +119,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   counts — and a press opens every job; ✕ removes
   a finished one. The `↗` at the right edge of a pipeline, and of each job when unfolded, is a
   link to its GitLab page: click it to open it in your browser (an OSC 8 terminal hyperlink — the
-  terminal opens it; in a terminal without link support the address is printed after it). GitHub runs
+  terminal opens it; in a terminal without link support the address is printed after it). The
+  row under the pointer is highlighted, so it is clear which row a `↗` belongs to. GitHub runs
   look the same, with two differences: their jobs list flat (GitHub has no stages), and the
   estimate averages earlier successful runs of the same workflow, branch and event. Needs
   [`glab`](https://gitlab.com/gitlab-org/cli) for GitLab and/or [`gh`](https://cli.github.com) for
