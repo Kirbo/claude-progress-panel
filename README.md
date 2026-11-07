@@ -127,7 +127,7 @@ mise exec -- claude plugin validate .      # manifest + module, as the engine re
 mise exec -- node --test scripts/          # sealing + audit-register guard tests
 mise exec -- node scripts/check-audits.mjs # audit-register guard (also run by CI)
 claude --plugin-dir .                      # a session with this working copy loaded
-git config core.hooksPath .githooks        # once per clone: the pre-commit hook seals audit findings
+git config core.hooksPath .githooks        # once per clone: pre-commit runs Biome (fix + re-stage) and seals audit findings
 ```
 
 Test-first: a change lands with its test (`hooks/model.test.ts` for the pure logic,

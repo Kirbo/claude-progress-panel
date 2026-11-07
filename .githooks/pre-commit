@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 #
-# Seal every sealed file (.sealed.json: the audit reports) edited since it was last sealed, stage the
-# .age blob with the commit, and refuse a staged plaintext. Public-key encryption: needs no key.
-# The blob is built from the WORKING TREE file, not the index (deliberate: a half-sealed report is
-# not a useful artifact).
+# 1. Biome over the staged files: fix what it can, re-stage the fixed files, refuse the commit when
+#    anything is left (scripts/lint-staged.mjs — a partly staged file is never re-staged).
+# 2. Seal every sealed file (.sealed.json: the audit reports) edited since it was last sealed, stage
+#    the .age blob with the commit, and refuse a staged plaintext. Public-key encryption: needs no
+#    key. The blob is built from the WORKING TREE file, not the index (deliberate: a half-sealed
+#    report is not a useful artifact).
 
 cd "$(git rev-parse --show-toplevel)"
-# node + age come from mise.toml; use mise when it is installed (hooks run without its shims on PATH).
-if command -v mise >/dev/null 2>&1; then exec mise exec -- node scripts/seal.mjs hook-pre-commit; fi
-exec node scripts/seal.mjs hook-pre-commit
+# node, biome and age come from mise.toml; use mise when it is installed (hooks run without its
+# shims on PATH).
+run() { if command -v mise >/dev/null 2>&1; then mise exec -- "$@"; else "$@"; fi; }
+run node scripts/lint-staged.mjs
+run node scripts/seal.mjs hook-pre-commit

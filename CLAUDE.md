@@ -61,8 +61,10 @@ How to _use_ the panel during a task is the bundled skill:
   `node --test scripts/`, `node scripts/check-audits.mjs` all clean
   (validate's "plugin directory" notes about the icon are informational). Bump `version` in
   `.claude-plugin/plugin.json` for any behaviour change — `claude plugin update` keys on it.
-- **Hooks:** once per clone `git config core.hooksPath .githooks` (the pre-commit hook seals audit
-  findings; see below).
+- **Hooks:** once per clone `git config core.hooksPath .githooks`. The pre-commit hook runs Biome
+  over the staged files first — fixes what it can, re-stages fully staged files (never a partly
+  staged one), refuses the commit on anything left (`scripts/lint-staged.mjs`) — then seals audit
+  findings (see below).
 - **Audits (`/audit`, `.claude/skills/audit/`).** Process, formats, IDs (`CPP-NNNN`) and sealing:
   [`docs/audits/README.md`](docs/audits/README.md). **A finding that is not fixed is never readable
   in the clear** — only in the age-sealed `docs/audits/open/*.md.age` (plaintext gitignored, sealed
