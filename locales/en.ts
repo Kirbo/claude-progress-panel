@@ -58,8 +58,17 @@ export const en = {
   'sort.title': 'title',
   'sort.created': 'created',
   'sort.done': 'done',
+  'prompt.reporting': [
+    '# Progress pane',
+    "A Progress pane beside every Claude Code session on this machine shows what each session is doing. This session's entry is written only through the `mcp__progress-panel__progress_update` tool. Keep it current on your own, without being asked:",
+    '- As soon as a task takes more than one step, your first tool call is progress_update with `now` and the task list (one task per unit of work: diagnose, fix, verify, push…).',
+    '- Move each task as it changes: `doing` when you start it, `done` with a one-line outcome (commit, pipeline) once verified, `blocked` with the reason. Keep `now` true.',
+    '- Everything only the user can do or decide (an approval, a push OK, a login, a choice) goes in `needsYou` the moment it comes up; send `[]` once it is answered.',
+    '- After every git push to a repo with CI, `watch` that push by its commit sha.',
+    '- A question answered in one reply needs no entry. A subagent does not report; its coordinator does.',
+  ].join('\n'),
   'tool.description':
-    'Update this session\'s entry in the Progress pane that every Claude Code session on this machine shows. A patch: send only what changed. `now` replaces the one-line summary of what you are doing; `needsYou` replaces the list of things only the user can do or decide (send [] once answered); `tasks` upserts by `id` (or by exact `title` when no id; new tasks need a title) with status todo | doing | blocked | done | skipped and an optional short `note`; `remove` deletes task ids. Timestamps are stamped for you. `watch` adds CI pipelines to the pane — GitLab ({ project: "group/name", pipeline: <id> } or { project, sha }) or GitHub Actions ({ provider: "github", project: "owner/repo", run: <id> } or { provider: "github", project, sha }); optional label — the plugin then follows them live through the user\'s glab / gh every 15 s until they finish; `unwatch` removes them by key ("group/name#<id>", "gh:owner/repo#<id>"). After EVERY git push to a repo that has CI (.gitlab-ci.yml or .github/workflows/), watch that push by its commit sha. Call it whenever your status changes during multi-step work.',
+    'Update this session\'s entry in the Progress pane that every Claude Code session on this machine shows. A patch: send only what changed. `now` replaces the one-line summary of what you are doing; `needsYou` replaces the list of things only the user can do or decide (send [] once answered); `tasks` upserts by `id` (or by exact `title` when no id; new tasks need a title) with status todo | doing | blocked | done | skipped and an optional short `note`; `remove` deletes task ids. Timestamps are stamped for you. `watch` adds CI pipelines to the pane — GitLab ({ project: "group/name", pipeline: <id> } or { project, sha }) or GitHub Actions ({ provider: "github", project: "owner/repo", run: <id> } or { provider: "github", project, sha }); optional label — the plugin then follows them live through the user\'s glab / gh every 15 s until they finish; `unwatch` removes them by key ("group/name#<id>", "gh:owner/repo#<id>"). After EVERY git push to a repo that has CI (.gitlab-ci.yml or .github/workflows/), watch that push by its commit sha. Call it first on any task that takes more than one step (`now` + the task list), then on every status change, without waiting to be asked.',
   'tool.saved': 'Saved. {count} task(s):',
   'tool.watching': 'Pipelines: watching {keys} (refreshed every 15 s until they finish).',
   'tool.problems': 'Not applied:',

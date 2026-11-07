@@ -45,6 +45,7 @@ import {
 const PANE = 'progress'
 const TOOL = 'progress_update'
 const TOOL_ID = `mcp__progress-panel__${TOOL}`
+const REPORTING_SECTION = 'progress-panel:reporting'
 // No file-watch API exists for plugins, so other sessions' files are noticed by listing the
 // folder on this timer (a file is read only when its mtime moved). Own writes redraw at once.
 const REFRESH_MS = 2000
@@ -697,6 +698,20 @@ export const register: Register = (on, options) => {
     $.clock.every(PIPELINE_POLL_MS, () => void pollAll($, options))
     void $.ui.open({ id: PANE, title: t('pane.title') })
     return next(e)
+  })
+
+  // The reporting rule rides every session's system prompt, so no session waits to be told to use the
+  // pane. Only where the tool is offered (nothing to report through otherwise), and never in a
+  // teammate's render of its lead's prompt (the lead reports). Steady text: the prompt cache keeps it.
+  on('prompt.compose', async (_$, e, next) => {
+    const composed = await next(e)
+    if (!e.tools.includes(TOOL_ID) || e.traits.includes('teammate')) return composed
+    return {
+      sections: [
+        ...composed.sections,
+        { id: REPORTING_SECTION, text: t('prompt.reporting'), scope: 'session' },
+      ],
+    }
   })
 
   on('session.end', async ($, e, next) => {

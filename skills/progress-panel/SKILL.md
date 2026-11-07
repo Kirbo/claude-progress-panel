@@ -1,6 +1,6 @@
 ---
 name: progress-panel
-description: Keep the Progress pane current — the pane beside every Claude Code session on this machine that shows each session's "now", what needs the user, and its tasks. Use the progress_update tool during any multi-step task, unattended run or handover, when the user asks for the panel / progress pane / status panel, and whenever your status changes.
+description: Keep the Progress pane current — the pane beside every Claude Code session on this machine that shows each session's "now", what needs the user, and its tasks. Use the progress_update tool from the FIRST step of any multi-step task (now + the task list), on every status change, for every decision only the user can make, in unattended runs and handovers, and when the user asks for the panel / progress pane / status panel.
 ---
 
 # Keeping the Progress pane current
@@ -50,7 +50,9 @@ finishes — do not poll it yourself just to update the pane. You still read the
 
 ## The routine
 
-- **Start of multi-step work:** one call with `now` and the planned tasks (`todo`).
+- **Start of multi-step work:** your FIRST tool call is one call with `now` and the planned tasks
+  (`todo`) — on your own, never waiting to be asked. The plugin adds this rule to every session's
+  system prompt (section `progress-panel:reporting`), so it holds without loading this skill.
 - **Each change:** mark the task `doing` when you start it, `done` (with a one-line outcome in
   `note`: commit hash, pipeline id) when verified, `blocked` with the reason when stuck.
 - **Asks:** put a blocker in `needsYou` the moment you need the user, and clear it (`[]` or the

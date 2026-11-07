@@ -66,10 +66,11 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 
 - The pane opens by itself when a session starts in a terminal at least ~144 columns wide; on a
   narrower one (or after closing it) type **`/progress`**.
-- Ask the agent to use it: _"keep the progress panel updated while you work"_. The bundled
-  `progress-panel` skill tells it how. To make it the default for every task, add a line like this
-  to your `~/.claude/CLAUDE.md`:
-  `Keep the progress panel (progress-panel skill) current during multi-step work.`
+- Every session keeps its entry current on its own: the plugin adds a short rule to each
+  session's system prompt — on any task with more than one step, the agent's first call sets
+  `now` and the task list, it moves each task as it goes, puts every decision only you can make in
+  **Needs you** and watches every push to a repo with CI. Nothing to add to your `CLAUDE.md`. The
+  bundled `progress-panel` skill has the details.
 - **For the agent:** the skill's rule — after every `git push` to a repo that has CI
   (`.gitlab-ci.yml` or `.github/workflows/`), `watch` that push by its commit sha at once
   (`{ project, sha }` for GitLab, `{ provider: "github", project: "owner/repo", sha }` for GitHub).

@@ -81,6 +81,8 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
   on('session.cwd', () => ({ value: '/w/app/sub' }))
   on('session.repo', () => ({ value: { root: '/w/app', remote: null } }) as never)
   on('tool.call', () => ({ result: {} }))
+  // The engine's own system prompt, beneath the plugin's hook.
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' }] }))
   on('fs.list', (_, e) => {
     if (disk.listFails) return { deny: `EACCES: ${e.path}` }
     const prefix = `${e.path}/`
@@ -186,6 +188,37 @@ async function pane($: $Test) {
 async function texts(ui: Awaited<ReturnType<typeof pane>>): Promise<string[]> {
   return (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 }
+
+test("every session's system prompt tells it to keep its entry current — only where the tool is offered", async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  const ids = (r: { sections: readonly { id: string }[] }) => r.sections.map(x => x.id)
+  // What the engine resolves before it renders a prompt.
+  const compose = (tools: string[], traits: ('teammate' | 'skills')[] = ['skills']) =>
+    $.prompt.compose({
+      model: 'claude-opus-5-5',
+      promptModel: 'claude-opus-5-5',
+      surfaces: ['terminal'],
+      tools,
+      outputStyle: null,
+      traits,
+    })
+
+  const offered = await compose(['Bash', TOOL])
+  expect(ids(offered)).toEqual(['intro', 'progress-panel:reporting'])
+  const section = offered.sections[1]
+  expect(section?.scope).toBe('session')
+  expect(section?.text).toContain(TOOL)
+  // The rule itself: the task list first, statuses as they move, the asks, every push watched.
+  expect(section?.text).toMatch(/first tool call/i)
+  expect(section?.text).toContain('needsYou')
+  expect(section?.text).toContain('watch')
+
+  // No tool (not offered to this thread): nothing to report through, no section.
+  expect(ids(await compose(['Bash']))).toEqual(['intro'])
+  // A teammate renders its lead's prompt: its lead's session reports, not a second copy.
+  expect(ids(await compose([TOOL], ['teammate']))).toEqual(['intro'])
+})
 
 test('resolveProgressDir: the option wins, ~ expands, else <config dir>/progress', () => {
   expect(resolveProgressDir('/abs/dir/', { home: '/h' })).toBe('/abs/dir')

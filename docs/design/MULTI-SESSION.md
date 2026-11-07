@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -86,6 +86,16 @@ in the prompt from the start). Input — every field optional, a patch, not the 
 | `needsYou` | replaces the list (`[]` clears it)                                       |
 | `tasks`    | upserts by `id` (or exact `title` when no id); new tasks get `t<n>` ids  |
 | `remove`   | task ids to delete                                                       |
+
+**Reporting without being asked (0.13.0).** A tool description and an on-demand skill proved too
+passive: a session ran a diagnose → fix → push job with almost nothing in its entry until the user
+asked why (2026-11-07). So a `prompt.compose` hook appends one section, `progress-panel:reporting`
+(scope `session`, after the cache boundary), to every system prompt the engine renders where the
+tool is offered: first call on any multi-step task = `now` + the task list; statuses as they move;
+every user-only decision in `needsYou`, cleared once answered; every push to a CI repo watched;
+one-reply questions and subagents report nothing. Left out where the tool is not offered and in a
+`teammate` render (its lead reports). The text is a fixed catalog string (`prompt.reporting`), so
+it never breaks the prompt cache.
 
 Status values: `todo`, `doing`, `blocked`, `done`, `skipped`. The plugin stamps `createdAt`,
 `updatedAt` and `doneAt` (set on entering done/skipped, cleared on re-opening). The tool answers
