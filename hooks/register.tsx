@@ -154,7 +154,8 @@ const COUNT_COLOR: Partial<Record<JobState, string>> = { running: 'yellow', succ
 const ALWAYS_COUNTED = new Set<JobState>(['running', 'queued', 'skipped', 'success', 'failed'])
 
 const MARK: Record<string, { sign: string; color?: string }> = {
-  blocked: { sign: '✗', color: 'red' },
+  // Blocked = waiting (usually on the person): the Needs-you mark and colour, never a failure's ✗.
+  blocked: { sign: '⚠', color: 'magenta' },
   doing: { sign: '●', color: 'yellow' },
   todo: { sign: '○' },
   done: { sign: '✓', color: 'green' },

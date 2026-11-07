@@ -34,7 +34,7 @@ send only what changed:
 | `watch`    | CI to follow live — GitLab: `{ project: "group/name", pipeline: <id> }` or `{ project, sha }`; GitHub Actions: `{ provider: "github", project: "owner/repo", run: <id> }` or `{ provider: "github", project, sha }`; optional `label` |
 | `unwatch`  | pipeline keys (`group/name#<id>`, `group/name@<sha>`, `gh:owner/repo#<id>`, `gh:owner/repo@<sha>`) to stop showing |
 
-- `status`: `todo` (○), `doing` (●), `blocked` (✗ — say why in `note`), `done` (✓), `skipped` (–).
+- `status`: `todo` (○), `doing` (●), `blocked` (⚠, magenta like Needs you — say why in `note`), `done` (✓), `skipped` (–).
 - New tasks need a `title`; the tool assigns ids (`t1`, `t2`, …) and answers with the full list —
   use the ids afterwards.
 - Timestamps (created, updated, done) are stamped for you. Never write the files yourself.

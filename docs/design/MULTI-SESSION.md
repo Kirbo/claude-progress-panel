@@ -17,7 +17,7 @@ Now                                                ← one line per live session
   panel · Writing the design doc
 Sessions                              [Sort: status]
 ▾ switchboard (this session) · 22:05 · 2 open · 5 done
-    ✗ macOS build — runner restarted
+    ⚠ macOS build — runner restarted
     ● Screenshot refresh — capture running
     ▸ Done (5)                          ← [Clear all] only while open
 ▸ panel · ended 21:40 · 0 open · 3 done            ← dimmed

@@ -662,7 +662,9 @@ test('every session shows: newest update, needs-you from all, one now line each,
   expect(lines).toContain('• app: Push OK')
   expect(lines).toContain('• site: Approve the deploy')
   expect(lines.indexOf('app · Writing tests')).toBeLessThan(lines.indexOf('site · Deploying'))
-  expect(lines).toContain('✗ Deploy')
+  // Blocked reads as "waiting on someone" — the Needs-you mark and colour — never as a failure.
+  expect(lines).toContain('⚠ Deploy')
+  expect((await ui.find({ type: 'Text', text: '⚠ Deploy' }))?.props.color).toBe('magenta')
   expect(lines).toContain('waits for approval')
   expect(lines).toContain('● Build')
   expect(lines[0]).toMatch(/^updated \d\d:\d\d · app · checked \d\d:\d\d:\d\d$/)
