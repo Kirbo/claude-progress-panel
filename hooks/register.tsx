@@ -13,6 +13,7 @@ import {
   formatTime,
   isBlank,
   isClosed,
+  matchesTask,
   mergeSidecar,
   newSession,
   parseSessionFile,
@@ -74,6 +75,8 @@ const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {}
 })
 const SIDECAR = '.dismissed.json'
 const folds = atom({ plugin: 'progress-panel', key: 'folds' } as const, {} as Folds, { shape: 'folds-1' })
+// The text the person typed into the Filter beside Sessions: tasks without it are hidden.
+const filtering = atom({ plugin: 'progress-panel', key: 'filter' } as const, '', { shape: 'filter-1' })
 // When the last successful folder listing finished, so the header can show the pane is live.
 const checked = atom({ plugin: 'progress-panel', key: 'checked' } as const, 0, { shape: 'checked-1' })
 // The order the pane draws in, mirrored from $.store (kept per user across sessions) so a change redraws.
@@ -875,13 +878,14 @@ export const register: Register = (on, options) => {
   }).catch(() => ({ result: t('tool.failed') }))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const { Box, Text, Button, Link } = $.ui.resolve(e)
+    const { Box, Text, Button, Input, Link } = $.ui.resolve(e)
     const all = await read($, sessions)
     const folded = await read($, folds)
     const lastCheck = await read($, checked)
     const me = await $.session.id()
     const nowMs = await $.clock.now()
     const by = await sortBy($, options)
+    const query = await read($, filtering)
     const ordered = orderSessions(all, me)
     const live = ordered.filter(f => f.session.endedAt === null)
     const needs = liveNeeds(all)
@@ -1162,7 +1166,7 @@ export const register: Register = (on, options) => {
     const group = (file: SessionFile) => {
       const id = file.session.id
       const ended = file.session.endedAt
-      const shown = visibleTasks(file, all[id]?.sidecar?.entries ?? [])
+      const shown = visibleTasks(file, all[id]?.sidecar?.entries ?? []).filter(x => matchesTask(x, query))
       const open = sortTasks(
         shown.filter(x => !isClosed(x.status)),
         by,
@@ -1309,6 +1313,13 @@ export const register: Register = (on, options) => {
         ) : null}
         <Box flexDirection="row" gap={2} marginTop={1}>
           <Text bold>{t('pane.sessions')}</Text>
+          <Input
+            key="filter"
+            placeholder={t('pane.filter')}
+            value={query}
+            onInput={value => void update($, filtering, () => value)}
+            onSubmit={value => void update($, filtering, () => value)}
+          />
           <Button
             key="sort"
             label={t('pane.sort', { by: t(`sort.${by}`) })}
@@ -1318,7 +1329,14 @@ export const register: Register = (on, options) => {
           />
         </Box>
         <Box flexDirection="column" paddingLeft={INDENT}>
-          {ordered.map(group)}
+          {/* While filtering, a session with no matching task steps aside. */}
+          {ordered
+            .filter(
+              f =>
+                !query.trim() ||
+                visibleTasks(f, all[f.session.id]?.sidecar?.entries ?? []).some(x => matchesTask(x, query)),
+            )
+            .map(group)}
         </Box>
       </Box>
     )

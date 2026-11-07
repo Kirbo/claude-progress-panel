@@ -265,6 +265,15 @@ function extras(
   return { ...(detail ? { detail } : {}), ...(steps && steps.length > 0 ? { steps } : {}) }
 }
 
+/** Whether a task's text holds the query (case-insensitive: title, note, detail, step titles); a blank query matches all. */
+export function matchesTask(task: Task, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q) return true
+  return [task.title, task.note ?? '', task.detail ?? '', ...(task.steps ?? []).map(s => s.title)].some(
+    text => text.toLowerCase().includes(q),
+  )
+}
+
 /** How many of a task's steps are closed, of how many. */
 export function stepCounts(task: Pick<Task, 'steps'>): { closed: number; total: number } {
   const steps = task.steps ?? []

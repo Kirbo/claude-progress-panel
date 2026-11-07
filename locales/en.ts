@@ -14,6 +14,7 @@ export const en = {
   'pane.now': 'Now',
   'pane.nowItem': '{project} · {now}',
   'pane.sessions': 'Sessions',
+  'pane.filter': 'Filter tasks',
   'pane.pipelines': '{fold} Pipelines  {watching} watching · {succeeded} succeeded · {failed} failed{rest}',
   'pane.pipelinesCanceled': ' · {n} canceled',
   'pane.pipelinesFinished': '{fold} Finished ({count})',

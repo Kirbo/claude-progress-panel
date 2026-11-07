@@ -74,7 +74,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 - **For the agent:** the skill's rule — after every `git push` to a repo that has CI
   (`.gitlab-ci.yml` or `.github/workflows/`), `watch` that push by its commit sha at once
   (`{ project, sha }` for GitLab, `{ provider: "github", project: "owner/repo", sha }` for GitHub).
-- Every `▾`/`▸` line folds; **Sort** cycles status → title → created → done (remembered); **✕**
+- Every `▾`/`▸` line folds; **Sort** cycles plan (the default: the order the agent will do them) →
+  status → title → created → done (remembered); **Filter tasks** beside it keeps only the tasks
+  whose title, note, detail or steps hold what you type (sessions without a match step aside); **✕**
   removes a done task (or an ended session), **Clear all** (shown while its Done list is open) empties it. A
   pipeline's state, progress and times sit on the right of its row, beside `↗` / `✕`; pressing
   them folds it like its name does.

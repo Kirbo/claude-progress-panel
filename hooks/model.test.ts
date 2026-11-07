@@ -7,6 +7,7 @@ import {
   formatClock,
   formatTime,
   isBlank,
+  matchesTask,
   mergeSidecar,
   newSession,
   parseSessionFile,
@@ -299,4 +300,16 @@ test('applyUpdate: a task takes a longer detail and subtasks (steps), each patch
   r = applyUpdate(r.file, { tasks: [{ id: 't1', detail: '', steps: [] }] }, at)
   expect(r.file.tasks[0]?.detail).toBeUndefined()
   expect(r.file.tasks[0]?.steps).toBeUndefined()
+})
+
+test('matchesTask: case-insensitive over title, note, detail and step titles; blank matches all', () => {
+  const t = task({
+    id: 'a',
+    title: 'Ship',
+    note: 'after CI',
+    detail: 'Tag v1',
+    steps: [{ title: 'Push', status: 'done' }],
+  })
+  for (const q of ['ship', 'ci', 'TAG', 'push', '', '  ']) expect(matchesTask(t, q)).toBe(true)
+  expect(matchesTask(t, 'deploy')).toBe(false)
 })

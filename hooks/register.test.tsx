@@ -627,6 +627,40 @@ test('a task with details or subtasks folds open beneath its title, which shows 
   await ui.unmount()
 })
 
+test('the Filter beside Sessions keeps only the tasks whose text matches, open and done alike', async ($, on) => {
+  const disk = makeDisk()
+  put(disk, `${DIR}/s-other.json`, other('s-other', 'site', T0, { tasks: [{ title: 'Deploy docs' }] }))
+  engine(on, disk)
+  await start($)
+  await update($, {
+    tasks: [
+      { title: 'Fix the panel filter', note: 'typing narrows' },
+      { title: 'Write release notes', steps: [{ title: 'panel changes' }] },
+      { title: 'Ship it', status: 'done' },
+      { title: 'Panel docs', status: 'done' },
+    ],
+  })
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Input', key: 'filter' }))?.props.placeholder).toBe('Filter tasks')
+  await ui.press({ key: 'done:s-me' })
+
+  // Case-insensitive, over title, note, detail and step titles.
+  await ui.input({ key: 'filter', text: 'PANEL', kind: 'change' })
+  let lines = await texts(ui)
+  expect(lines).toContain('○ Fix the panel filter')
+  expect((await ui.find({ type: 'Button', key: 'task:s-me:t2' }))?.text).toBe('▸ Write release notes')
+  expect(lines.some(l => l.startsWith('✓ Panel docs'))).toBe(true)
+  expect(lines.some(l => l.startsWith('✓ Ship it'))).toBe(false)
+  // A session with nothing matching steps aside while the filter is on.
+  expect(await ui.find({ type: 'Button', key: 'group:s-other' })).toBeUndefined()
+
+  await ui.input({ key: 'filter', text: '', kind: 'change' })
+  lines = await texts(ui)
+  expect(lines.some(l => l.startsWith('✓ Ship it'))).toBe(true)
+  expect(await ui.find({ type: 'Button', key: 'group:s-other' })).toBeTruthy()
+  await ui.unmount()
+})
+
 test('the sort Button cycles plan → status → title → created → done and remembers it', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)

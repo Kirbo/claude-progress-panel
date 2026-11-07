@@ -142,6 +142,8 @@ declare module 'claude-code' {
       sessions: Shaped<Loaded>
       folds: Shaped<Folds>
       sort: Shaped<SortChoice>
+      /** The pane's task filter, as typed (empty = off). */
+      filter: Shaped<string>
       /** When this pane last listed the folder successfully (ms since the epoch; 0 = not yet). */
       checked: Shaped<number>
     }
