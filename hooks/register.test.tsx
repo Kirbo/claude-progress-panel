@@ -117,8 +117,14 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
   const runs: string[][] = []
   const gitlab = new Map<string, unknown>()
   const github = new Map<string, unknown>()
-  on('process.run', (_, e) => {
+  // While set, every forge call waits on it: a slow network the test releases by hand.
+  const net: { hold?: Promise<void>; onHeld?: () => void } = {}
+  on('process.run', async (_, e) => {
     runs.push([...e.argv])
+    if (net.hold && (e.argv[0] === 'glab' || e.argv[0] === 'gh')) {
+      net.onHeld?.()
+      await net.hold
+    }
     if (e.argv[0] === 'gh') {
       // `gh api <path>`: answered from the fake GitHub (or the CLI's 404 when the path is unknown).
       const body = github.get(e.argv[2] as string)
@@ -148,6 +154,7 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
     clock,
     gitlab,
     github,
+    net,
     runs,
     store,
     status,
@@ -752,6 +759,40 @@ test('the session polls its unfinished pipelines every 15 s and stops once they 
     `▸ app #42 · main · failed  ████████ 1/1 · ${formatTime(isoAt(T0 + 15_000), T0 + 75_000)}`,
   )
   await ui.unmount()
+})
+
+test('an update sent while the session polls its pipeline is never overwritten by the poll', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  await start($)
+  await update($, {
+    tasks: [{ title: 'ship it', status: 'doing' }],
+    watch: [{ project: 'g/app', pipeline: 42 }],
+  })
+
+  // The poll reads the file, then waits on GitLab; the person's update lands meanwhile.
+  world.gitlab.set(PIPE, { id: 42, status: 'success', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'success']))
+  let release = () => {}
+  world.net.hold = new Promise<void>(r => {
+    release = r
+  })
+  const held = new Promise<void>(r => {
+    world.net.onHeld = r
+  })
+  const polling = world.clock.advance(15_000)
+  await held
+  await update($, { tasks: [{ id: 't1', status: 'done' }], now: 'shipped' })
+  release()
+  world.net.hold = undefined
+  await polling
+
+  const file = read(disk, `${DIR}/s-me.json`)
+  expect(file.tasks[0]).toMatchObject({ id: 't1', status: 'done' })
+  expect(file.now).toBe('shipped')
+  expect(file.pipelines?.[0]).toMatchObject({ key: 'g/app#42', state: 'success' })
 })
 
 test('a pipeline watched by commit is found once GitLab has it', async ($, on) => {

@@ -82,6 +82,15 @@ const sorting = atom({ plugin: 'progress-panel', key: 'sort' } as const, '' as S
 // starts quiet again, seeded on its first scan).
 let seenNeeds: Set<string> | undefined
 
+// Every read-modify-write of this session's own file runs one at a time: a timer's poll and a tool
+// call interleave at each await, and the later save would put a stale copy over the other's change.
+let ownChain: Promise<unknown> = Promise.resolve()
+function exclusive<T>(work: () => Promise<T>): Promise<T> {
+  const run = ownChain.then(work, work)
+  ownChain = run.catch(() => undefined)
+  return run
+}
+
 const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> = {
   success: { sign: '✓', color: 'green' },
   failed: { sign: '✗', color: 'red' },
@@ -358,8 +367,16 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
       await forgetSession($, options, file.session.id)
       continue
     }
-    // Only the owner prunes a live session's file; an ended one is anyone's to prune.
-    if (file.session.id !== me && ended === null) continue
+    // Only the owner prunes a live session's file (fresh, under the lock); an ended one is anyone's.
+    if (file.session.id === me) {
+      await exclusive(async () => {
+        const own = await ownFile($, dir)
+        const pruned = pruneDone(own, doneHours, nowMs)
+        if (pruned !== own) await save($, dir, pruned)
+      })
+      continue
+    }
+    if (ended === null) continue
     const pruned = pruneDone(file, doneHours, nowMs)
     if (pruned !== file) await save($, dir, pruned)
   }
@@ -380,10 +397,13 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
   const dir = await progressDir($, options)
   if (!dir) return t('tool.noDir')
   const at = await nowIso($)
-  const updated = applyUpdate(await ownFile($, dir), input, at)
-  const watched = applyWatch(updated.file.pipelines ?? [], input.watch ?? [], input.unwatch ?? [], at)
-  const file = { ...updated.file, pipelines: watched.list }
-  await save($, dir, file)
+  const { updated, watched, file } = await exclusive(async () => {
+    const updated = applyUpdate(await ownFile($, dir), input, at)
+    const watched = applyWatch(updated.file.pipelines ?? [], input.watch ?? [], input.unwatch ?? [], at)
+    const file = { ...updated.file, pipelines: watched.list }
+    await save($, dir, file)
+    return { updated, watched, file }
+  })
   await announce($, await read($, sessions), file.session.id)
   const added = watched.list.filter(p => !(updated.file.pipelines ?? []).some(old => old.key === p.key))
   if (added.length > 0) await pollPipelines($, options)
@@ -571,13 +591,18 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
 async function pollPipelines($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
-  const file = await ownFile($, dir)
-  const list = file.pipelines ?? []
-  if (!list.some(p => !isFinished(p.state))) return
+  const unfinished = ((await ownFile($, dir)).pipelines ?? []).filter(p => !isFinished(p.state))
+  if (unfinished.length === 0) return
   const at = await nowIso($)
-  const next: Pipeline[] = []
-  for (const p of list) next.push(isFinished(p.state) ? p : await refreshPipeline($, p, at))
-  await save($, dir, { ...file, pipelines: next })
+  // The forge calls take seconds and run outside the lock; only their results are written, onto the
+  // file as it is by then (a task, a watch or an unwatch sent meanwhile stays).
+  const fresh: Pipeline[] = []
+  for (const p of unfinished) fresh.push(await refreshPipeline($, p, at))
+  await exclusive(async () => {
+    const file = await ownFile($, dir)
+    const pipelines = (file.pipelines ?? []).map(p => fresh.find(f => f.key === p.key) ?? p)
+    await save($, dir, { ...file, pipelines })
+  })
 }
 
 // Other sessions' unfinished pipelines they stopped polling (ended, or killed without ending):
@@ -618,10 +643,12 @@ async function pollAll($: EngineInterface, options: PluginOptions): Promise<void
 async function markEnded($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
-  const file = await ownFile($, dir)
-  // Nothing to look back on: the session leaves no file (nor sidecar) behind.
-  if (isBlank(file)) return forgetSession($, options, file.session.id)
-  await save($, dir, { ...file, session: { ...file.session, endedAt: await nowIso($) } })
+  await exclusive(async () => {
+    const file = await ownFile($, dir)
+    // Nothing to look back on: the session leaves no file (nor sidecar) behind.
+    if (isBlank(file)) return forgetSession($, options, file.session.id)
+    await save($, dir, { ...file, session: { ...file.session, endedAt: await nowIso($) } })
+  })
 }
 
 function asSort(value: unknown): SortBy | undefined {
@@ -691,8 +718,11 @@ export const register: Register = (on, options) => {
     // A session's file is created by its first report, never blank (a session that reports
     // nothing leaves nothing behind); a resumed session's existing file is kept as it is.
     const dir = await progressDir($, options)
-    const own = dir ? await ownFile($, dir) : undefined
-    if (dir && own && !isBlank(own)) await save($, dir, own)
+    if (dir)
+      await exclusive(async () => {
+        const own = await ownFile($, dir)
+        if (!isBlank(own)) await save($, dir, own)
+      })
     await scan($, options)
     $.clock.every(REFRESH_MS, () => void scan($, options))
     $.clock.every(PIPELINE_POLL_MS, () => void pollAll($, options))

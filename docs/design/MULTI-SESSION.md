@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -61,6 +61,11 @@ per session, `<session-id>.json`, written only whole:
   race the session writing its status. (Exception: an *ended* session's file, whose session is
   gone, is auto-cleared and deleted by whichever pane gets there; concurrent panes write identical
   results.)
+- **One write at a time within a session (0.13.1).** A session's own writes (tool calls, its
+  pipeline poll, its prune, `session.start`/`session.end`) run through one lock, each re-reading
+  the file inside it. Before, the poll read the file, waited seconds on the forge, and saved that
+  copy — a `done` sent meanwhile was lost (seen 2026-11-07). The forge calls stay outside the lock;
+  only their results are written, onto the file as it is by then.
 - **Dismissals name a completion.** A sidecar entry hides a task only while it is closed with that
   same `doneAt`; re-opening and finishing it again shows it again. Panes apply the sidecar when
   drawing; the session folds it into its own `dismissed` on its next write, so a re-sent done
