@@ -87,8 +87,10 @@ How to _use_ the panel during a task is the bundled skill:
   '{"enabledPlugins":{"progress-panel@claude-progress-panel":false}}'` from a folder Claude Code
   already trusts, wait for the pane, `tmux capture-pane -e -p > full.ansi`, kill the server,
   `node scripts/ansi-crop.mjs full.ansi <pane's first column> 84 1 30 > pane.ansi`, and render with
-  `mise exec aqua:charmbracelet/freeze@0.2.2 -- freeze --window --padding 24 --font.size 14
-  --line-height 1.3 -o docs/screenshots/pane.png pane.ansi < /dev/null` (stdin closed, or it waits).
+  `mise exec aqua:charmbracelet/freeze@0.2.2 -- freeze --window --background "$(node
+  scripts/ansi-crop.mjs --print-bg pane.ansi)" --padding 24 --font.size 14 --line-height 1.3 -o
+  docs/screenshots/pane.png pane.ansi < /dev/null` (stdin closed, or it waits; the canvas takes the
+  pane's own background, so empty cells match the text cells).
 - Scripts (`scripts/*.mjs`) are plain Node with no dependencies, tested with `node --test scripts/`.
 - Commits: Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
 - **GitHub mirror** (`github.com/Kirbo/claude-progress-panel`, remote `github`; read-only copy for
