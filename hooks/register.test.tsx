@@ -976,3 +976,43 @@ test('with no similar history the line shows the elapsed time only', async ($, o
   )
   await ui.unmount()
 })
+
+test('unfolded jobs show elapsed / estimate while running and ~estimate while queued', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  const at = (ms: number) => new Date(ms).toISOString()
+  world.gitlab.set(PIPE, {
+    id: 42,
+    status: 'running',
+    ref: 'main',
+    source: 'push',
+    started_at: at(T0 - 65_000),
+  })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, [
+    { id: 3, name: 'build', stage: 'build', status: 'pending', duration: null },
+    { id: 2, name: 'lint', stage: 'test', status: 'running', duration: null, started_at: at(T0 - 65_000) },
+    { id: 1, name: 'setup', stage: 'test', status: 'success', duration: 12 },
+  ])
+  world.gitlab.set('projects/g%2Fapp/pipelines?ref=main&status=success&source=push&per_page=6', [
+    { id: 41, duration: 700 },
+    { id: 40, duration: 760 },
+  ])
+  world.gitlab.set('projects/g%2Fapp/pipelines/41/jobs?per_page=100', [
+    { id: 13, name: 'build', stage: 'build', status: 'success', duration: 540 },
+    { id: 12, name: 'lint', stage: 'test', status: 'success', duration: 110 },
+  ])
+  world.gitlab.set('projects/g%2Fapp/pipelines/40/jobs?per_page=100', [
+    { id: 11, name: 'build', stage: 'build', status: 'success', duration: 660 },
+    { id: 10, name: 'lint', stage: 'test', status: 'success', duration: 130 },
+  ])
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+
+  const ui = await pane($)
+  await ui.press({ key: 'pipe:s-me:g/app#42' })
+  const lines = await texts(ui)
+  expect(lines).toContain('✓ setup  12s')
+  expect(lines).toContain('● lint   1m05s / ~2m')
+  expect(lines).toContain('○ build  ~10m')
+  await ui.unmount()
+})

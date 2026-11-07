@@ -8,10 +8,12 @@ import {
   formatEstimate,
   isFinished,
   jobCounts,
+  jobEstimatesFrom,
   jobState,
   parseDurations,
   parseJobs,
   parsePipeline,
+  parseSampleIds,
   pipelineDuration,
   progressBar,
   stageGroups,
@@ -217,4 +219,44 @@ test('the estimate: average of up to 5 similar successful runs, never this one; 
   expect(formatEstimate(45)).toBe('~45s')
   expect(formatEstimate(1985)).toBe('~33m')
   expect(formatEstimate(3900)).toBe('~1h05m')
+})
+
+test('job estimates: each job name averaged over the similar runs where it succeeded', () => {
+  expect(
+    parseSampleIds(
+      JSON.stringify([
+        { id: 9, duration: 1 },
+        { id: 8, duration: 2 },
+        { id: 7, duration: null },
+      ]),
+      9,
+    ),
+  ).toEqual([8])
+  const runA = [
+    { name: 'lint', stage: 'test', state: 'success', durationS: 100 },
+    { name: 'build', stage: 'build', state: 'success', durationS: 500 },
+  ] as const
+  const runB = [
+    { name: 'lint', stage: 'test', state: 'success', durationS: 140 },
+    { name: 'build', stage: 'build', state: 'failed', durationS: 30 },
+    { name: 'deploy', stage: 'deploy', state: 'skipped', durationS: null },
+  ] as const
+  expect(jobEstimatesFrom([[...runA], [...runB]] as never)).toEqual({ lint: 120, build: 500 })
+  expect(jobEstimatesFrom([])).toEqual({})
+  expect(
+    parseJobs(
+      JSON.stringify([
+        {
+          id: 1,
+          name: 'a',
+          stage: 's',
+          status: 'running',
+          duration: null,
+          started_at: '2026-11-06T20:00:00.000Z',
+        },
+      ]),
+    ),
+  ).toEqual([
+    { name: 'a', stage: 's', state: 'running', durationS: null, startedAt: '2026-11-06T20:00:00.000Z' },
+  ])
 })

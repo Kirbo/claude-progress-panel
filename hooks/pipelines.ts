@@ -115,6 +115,33 @@ export function parseDurations(text: string, exceptId: number): number[] {
     .map(p => p.duration)
 }
 
+/** The ids of the same up-to-5 earlier pipelines parseDurations reads (their jobs give job estimates). */
+export function parseSampleIds(text: string, exceptId: number): number[] {
+  const raw = json(text)
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter(
+      (p): p is { id: number; duration: number } =>
+        typeof p === 'object' &&
+        p !== null &&
+        p.id !== exceptId &&
+        typeof p.duration === 'number' &&
+        p.duration > 0,
+    )
+    .slice(0, 5)
+    .map(p => p.id)
+}
+
+/** Per job name, the average duration over the runs in which that job succeeded. */
+export function jobEstimatesFrom(runs: readonly (readonly PipelineJob[])[]): Record<string, number> {
+  const samples: Record<string, number[]> = {}
+  for (const run of runs)
+    for (const j of run)
+      if (j.state === 'success' && typeof j.durationS === 'number' && j.durationS > 0)
+        samples[j.name] = [...(samples[j.name] ?? []), j.durationS]
+  return Object.fromEntries(Object.entries(samples).map(([name, xs]) => [name, estimateFrom(xs) as number]))
+}
+
 /** The estimate: the average of the samples, rounded to seconds; null without any. */
 export function estimateFrom(durations: readonly number[]): number | null {
   if (durations.length === 0) return null
@@ -163,6 +190,7 @@ export function parseJobs(text: string): PipelineJob[] | undefined {
       stage: typeof j.stage === 'string' ? j.stage : '',
       state: jobState(j.status as string),
       durationS: typeof j.duration === 'number' ? j.duration : null,
+      ...(typeof j.started_at === 'string' ? { startedAt: j.started_at } : {}),
     }))
 }
 

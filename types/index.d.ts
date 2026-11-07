@@ -24,7 +24,14 @@ export type SessionInfo = {
 /** A CI job's state, GitLab's statuses folded into what the pane shows. */
 export type JobState = 'queued' | 'running' | 'success' | 'failed' | 'canceled' | 'skipped' | 'manual'
 
-export type PipelineJob = { name: string; stage: string; state: JobState; durationS: number | null }
+export type PipelineJob = {
+  name: string
+  stage: string
+  state: JobState
+  durationS: number | null
+  /** When the job started (GitLab's started_at) — a running job's elapsed time counts from it. */
+  startedAt?: string
+}
 
 /** A CI pipeline the session watches; the session's own timer refreshes it through `glab`. */
 export type Pipeline = {
@@ -49,6 +56,8 @@ export type Pipeline = {
   source?: string
   /** Average duration (s) of up to 5 earlier successful runs of the same ref + source; null = none. */
   estimateS?: number | null
+  /** Per job name: the average duration (s) in those similar runs where that job succeeded. */
+  jobEstimates?: Record<string, number>
   /** The last refresh's error (glab missing, not logged in, no such pipeline…). */
   error?: string
 }

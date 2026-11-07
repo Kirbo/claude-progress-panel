@@ -20,7 +20,7 @@ session, and each session's tasks grouped and foldable, with a Done list you can
 │       2 running · 1 queued · 1 skipped · 3 passed · 0 failed   │
 │       images                                                   │
 │         ✓ build-image:linux:amd64    1m18s                     │
-│         ● build-image:windows:arm64                            │
+│         ● build-image:windows:arm64  1m10s / ~3m               │
 │       verify                                                   │
 │         ○ check                                                │
 │                                                                │

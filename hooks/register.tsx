@@ -28,9 +28,11 @@ import {
   formatEstimate,
   isFinished,
   jobCounts,
+  jobEstimatesFrom,
   parseDurations,
   parseJobs,
   parsePipeline,
+  parseSampleIds,
   pipelineDuration,
   progressBar,
   stageGroups,
@@ -369,10 +371,12 @@ async function glabApi($: EngineInterface, path: string): Promise<{ text?: strin
   return { error: line || `glab exited ${ran.exitCode}` }
 }
 
-type CachedEstimate = { atMs: number; s: number | null }
+type CachedEstimate = { atMs: number; s: number | null; jobs?: Record<string, number> }
+type Estimates = { s: number | null; jobs: Record<string, number> }
 
-// The average duration of earlier successful runs of the same project, ref and source: from the
-// store when fetched within ESTIMATE_TTL_MS, else one `glab api` list call (cached afterwards).
+// The average duration of earlier successful runs of the same project, ref and source, and per job
+// name: from the store when fetched within ESTIMATE_TTL_MS, else one `glab api` list call plus one
+// jobs call per sample run (at most 5), cached afterwards.
 async function estimateFor(
   $: EngineInterface,
   project: string,
@@ -380,21 +384,28 @@ async function estimateFor(
   source: string | undefined,
   exceptId: number,
   nowMs: number,
-): Promise<number | null> {
+): Promise<Estimates> {
   const key = `estimate:${project}@${ref}:${source ?? '*'}`
   const cached = (await $.store.get(key)) as CachedEstimate | undefined
   if (cached && typeof cached.atMs === 'number' && nowMs - cached.atMs < ESTIMATE_TTL_MS)
-    return cached.s ?? null
+    return { s: cached.s ?? null, jobs: cached.jobs ?? {} }
   const list = await glabApi(
     $,
     `projects/${encodeURIComponent(project)}/pipelines?ref=${encodeURIComponent(ref)}&status=success${
       source ? `&source=${encodeURIComponent(source)}` : ''
     }&per_page=6`,
   )
-  if (list.text === undefined) return null
+  if (list.text === undefined) return { s: null, jobs: {} }
   const s = estimateFrom(parseDurations(list.text, exceptId))
-  await $.store.set(key, { atMs: nowMs, s } satisfies CachedEstimate)
-  return s
+  const runs: PipelineJob[][] = []
+  for (const id of parseSampleIds(list.text, exceptId)) {
+    const jobs = await glabApi($, `projects/${encodeURIComponent(project)}/pipelines/${id}/jobs?per_page=100`)
+    const parsed = jobs.text === undefined ? undefined : parseJobs(jobs.text)
+    if (parsed) runs.push(parsed)
+  }
+  const jobEstimates = jobEstimatesFrom(runs)
+  await $.store.set(key, { atMs: nowMs, s, jobs: jobEstimates } satisfies CachedEstimate)
+  return { s, jobs: jobEstimates }
 }
 
 // Fetches one pipeline's head and jobs (finding it by commit first, when only the sha is known).
@@ -413,7 +424,7 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
   const estimate =
     p.estimateS === undefined && parsed.ref
       ? await estimateFor($, p.project, parsed.ref, parsed.source, id, Date.parse(at))
-      : p.estimateS
+      : undefined
   const jobsText = await glabApi($, `projects/${project}/pipelines/${id}/jobs?per_page=100`)
   const jobs: PipelineJob[] = (jobsText.text === undefined ? undefined : parseJobs(jobsText.text)) ?? p.jobs
   const { error: _cleared, ...rest } = p
@@ -427,7 +438,7 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
     ...(parsed.pipelineFinishedAt ? { pipelineFinishedAt: parsed.pipelineFinishedAt } : {}),
     ...(parsed.durationS !== undefined ? { durationS: parsed.durationS } : {}),
     ...(parsed.source ? { source: parsed.source } : {}),
-    ...(estimate !== undefined ? { estimateS: estimate } : {}),
+    ...(estimate !== undefined ? { estimateS: estimate.s, jobEstimates: estimate.jobs } : {}),
     jobs,
     checkedAt: at,
     ...(isFinished(parsed.state) && !p.finishedAt ? { finishedAt: at } : {}),
@@ -668,7 +679,21 @@ export const register: Register = (on, options) => {
                     <Box flexDirection="column" paddingLeft={INDENT}>
                       {group.jobs.map(j => {
                         const jm = JOB_MARK[j.state]
-                        const duration = isFinished(j.state) ? formatDuration(j.durationS) : ''
+                        const est = p.jobEstimates?.[j.name]
+                        const elapsed =
+                          j.state === 'running' && j.startedAt
+                            ? Math.max(0, (nowMs - Date.parse(j.startedAt)) / 1000)
+                            : null
+                        // Finished: the real time. Running: elapsed / ~estimate. Queued: ~estimate.
+                        const duration = isFinished(j.state)
+                          ? formatDuration(j.durationS)
+                          : elapsed !== null && est !== undefined
+                            ? `${formatDuration(elapsed)} / ${formatEstimate(est)}`
+                            : elapsed !== null
+                              ? formatDuration(elapsed)
+                              : est !== undefined
+                                ? formatEstimate(est)
+                                : ''
                         return (
                           <Text color={jm.color}>
                             {t(duration ? 'pipe.jobTimed' : 'pipe.job', {

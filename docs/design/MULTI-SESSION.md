@@ -144,6 +144,10 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   the pipeline itself, and stores their average as `estimateS` (null when there are none). The
   lookup is cached in the plugin's `$.store` for 24 h per project + ref + source, so the next
   pipeline of that kind costs no call. A running pipeline's line reads `elapsed / ~estimate`.
+  Job estimates (0.8.0): the same lookup also reads those sample runs' jobs (one call each, at most
+  5, cached with the rest) and stores each job name's average over the runs where it succeeded as
+  `jobEstimates`. Unfolded, a running job reads `elapsed / ~estimate` (from its `started_at`), a
+  queued one `~estimate`, a finished one its real time; a job without history shows none.
 - Duration (0.5.1): running → now − GitLab's `started_at` (ticks with the pane's 2 s redraw);
   finished → GitLab's `duration` (as its UI shows), else `finished_at − started_at`; omitted
   before the pipeline has started.
