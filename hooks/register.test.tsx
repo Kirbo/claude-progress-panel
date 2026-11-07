@@ -126,6 +126,8 @@ function engine(
   const github = new Map<string, unknown>()
   // tea: its logins, and API answers by `<login> <path>`.
   const tea: { logins: unknown[]; api: Map<string, unknown> } = { logins: [], api: new Map() }
+  // Any other program (a custom CI command): its stdout by the whole argv joined with spaces.
+  const programs = new Map<string, string>()
   // While set, every forge call waits on it: a slow network the test releases by hand.
   const net: { hold?: Promise<void>; onHeld?: () => void } = {}
   on('process.run', async (_, e) => {
@@ -169,6 +171,15 @@ function engine(
             : { exitCode: 0, stdout: JSON.stringify(body), stderr: '' },
       } as never
     }
+    if (e.argv[0] !== 'rm' && e.argv[0] !== 'cmd') {
+      const out = programs.get(e.argv.join(' '))
+      return {
+        value:
+          out === undefined
+            ? { exitCode: 2, stdout: '', stderr: 'no such job' }
+            : { exitCode: 0, stdout: out, stderr: '' },
+      } as never
+    }
     const target = e.argv[e.argv.length - 1] as string
     disk.removed.push(target)
     disk.files.delete(target)
@@ -179,6 +190,7 @@ function engine(
     gitlab,
     github,
     tea,
+    programs,
     net,
     runs,
     store,
@@ -259,6 +271,68 @@ test("every session's system prompt tells it to keep its entry current — only 
   expect(ids(await compose(['Bash']))).toEqual(['intro'])
   // A teammate renders its lead's prompt: its lead's session reports, not a second copy.
   expect(ids(await compose([TOOL], ['teammate']))).toEqual(['intro'])
+})
+
+test('the transcript draws a progress_update call as one quiet line, in full only on ctrl+o', async ($, on) => {
+  engine(on, makeDisk())
+  // The engine's own rows, beneath the plugin's hook.
+  on('ui.render', ($e, e) => {
+    const { Text } = $e.ui.resolve(e)
+    return <Text>engine row</Text>
+  })
+  await start($)
+  const row = (props: Record<string, unknown>) =>
+    $.ui.mount({
+      plugin: 'progress-panel',
+      surface: 'terminal',
+      component: 'ToolUse',
+      requestId: 'tu1',
+      props: {
+        tool_use_id: 'tu1',
+        tool: TOOL,
+        isRunning: false,
+        isErrored: false,
+        isInterrupted: false,
+        isExpanded: false,
+        output: 'Saved. 2 task(s):\n…',
+        ...props,
+      },
+    } as never)
+  let ui = await row({
+    input: {
+      now: 'Gitea done. Now: the CI command',
+      tasks: [
+        { id: 'a', status: 'done' },
+        { id: 'b', status: 'doing' },
+      ],
+    },
+  })
+  expect(await texts(ui)).toEqual(['◦ Progress · Gitea done. Now: the CI command · 2 tasks'])
+  await ui.unmount()
+  ui = await row({ input: { watch: [{ project: 'g/app', sha: 'abc' }] } })
+  expect(await texts(ui)).toEqual(['◦ Progress · watching 1 pipeline'])
+  await ui.unmount()
+  // ctrl+o (expanded) and errors draw the engine's own row.
+  ui = await row({ input: { now: 'x' }, isExpanded: true })
+  expect(await texts(ui)).toEqual(['engine row'])
+  await ui.unmount()
+
+  // Its result block draws nothing unless expanded or errored.
+  const result = await $.ui.mount({
+    plugin: 'progress-panel',
+    surface: 'terminal',
+    component: 'ToolResult',
+    requestId: 'tu1',
+    props: {
+      tool_use_id: 'tu1',
+      tool: TOOL,
+      output: 'Saved. 2 task(s)',
+      isErrored: false,
+      isExpanded: false,
+    },
+  } as never)
+  expect(await texts(result)).toEqual([])
+  await result.unmount()
 })
 
 test('resolveProgressDir: the option wins, ~ expands, else <config dir>/progress', () => {
@@ -1071,6 +1145,38 @@ test('a Gitea/Forgejo run is read through tea, with the login on its host', asyn
   expect(world.runs.filter(r => r[0] === 'tea')).toContainEqual(['tea', 'api', '--login', 'cb', byCommit])
   // The login list is read once, not per call.
   expect(world.runs.filter(r => r[0] === 'tea' && r[1] === 'login')).toHaveLength(1)
+})
+
+test(
+  'any CI: the custom command from the settings prints the status; values never become extra arguments',
+  { options: { ciCommand: '~/bin/ci-status {project} {id}' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    world.programs.set(
+      '/home/me/bin/ci-status jenkins/nightly 12',
+      JSON.stringify({ id: 12, state: 'running', url: 'u12', jobs: [{ name: 'build', state: 'success' }] }),
+    )
+    await start($)
+    await update($, { watch: [{ provider: 'command', project: 'jenkins/nightly', pipeline: 12 }] })
+    expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({
+      key: 'ci:jenkins/nightly#12',
+      state: 'running',
+      url: 'u12',
+      jobs: [{ name: 'build', state: 'success' }],
+    })
+    expect(world.runs).toContainEqual(['/home/me/bin/ci-status', 'jenkins/nightly', '12'])
+  },
+)
+
+test('a custom-command watch without the setting says what to set', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, { watch: [{ provider: 'command', project: 'jenkins/nightly', pipeline: 12 }] })
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toBe(
+    'no custom CI command set (plugin settings: Custom CI command)',
+  )
 })
 
 test('a pipeline watched by commit is found once GitLab has it', async ($, on) => {

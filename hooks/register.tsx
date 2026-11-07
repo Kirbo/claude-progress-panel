@@ -2,10 +2,11 @@ import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 
 import type { Folds, Loaded, SortChoice } from '../types'
+import { commandArgv, parseCommandStatus } from './command'
 import { apiHost, parseRemote } from './forges'
 import { parseGiteaJobs, parseGiteaRun, teaLoginFor } from './gitea'
 import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
-import { t } from './i18n'
+import { t, tn } from './i18n'
 import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
 import {
   addDismissals,
@@ -346,6 +347,17 @@ async function forgetSession($: EngineInterface, options: PluginOptions, id: str
   })
 }
 
+/** One line for a progress_update call in the transcript: its `now`, how many tasks, watches. */
+function callSummary(input: ToolInput | undefined): string {
+  const parts = [
+    input?.now ?? '',
+    input?.tasks?.length ? tn('call.tasks', input.tasks.length) : '',
+    input?.watch?.length ? tn('call.watching', input.watch.length) : '',
+    input?.needsYou?.length ? tn('call.asks', input.needsYou.length) : '',
+  ].filter(Boolean)
+  return t('call.summary', { what: parts.length ? parts.join(' · ') : t('call.updated') })
+}
+
 /** How the pane names a session: Claude Code's name for it, else its repo / folder. */
 function sessionName(file: SessionFile): string {
   return file.session.title || file.session.project
@@ -531,6 +543,33 @@ async function refreshGiteaRun($: EngineInterface, p: Pipeline, at: string): Pro
   return merged(p, parsed, parsed.id, undefined, jobs, jobsText.error, at)
 }
 
+// A pipeline of a CI the plugin has no adapter for: the person's own command (the `ciCommand`
+// setting — never the tool's input) prints its status as JSON.
+async function refreshCommandRun(
+  $: EngineInterface,
+  options: PluginOptions,
+  p: Pipeline,
+  at: string,
+): Promise<Pipeline> {
+  const template = optionString(options, 'ciCommand')
+  if (!template.trim()) return { ...p, checkedAt: at, error: t('pipe.noCommand') }
+  const home = (await $.env.get('HOME')) ?? (await $.env.get('USERPROFILE')) ?? ''
+  const argv = commandArgv(template, { project: p.project, id: p.id, sha: p.sha, host: p.host, home })
+  const ran = await runCli($, argv)
+  const parsed = ran.text === undefined ? undefined : parseCommandStatus(ran.text)
+  if (parsed === null) return { ...p, checkedAt: at }
+  if (!parsed) return { ...p, checkedAt: at, error: ran.error ?? `${argv[0]}: not the documented JSON` }
+  return merged(
+    p,
+    parsed.head,
+    parsed.head.id,
+    undefined,
+    parsed.jobs.length ? parsed.jobs : p.jobs,
+    undefined,
+    at,
+  )
+}
+
 // One CLI call: its output, or its error as one line.
 async function runCli($: EngineInterface, argv: string[]): Promise<{ text?: string; error?: string }> {
   const ran = await $.process.run(argv).catch((err: unknown) => ({
@@ -708,7 +747,13 @@ function merged(
 }
 
 // Fetches one pipeline's head and jobs (finding it by commit first, when only the sha is known).
-async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
+async function refreshPipeline(
+  $: EngineInterface,
+  options: PluginOptions,
+  p: Pipeline,
+  at: string,
+): Promise<Pipeline> {
+  if (p.provider === 'command') return refreshCommandRun($, options, p, at)
   if (p.provider === 'github') return refreshGithubRun($, p, at)
   if (p.provider === 'gitea') return refreshGiteaRun($, p, at)
   const project = encodeURIComponent(p.project)
@@ -745,7 +790,7 @@ async function pollPipelines($: EngineInterface, options: PluginOptions): Promis
   // The forge calls take seconds and run outside the lock; only their results are written, onto the
   // file as it is by then (a task, a watch or an unwatch sent meanwhile stays).
   const fresh: Pipeline[] = []
-  for (const p of unfinished) fresh.push(await refreshPipeline($, p, at))
+  for (const p of unfinished) fresh.push(await refreshPipeline($, options, p, at))
   await exclusive(async () => {
     const file = await ownFile($, dir)
     const pipelines = (file.pipelines ?? []).map(p => fresh.find(f => f.key === p.key) ?? p)
@@ -768,7 +813,7 @@ async function pollOrphans($: EngineInterface, options: PluginOptions): Promise<
     if (orphans.length === 0) continue
     const at = new Date(nowMs).toISOString()
     const fresh: Pipeline[] = []
-    for (const p of orphans) fresh.push(await refreshPipeline($, p, at))
+    for (const p of orphans) fresh.push(await refreshPipeline($, options, p, at))
     await writeSidecar($, dir, id, sidecar => ({
       ...sidecar,
       // The fresh copies replace older ones; copies of pipelines the session no longer watches go.
@@ -927,6 +972,21 @@ export const register: Register = (on, options) => {
     })
     return { result: text }
   }).catch(() => ({ result: t('tool.failed') }))
+
+  // The transcript: a progress_update call is bookkeeping, not work — one quiet line instead of its
+  // whole input and the task list it answered (ctrl+o, an error or an interrupt draw it in full).
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    const row = e.props
+    if (row.tool !== TOOL_ID || row.isExpanded || row.isErrored || row.isInterrupted) return next(e)
+    const { Text } = $.ui.resolve(e)
+    return <Text dimColor>{callSummary(row.input as ToolInput | undefined)}</Text>
+  })
+  on('ui.render', { component: 'ToolResult' }, async ($, e, next) => {
+    const result = e.props
+    if (result.tool !== TOOL_ID || result.isExpanded || result.isErrored) return next(e)
+    const { Box } = $.ui.resolve(e)
+    return <Box />
+  })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Input, Link } = $.ui.resolve(e)

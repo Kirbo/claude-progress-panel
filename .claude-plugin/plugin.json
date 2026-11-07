@@ -33,6 +33,13 @@
       "default": "7",
       "required": false
     },
+    "ciCommand": {
+      "type": "string",
+      "title": "Custom CI command",
+      "description": "For a CI the panel has no built-in support for (Jenkins, Bitbucket, Azure DevOps, Woodpecker…): a command that prints a pipeline's status as JSON (format in the README). Placeholders {project}, {id}, {sha}, {host}, each filled inside its own argument; no shell; ~/ expands to your home. Empty = off.",
+      "default": "",
+      "required": false
+    },
     "sortTasksBy": {
       "type": "string",
       "title": "Sort tasks by",

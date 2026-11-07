@@ -8,3 +8,16 @@ export function t(key: MessageKey, vars: Record<string, string | number> = {}, l
   const template = (CATALOGS[lang] ?? en)[key]
   return template.replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole))
 }
+
+/** A key with `_one` / `_other` forms (English plural rules): its base name. */
+type PluralBase = { [K in MessageKey]: K extends `${infer B}_one` ? B : never }[MessageKey]
+
+/** The `_one` or `_other` form of a plural key for `count`, with `{count}` filled. */
+export function tn(
+  base: PluralBase,
+  count: number,
+  vars: Record<string, string | number> = {},
+  lang = 'en',
+): string {
+  return t(`${base}_${count === 1 ? 'one' : 'other'}` as MessageKey, { count, ...vars }, lang)
+}
