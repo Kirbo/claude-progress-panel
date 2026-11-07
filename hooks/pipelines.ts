@@ -76,6 +76,7 @@ export type PipelineHead = {
   startedAt?: string
   pipelineFinishedAt?: string
   durationS?: number
+  source?: string
 }
 
 /** `glab api …/pipelines/<id>` (an object) or `…/pipelines?sha=` (a list, newest first). */
@@ -93,7 +94,39 @@ export function parsePipeline(text: string): PipelineHead | undefined {
     ...(typeof p.started_at === 'string' ? { startedAt: p.started_at } : {}),
     ...(typeof p.finished_at === 'string' ? { pipelineFinishedAt: p.finished_at } : {}),
     ...(typeof p.duration === 'number' ? { durationS: p.duration } : {}),
+    ...(typeof p.source === 'string' ? { source: p.source } : {}),
   }
+}
+
+/** Durations (s) of up to 5 earlier pipelines from a `pipelines?status=success` list, skipping `exceptId`. */
+export function parseDurations(text: string, exceptId: number): number[] {
+  const raw = json(text)
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter(
+      (p): p is { id: number; duration: number } =>
+        typeof p === 'object' &&
+        p !== null &&
+        p.id !== exceptId &&
+        typeof p.duration === 'number' &&
+        p.duration > 0,
+    )
+    .slice(0, 5)
+    .map(p => p.duration)
+}
+
+/** The estimate: the average of the samples, rounded to seconds; null without any. */
+export function estimateFrom(durations: readonly number[]): number | null {
+  if (durations.length === 0) return null
+  return Math.round(durations.reduce((a, b) => a + b, 0) / durations.length)
+}
+
+/** `~45s`, `~33m`, `~1h05m` — an estimate reads coarser than a measured duration. */
+export function formatEstimate(seconds: number): string {
+  const s = Math.round(seconds)
+  if (s < 60) return `~${s}s`
+  if (s < 3600) return `~${Math.round(s / 60)}m`
+  return `~${Math.floor(s / 3600)}h${pad(Math.round((s % 3600) / 60))}m`
 }
 
 /**

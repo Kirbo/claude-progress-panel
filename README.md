@@ -16,7 +16,7 @@ session, and each session's tasks grouped and foldable, with a Done list you can
 │   web · Refactoring the settings view                          │
 │                                                                │
 │ ▾ Pipelines  1 watching · 2 succeeded · 0 failed               │
-│   ▾ api #3038537023 · main · running  ████░░░░ 4/8 · 6m33s     │
+│   ▾ api #3038537023 · main · running  ████░░░░ 4/8 · 6m33s / ~9m│
 │       2 running · 1 queued · 1 skipped · 3 passed · 0 failed   │
 │       images                                                   │
 │         ✓ build-image:linux:amd64    1m18s                     │
@@ -103,8 +103,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 - **Pipelines:** the agent can `watch` a GitLab CI pipeline (by id, or by commit sha before the
   pipeline exists). The session that watches it polls it through your own `glab` every 15 s until it
   finishes (GitLab cannot push to a local plugin), writes it into its file, and every pane shows
-  it: a progress bar of finished / all jobs, how long it has run (live; GitLab's duration once
-  finished), the counts per state (coloured) and every job, grouped
+  it: a progress bar of finished / all jobs, how long it has run (live, beside an estimate from the average of
+  up to 5 earlier successful runs of the same branch and trigger, cached 24 h; GitLab's duration
+  once finished), the counts per state (coloured) and every job, grouped
   by stage in pipeline order, with its result and time. The section header sums up every pipeline (watching / succeeded / failed) and folds itself once
   all of them succeeded (it opens again on news). Pipelines are listed newest first; a success folds to one line, and one that succeeded more
   than an hour ago moves into a folded "Finished" row. A pipeline starts folded — its header and

@@ -641,7 +641,9 @@ test('the session polls its unfinished pipelines every 15 s and stops once they 
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
   await start($)
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
-  const calls = () => world.runs.filter(r => r[0] === 'glab').length
+  // The pipeline + jobs reads (the one similar-runs lookup for the estimate is not a poll).
+  const calls = () =>
+    world.runs.filter(r => r[0] === 'glab' && !(r[2] ?? '').includes('status=success')).length
   expect(calls()).toBe(2)
 
   world.gitlab.set(PIPE, { id: 42, status: 'failed', ref: 'main' })
@@ -901,5 +903,76 @@ test('the ✕ hitbox is wider than the glyph', async ($, on) => {
   const x = await ui.find({ type: 'Button', key: 'dismiss:s-me:t1' })
   expect(x?.text?.trim()).toBe('✕')
   expect((x?.text ?? '').length).toBeGreaterThanOrEqual(5)
+  await ui.unmount()
+})
+
+test('a running pipeline shows elapsed / estimate, the estimate fetched once and cached 24 h', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  const started = new Date(T0 - 293_000).toISOString()
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main', source: 'push', started_at: started })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  world.gitlab.set('projects/g%2Fapp/pipelines?ref=main&status=success&source=push&per_page=6', [
+    { id: 41, duration: 1900 },
+    { id: 40, duration: 2060 },
+  ])
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+    '▸ app #42 · main · running  ░░░░░░░░ 0/1 · 4m53s / ~33m',
+  )
+  await ui.unmount()
+  const listCalls = () =>
+    world.runs.filter(r => r[0] === 'glab' && (r[2] ?? '').includes('status=success')).length
+  expect(listCalls()).toBe(1)
+
+  // A later poll, and a second pipeline of the same kind, reuse the estimate.
+  await world.clock.advance(15_000)
+  world.gitlab.set('projects/g%2Fapp/pipelines/43', {
+    id: 43,
+    status: 'running',
+    ref: 'main',
+    source: 'push',
+    started_at: started,
+  })
+  world.gitlab.set('projects/g%2Fapp/pipelines/43/jobs?per_page=100', jobsOf(['lint', 'running']))
+  await update($, { watch: [{ project: 'g/app', pipeline: 43 }] })
+  expect(listCalls()).toBe(1)
+
+  // Once the cached estimate is older than 24 h, the next new pipeline asks again.
+  const key = 'estimate:g/app@main:push'
+  world.store.set(key, { ...(world.store.get(key) as object), atMs: T0 - 25 * HOUR })
+  world.gitlab.set('projects/g%2Fapp/pipelines/44', {
+    id: 44,
+    status: 'running',
+    ref: 'main',
+    source: 'push',
+    started_at: started,
+  })
+  world.gitlab.set('projects/g%2Fapp/pipelines/44/jobs?per_page=100', jobsOf(['lint', 'running']))
+  await update($, { watch: [{ project: 'g/app', pipeline: 44 }] })
+  expect(listCalls()).toBe(2)
+})
+
+test('with no similar history the line shows the elapsed time only', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, {
+    id: 42,
+    status: 'running',
+    ref: 'main',
+    source: 'push',
+    started_at: new Date(T0 - 65_000).toISOString(),
+  })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  world.gitlab.set('projects/g%2Fapp/pipelines?ref=main&status=success&source=push&per_page=6', [])
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
+    '▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s',
+  )
   await ui.unmount()
 })

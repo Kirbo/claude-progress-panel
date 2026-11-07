@@ -19,6 +19,7 @@ export const en = {
   'pane.pipelinesFinished': '{fold} Finished ({count})',
   'pipe.header': '{fold} {label} #{id}{ref} · {state}  {bar} {finished}/{total}{duration}',
   'pipe.duration': ' · {d}',
+  'pipe.durationEstimate': ' · {d} / {e}',
   'pipe.ref': ' · {ref}',
   'pipe.dismiss': '  ✕  ',
   'pipe.state.queued': 'queued',

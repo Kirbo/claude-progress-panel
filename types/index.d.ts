@@ -45,6 +45,10 @@ export type Pipeline = {
   startedAt?: string
   pipelineFinishedAt?: string
   durationS?: number
+  /** How GitLab triggered it (push, schedule, web, …) — similar runs are matched on it. */
+  source?: string
+  /** Average duration (s) of up to 5 earlier successful runs of the same ref + source; null = none. */
+  estimateS?: number | null
   /** The last refresh's error (glab missing, not logged in, no such pipeline…). */
   error?: string
 }

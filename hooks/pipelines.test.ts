@@ -3,10 +3,13 @@ import { expect, test } from 'claude-code/testing'
 import type { Pipeline, PipelineJob } from './pipelines'
 import {
   applyWatch,
+  estimateFrom,
   formatDuration,
+  formatEstimate,
   isFinished,
   jobCounts,
   jobState,
+  parseDurations,
   parseJobs,
   parsePipeline,
   pipelineDuration,
@@ -194,4 +197,24 @@ test('visiblePipelines hides a pipeline the person dismissed, for that same fini
   }
   expect(visiblePipelines([done], [{ id: 'pipeline:g/app#42', doneAt: iso(T0 + 1000) }])).toEqual([])
   expect(visiblePipelines([done], [{ id: 'pipeline:g/app#42', doneAt: iso(T0) }])).toEqual([done])
+})
+
+test('the estimate: average of up to 5 similar successful runs, never this one; formatted with ~', () => {
+  const list = JSON.stringify([
+    { id: 9, duration: 600 },
+    { id: 8, duration: 1800 },
+    { id: 7, duration: null },
+    { id: 6, duration: 2400 },
+    { id: 5, duration: 2100 },
+    { id: 4, duration: 2000 },
+    { id: 3, duration: 9999 },
+  ])
+  // id 9 is the pipeline itself; nulls are skipped; at most five samples.
+  expect(parseDurations(list, 9)).toEqual([1800, 2400, 2100, 2000, 9999])
+  expect(estimateFrom([1800, 2400, 2100, 2000, 1700])).toBe(2000)
+  expect(estimateFrom([])).toBeNull()
+  expect(parseDurations('{ nope', 1)).toEqual([])
+  expect(formatEstimate(45)).toBe('~45s')
+  expect(formatEstimate(1985)).toBe('~33m')
+  expect(formatEstimate(3900)).toBe('~1h05m')
 })

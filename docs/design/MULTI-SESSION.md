@@ -139,6 +139,11 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   success folds to its one header line (running / failed ones keep the counts line). A pipeline
   that succeeded more than 1 h ago moves into a folded `Finished (N)` row at the end of the
   section; one press lists them. Actions (✕) are right-aligned, padded to a five-column hitbox.
+- Estimate (0.7.0): on its first refresh the watching session looks up up to 5 earlier successful
+  pipelines of the same project + ref + source (`pipelines?ref=…&status=success&source=…`), skips
+  the pipeline itself, and stores their average as `estimateS` (null when there are none). The
+  lookup is cached in the plugin's `$.store` for 24 h per project + ref + source, so the next
+  pipeline of that kind costs no call. A running pipeline's line reads `elapsed / ~estimate`.
 - Duration (0.5.1): running → now − GitLab's `started_at` (ticks with the pane's 2 s redraw);
   finished → GitLab's `duration` (as its UI shows), else `finished_at − started_at`; omitted
   before the pipeline has started.

@@ -23,9 +23,12 @@ import { baseName, resolveProgressDir } from './paths'
 import type { JobState, Pipeline, PipelineJob, WatchInput } from './pipelines'
 import {
   applyWatch,
+  estimateFrom,
   formatDuration,
+  formatEstimate,
   isFinished,
   jobCounts,
+  parseDurations,
   parseJobs,
   parsePipeline,
   pipelineDuration,
@@ -49,6 +52,8 @@ const DAY_MS = 24 * 3_600_000
 const PIPELINE_POLL_MS = 15_000
 // A pipeline that succeeded longer ago than this moves into the folded "Finished" list.
 const ARCHIVE_AFTER_MS = 3_600_000
+// Similar-run estimates are cached in the plugin's store this long, per project + ref + source.
+const ESTIMATE_TTL_MS = 24 * 3_600_000
 const FINISHED_KEY = 'pipelines-finished'
 const SORT_KEY = 'sortTasksBy'
 
@@ -364,6 +369,34 @@ async function glabApi($: EngineInterface, path: string): Promise<{ text?: strin
   return { error: line || `glab exited ${ran.exitCode}` }
 }
 
+type CachedEstimate = { atMs: number; s: number | null }
+
+// The average duration of earlier successful runs of the same project, ref and source: from the
+// store when fetched within ESTIMATE_TTL_MS, else one `glab api` list call (cached afterwards).
+async function estimateFor(
+  $: EngineInterface,
+  project: string,
+  ref: string,
+  source: string | undefined,
+  exceptId: number,
+  nowMs: number,
+): Promise<number | null> {
+  const key = `estimate:${project}@${ref}:${source ?? '*'}`
+  const cached = (await $.store.get(key)) as CachedEstimate | undefined
+  if (cached && typeof cached.atMs === 'number' && nowMs - cached.atMs < ESTIMATE_TTL_MS)
+    return cached.s ?? null
+  const list = await glabApi(
+    $,
+    `projects/${encodeURIComponent(project)}/pipelines?ref=${encodeURIComponent(ref)}&status=success${
+      source ? `&source=${encodeURIComponent(source)}` : ''
+    }&per_page=6`,
+  )
+  if (list.text === undefined) return null
+  const s = estimateFrom(parseDurations(list.text, exceptId))
+  await $.store.set(key, { atMs: nowMs, s } satisfies CachedEstimate)
+  return s
+}
+
 // Fetches one pipeline's head and jobs (finding it by commit first, when only the sha is known).
 async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
   const project = encodeURIComponent(p.project)
@@ -377,6 +410,10 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
   if (!parsed && p.id === null && !head.error) return { ...p, checkedAt: at }
   if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'glab: unreadable pipeline' }
   const id = parsed.id
+  const estimate =
+    p.estimateS === undefined && parsed.ref
+      ? await estimateFor($, p.project, parsed.ref, parsed.source, id, Date.parse(at))
+      : p.estimateS
   const jobsText = await glabApi($, `projects/${project}/pipelines/${id}/jobs?per_page=100`)
   const jobs: PipelineJob[] = (jobsText.text === undefined ? undefined : parseJobs(jobsText.text)) ?? p.jobs
   const { error: _cleared, ...rest } = p
@@ -389,6 +426,8 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
     ...(parsed.startedAt ? { startedAt: parsed.startedAt } : {}),
     ...(parsed.pipelineFinishedAt ? { pipelineFinishedAt: parsed.pipelineFinishedAt } : {}),
     ...(parsed.durationS !== undefined ? { durationS: parsed.durationS } : {}),
+    ...(parsed.source ? { source: parsed.source } : {}),
+    ...(estimate !== undefined ? { estimateS: estimate } : {}),
     jobs,
     checkedAt: at,
     ...(isFinished(parsed.state) && !p.finishedAt ? { finishedAt: at } : {}),
@@ -577,9 +616,13 @@ export const register: Register = (on, options) => {
         bar: progressBar(counts.finished, counts.total),
         finished: counts.finished,
         total: counts.total,
-        duration: ((d: number | null) => (d === null ? '' : t('pipe.duration', { d: formatDuration(d) })))(
-          pipelineDuration(p, nowMs),
-        ),
+        duration: ((d: number | null) => {
+          if (d === null) return ''
+          // While it runs, the elapsed time beside the similar-run estimate: "4m53s / ~33m".
+          if (!finished && typeof p.estimateS === 'number')
+            return t('pipe.durationEstimate', { d: formatDuration(d), e: formatEstimate(p.estimateS) })
+          return t('pipe.duration', { d: formatDuration(d) })
+        })(pipelineDuration(p, nowMs)),
       })
       const countParts = COUNT_ORDER.filter(s => ALWAYS_COUNTED.has(s) || counts[s] > 0)
       // Names padded to the widest in this pipeline, so the times line up in a column.
