@@ -124,6 +124,8 @@ function engine(
   const runs: string[][] = []
   const gitlab = new Map<string, unknown>()
   const github = new Map<string, unknown>()
+  // tea: its logins, and API answers by `<login> <path>`.
+  const tea: { logins: unknown[]; api: Map<string, unknown> } = { logins: [], api: new Map() }
   // While set, every forge call waits on it: a slow network the test releases by hand.
   const net: { hold?: Promise<void>; onHeld?: () => void } = {}
   on('process.run', async (_, e) => {
@@ -136,6 +138,17 @@ function engine(
     const path = e.argv[e.argv.length - 1] as string
     const host = e.argv[2] === '--hostname' ? (e.argv[3] as string) : undefined
     const answer = (forge: Map<string, unknown>) => forge.get(`${host} ${path}`) ?? forge.get(path)
+    if (e.argv[0] === 'tea') {
+      if (e.argv[1] === 'login')
+        return { value: { exitCode: 0, stdout: JSON.stringify(tea.logins), stderr: '' } } as never
+      const body = tea.api.get(`${e.argv[3]} ${path}`)
+      return {
+        value:
+          body === undefined
+            ? { exitCode: 1, stdout: '', stderr: 'Error: 404 Not Found' }
+            : { exitCode: 0, stdout: JSON.stringify(body), stderr: '' },
+      } as never
+    }
     if (e.argv[0] === 'gh') {
       // `gh api <path>`: answered from the fake GitHub (or the CLI's 404 when the path is unknown).
       const body = answer(github)
@@ -165,6 +178,7 @@ function engine(
     clock,
     gitlab,
     github,
+    tea,
     net,
     runs,
     store,
@@ -1025,6 +1039,38 @@ test("every forge call names its host: the remote's for the session's own repo, 
     ['gh:ghe.example.com/o/r#9', 'running'],
     ['g/app#42', 'unknown'],
   ])
+})
+
+test('a Gitea/Forgejo run is read through tea, with the login on its host', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.tea.logins = [{ name: 'cb', url: 'https://codeberg.org', ssh_host: '', user: 'me', default: 'true' }]
+  const byCommit = '/repos/team/app/actions/runs?head_sha=abc&limit=1'
+  world.tea.api.set(`cb ${byCommit}`, {
+    total_count: 1,
+    workflow_runs: [{ id: 77, status: 'running', commit_sha: 'abc', prettyref: 'main', html_url: 'u77' }],
+  })
+  world.tea.api.set('cb /repos/team/app/actions/runs/77/jobs', [{ id: 1, name: 'build', status: 'running' }])
+  await start($)
+  await update($, {
+    watch: [
+      { provider: 'gitea', project: 'team/app', sha: 'abc', host: 'codeberg.org' },
+      { provider: 'gitea', project: 'team/app', run: 3, host: 'gitea.example.com' },
+    ],
+  })
+  const [found, unknown] = read(disk, `${DIR}/s-me.json`).pipelines ?? []
+  expect(found).toMatchObject({
+    key: 'gt:codeberg.org/team/app@abc',
+    id: 77,
+    state: 'running',
+    ref: 'main',
+    url: 'u77',
+    jobs: [{ name: 'build', state: 'running' }],
+  })
+  expect(unknown?.error).toBe('tea: no login for gitea.example.com (tea login add)')
+  expect(world.runs.filter(r => r[0] === 'tea')).toContainEqual(['tea', 'api', '--login', 'cb', byCommit])
+  // The login list is read once, not per call.
+  expect(world.runs.filter(r => r[0] === 'tea' && r[1] === 'login')).toHaveLength(1)
 })
 
 test('a pipeline watched by commit is found once GitLab has it', async ($, on) => {

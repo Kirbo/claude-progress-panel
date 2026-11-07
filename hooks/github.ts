@@ -30,7 +30,7 @@ export function ghState(status: string, conclusion: string | null | undefined): 
   }
 }
 
-function json(text: string): unknown {
+export function json(text: string): unknown {
   try {
     return JSON.parse(text)
   } catch {
@@ -38,10 +38,10 @@ function json(text: string): unknown {
   }
 }
 
-const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
+export const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 
 /** Seconds between two ISO stamps; undefined when either is missing or unreadable. */
-function seconds(from: unknown, to: unknown): number | undefined {
+export function seconds(from: unknown, to: unknown): number | undefined {
   const a = typeof from === 'string' ? Date.parse(from) : Number.NaN
   const b = typeof to === 'string' ? Date.parse(to) : Number.NaN
   return Number.isNaN(a) || Number.isNaN(b) ? undefined : Math.max(0, Math.round((b - a) / 1000))

@@ -3,6 +3,7 @@ import { atom, read, update } from 'claude-code'
 
 import type { Folds, Loaded, SortChoice } from '../types'
 import { apiHost, parseRemote } from './forges'
+import { parseGiteaJobs, parseGiteaRun, teaLoginFor } from './gitea'
 import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
 import { t } from './i18n'
 import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
@@ -491,6 +492,57 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
     : text
 }
 
+// tea's logins (`tea login list --output json`), read at most once a minute: each Gitea / Forgejo
+// call names the login whose URL is on the pipeline's host.
+let teaLogins: { atMs: number; text: string } | undefined
+const TEA_LOGINS_TTL_MS = 60_000
+
+async function teaApi(
+  $: EngineInterface,
+  host: string,
+  path: string,
+): Promise<{ text?: string; error?: string }> {
+  const nowMs = await $.clock.now()
+  if (!teaLogins || nowMs - teaLogins.atMs > TEA_LOGINS_TTL_MS) {
+    const listed = await runCli($, ['tea', 'login', 'list', '--output', 'json'])
+    if (listed.text === undefined) return listed
+    teaLogins = { atMs: nowMs, text: listed.text }
+  }
+  const login = teaLoginFor(teaLogins.text, host)
+  if (!login) return { error: `tea: no login for ${host} (tea login add)` }
+  return runCli($, ['tea', 'api', '--login', login, path])
+}
+
+// One Gitea / Forgejo Actions run's head and jobs (found by commit first, when only the sha is known).
+async function refreshGiteaRun($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
+  const host = apiHost(p)
+  if (!host) return { ...p, checkedAt: at, error: 'tea: the pipeline has no host' }
+  const runs = `/repos/${p.project}/actions/runs`
+  const head =
+    p.id === null
+      ? await teaApi($, host, `${runs}?head_sha=${encodeURIComponent(p.sha ?? '')}&limit=1`)
+      : await teaApi($, host, `${runs}/${p.id}`)
+  const parsed = head.text === undefined ? undefined : parseGiteaRun(head.text)
+  if (!parsed && p.id === null && !head.error) return { ...p, checkedAt: at }
+  if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'tea: unreadable workflow run' }
+  const jobsText = await teaApi($, host, `${runs}/${parsed.id}/jobs`)
+  const jobs: PipelineJob[] =
+    (jobsText.text === undefined ? undefined : parseGiteaJobs(jobsText.text)) ?? p.jobs
+  return merged(p, parsed, parsed.id, undefined, jobs, jobsText.error, at)
+}
+
+// One CLI call: its output, or its error as one line.
+async function runCli($: EngineInterface, argv: string[]): Promise<{ text?: string; error?: string }> {
+  const ran = await $.process.run(argv).catch((err: unknown) => ({
+    exitCode: 127,
+    stdout: '',
+    stderr: err instanceof Error ? err.message : String(err),
+  }))
+  if (ran.exitCode === 0) return { text: ran.stdout }
+  const line = (ran.stderr || ran.stdout).trim().split('\n').pop() ?? ''
+  return { error: line || `${argv[0]} exited ${ran.exitCode}` }
+}
+
 // One `<cli> api [--hostname <host>] <path>` (`glab` for GitLab, `gh` for GitHub): the JSON text,
 // or the CLI's error as one line. The host is always named when known, so the answer never depends
 // on the repo the command happens to run in.
@@ -500,15 +552,7 @@ async function cliApi(
   path: string,
   host: string | undefined,
 ): Promise<{ text?: string; error?: string }> {
-  const argv = host ? [cli, 'api', '--hostname', host, path] : [cli, 'api', path]
-  const ran = await $.process.run(argv).catch((err: unknown) => ({
-    exitCode: 127,
-    stdout: '',
-    stderr: err instanceof Error ? err.message : String(err),
-  }))
-  if (ran.exitCode === 0) return { text: ran.stdout }
-  const line = (ran.stderr || ran.stdout).trim().split('\n').pop() ?? ''
-  return { error: line || `${cli} exited ${ran.exitCode}` }
+  return runCli($, host ? [cli, 'api', '--hostname', host, path] : [cli, 'api', path])
 }
 
 const glabApi = ($: EngineInterface, path: string, host: string | undefined) => cliApi($, 'glab', path, host)
@@ -666,6 +710,7 @@ function merged(
 // Fetches one pipeline's head and jobs (finding it by commit first, when only the sha is known).
 async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
   if (p.provider === 'github') return refreshGithubRun($, p, at)
+  if (p.provider === 'gitea') return refreshGiteaRun($, p, at)
   const project = encodeURIComponent(p.project)
   // By commit, GitLab's list answer already carries the newest pipeline's status: no second call.
   const head =
