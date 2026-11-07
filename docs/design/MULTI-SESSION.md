@@ -305,6 +305,10 @@ a local plugin.)
 - **Repo headings per list:** the open list groups by repo only when its OPEN tasks span more
   than one repo; the Done list groups the same way on its own (`▾ <repo>  N done`, open by
   default, each foldable). No prefixes.
+- **Filter highlight:** while the filter is on, every hit in a title, note, detail, step or done
+  row is drawn `inverse` (`splitMatches`); a foldable task's title moves beside its fold arrow as
+  text (a Button label cannot be styled), and a hit inside its detail or steps unfolds it until the
+  person folds it.
 - **Subagents do not report:** a `progress_update` from a subagent (`tool.call` `agentId`) is
   answered "not stored — your coordinator reports" and writes nothing, so lanes never mix their
   tasks into the session's entry.

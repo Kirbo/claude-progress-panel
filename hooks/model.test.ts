@@ -15,6 +15,7 @@ import {
   parseSidecar,
   pruneDone,
   sortTasks,
+  splitMatches,
   visibleTasks,
 } from './model'
 
@@ -361,4 +362,19 @@ test('parseSidecar and parseSessionFile read the removals (strings only)', () =>
   expect(parseSidecar(JSON.stringify({ version: 1, sessionId: 's1', entries: [] }))?.cancelled).toEqual([])
   const file = parseSessionFile(JSON.stringify({ ...fresh(), cancelled: ['t2'] }))
   expect(file?.cancelled).toEqual(['t2'])
+})
+
+test('splitMatches cuts a text around every case-insensitive hit of the query; blank = one plain part', () => {
+  expect(splitMatches('Fix the Panel filter panel', 'panel')).toEqual([
+    { text: 'Fix the ', hit: false },
+    { text: 'Panel', hit: true },
+    { text: ' filter ', hit: false },
+    { text: 'panel', hit: true },
+  ])
+  expect(splitMatches('abc', '  ')).toEqual([{ text: 'abc', hit: false }])
+  expect(splitMatches('abc', 'x')).toEqual([{ text: 'abc', hit: false }])
+  expect(splitMatches('aaa', 'aa')).toEqual([
+    { text: 'aa', hit: true },
+    { text: 'a', hit: false },
+  ])
 })

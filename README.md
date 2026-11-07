@@ -55,7 +55,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   skipped ("removed in the Progress pane") and tells its agent right after its next step — "do not
   do it; stop if you are on it". Works for any live session's tasks, not only this one's.
 - **Sort** cycles plan → status → title → created → done (remembered). **Filter tasks** beside it
-  keeps only the tasks whose title, note, detail or steps hold what you type; sessions without a
+  keeps only the tasks whose title, note, detail or steps hold what you type, the matching text
+  highlighted (a task whose hit is in its detail or steps unfolds by itself); sessions without a
   match step aside.
 - Every `▾`/`▸` line folds. **✕** removes a done task (or an ended session); **Clear all** (shown
   while its Done list is open) empties the list.

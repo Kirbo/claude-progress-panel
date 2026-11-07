@@ -339,6 +339,22 @@ export function matchesTask(task: Task, query: string): boolean {
   )
 }
 
+/** A text cut around every case-insensitive hit of `query` (for highlighting); blank query = one plain part. */
+export function splitMatches(text: string, query: string): { text: string; hit: boolean }[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return [{ text, hit: false }]
+  const parts: { text: string; hit: boolean }[] = []
+  const lower = text.toLowerCase()
+  let from = 0
+  for (let at = lower.indexOf(q); at >= 0; at = lower.indexOf(q, at + q.length)) {
+    if (at > from) parts.push({ text: text.slice(from, at), hit: false })
+    parts.push({ text: text.slice(at, at + q.length), hit: true })
+    from = at + q.length
+  }
+  if (from < text.length || parts.length === 0) parts.push({ text: text.slice(from), hit: false })
+  return parts
+}
+
 /** How many of a task's steps are closed, of how many. */
 export function stepCounts(task: Pick<Task, 'steps'>): { closed: number; total: number } {
   const steps = task.steps ?? []

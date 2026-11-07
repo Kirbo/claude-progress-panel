@@ -919,7 +919,10 @@ test('the Filter beside Sessions keeps only the tasks whose text matches, open a
   await ui.input({ key: 'filter', text: 'PANEL', kind: 'change' })
   let lines = await texts(ui)
   expect(lines).toContain('○ Fix the panel filter')
-  expect((await ui.find({ type: 'Button', key: 'task:s-me:t2' }))?.text).toBe('▸ Write release notes')
+  // While filtering, a foldable title sits beside its arrow as text (a Button label cannot be
+  // highlighted); its hit is in a step, so the task opened by itself.
+  expect((await ui.find({ type: 'Button', key: 'task:s-me:t2' }))?.text).toBe('▾')
+  expect(lines).toContain('Write release notes')
   expect(lines.some(l => l.startsWith('✓ Panel docs'))).toBe(true)
   expect(lines.some(l => l.startsWith('✓ Ship it'))).toBe(false)
   // A session with nothing matching steps aside while the filter is on.
@@ -1003,6 +1006,31 @@ test('repo headings follow each list: open tasks in one repo stay flat; Done gro
   lines = await texts(ui)
   expect(lines.some(l => l.startsWith('✓ Shipped switchboard'))).toBe(false)
   expect(lines.some(l => l.startsWith('✓ Shipped panel'))).toBe(true)
+  await ui.unmount()
+})
+
+test('while filtering, the matching part of each task is highlighted; a hit inside steps unfolds its task', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, {
+    tasks: [
+      { title: 'Fix the panel filter', note: 'panel notes' },
+      { title: 'Release notes', steps: [{ title: 'panel changes' }, { title: 'tag' }] },
+      { title: 'Panel docs', status: 'done' },
+    ],
+  })
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-me' })
+  await ui.input({ key: 'filter', text: 'PANEL', kind: 'change' })
+  const hits = (await ui.findAll({ type: 'Text' })).filter(x => x.props.inverse === true).map(x => x.text)
+  // The open title, its note, the step (its task unfolded by itself) and the done title.
+  expect(hits).toEqual(['panel', 'panel', 'panel', 'Panel'])
+  expect(await texts(ui)).toContain('○ tag')
+  // No filter: no highlight, the task folded again.
+  await ui.input({ key: 'filter', text: '', kind: 'change' })
+  expect((await ui.findAll({ type: 'Text' })).some(x => x.props.inverse === true)).toBe(false)
+  expect(await texts(ui)).not.toContain('○ tag')
   await ui.unmount()
 })
 

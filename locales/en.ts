@@ -57,6 +57,7 @@ export const en = {
   'pipe.jobTimed': '{glyph} {name}  {duration}',
   'pane.sort': 'Sort: {by}',
   'pane.taskFold': '{fold} {title}',
+  'pane.foldGlyph': '{fold}',
   'pane.cancel': '  ✕  ',
   'task.removedNote': 'removed in the Progress pane',
   'notice.removed':

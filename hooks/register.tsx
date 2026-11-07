@@ -25,6 +25,7 @@ import {
   pruneDone,
   SORTS,
   sortTasks,
+  splitMatches,
   stepCounts,
   visibleTasks,
 } from './model'
@@ -1120,6 +1121,18 @@ export const register: Register = (on, options) => {
     const nowMs = await $.clock.now()
     const by = await sortBy($, options)
     const query = await read($, filtering)
+    const filteringNow = query.trim() !== ''
+    // The filter's hits, inverted (readable on dark and light themes); the text as is without a filter.
+    const hl = (text: string) =>
+      filteringNow
+        ? splitMatches(text, query).map(part => (part.hit ? <Text inverse>{part.text}</Text> : part.text))
+        : text
+    // A catalog line holding a title: only the title's hits are highlighted, the rest stays as is.
+    const hlTitle = (line: string, title: string) => {
+      const at = line.indexOf(title)
+      if (!filteringNow || at < 0) return line
+      return [line.slice(0, at), ...[hl(title)].flat(), line.slice(at + title.length)]
+    }
     const release = await read($, releasing)
     const version = (await ownManifest($)).version
     const ordered = orderSessions(all, me)
@@ -1320,7 +1333,7 @@ export const register: Register = (on, options) => {
       const mark = MARK[task.status] ?? { sign: '?' }
       const note = task.note ? (
         <Box paddingLeft={INDENT}>
-          <Text dimColor>{task.note}</Text>
+          <Text dimColor>{hl(task.note)}</Text>
         </Box>
       ) : null
       // Nothing more to show: one plain line.
@@ -1340,7 +1353,8 @@ export const register: Register = (on, options) => {
           <Box flexDirection="column">
             <Box flexDirection="row" justifyContent="space-between" gap={2}>
               <Text color={mark.color} bold>
-                {`${mark.sign} ${task.title}`}
+                {`${mark.sign} `}
+                {hl(task.title)}
               </Text>
               {remove}
             </Box>
@@ -1349,7 +1363,9 @@ export const register: Register = (on, options) => {
         )
       // Details or subtasks: the title folds them, its steps counted on the right like a pipeline's jobs.
       const key = `task:${sessionId}:${task.id}`
-      const isOpen = folded[key] ?? false
+      // While filtering, a hit inside the detail or the steps unfolds the task, so it shows.
+      const hitInside = filteringNow && matchesTask({ ...task, title: '', note: undefined }, query)
+      const isOpen = folded[key] ?? hitInside
       const steps = stepCounts(task)
       return (
         <Box flexDirection="column">
@@ -1364,12 +1380,19 @@ export const register: Register = (on, options) => {
               <Text color={mark.color} bold>
                 {mark.sign}
               </Text>
+              {/* A Button label cannot be styled: while filtering, the title moves beside the fold
+                  arrow as text, so its hit can be highlighted. */}
               <Button
                 key={key}
-                label={t('pane.taskFold', { fold: isOpen ? '▾' : '▸', title: task.title })}
+                label={
+                  filteringNow
+                    ? t('pane.foldGlyph', { fold: isOpen ? '▾' : '▸' })
+                    : t('pane.taskFold', { fold: isOpen ? '▾' : '▸', title: task.title })
+                }
                 plain
                 onPress={() => void toggle($, key, isOpen)}
               />
+              {filteringNow ? <Text>{hl(task.title)}</Text> : null}
             </Box>
             <Box flexDirection="row">
               {steps.total > 0 ? (
@@ -1387,10 +1410,15 @@ export const register: Register = (on, options) => {
           {note}
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT * 2}>
-              {task.detail ? <Text dimColor>{task.detail}</Text> : null}
+              {task.detail ? <Text dimColor>{hl(task.detail)}</Text> : null}
               {(task.steps ?? []).map(step => {
                 const m = MARK[step.status] ?? { sign: '?' }
-                return <Text color={m.color}>{`${m.sign} ${step.title}`}</Text>
+                return (
+                  <Text color={m.color}>
+                    {`${m.sign} `}
+                    {hl(step.title)}
+                  </Text>
+                )
               })}
             </Box>
           ) : null}
@@ -1401,10 +1429,13 @@ export const register: Register = (on, options) => {
     const doneRow = (sessionId: string, task: Task) => (
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Text dimColor>
-          {t(task.status === 'done' ? 'pane.doneItem' : 'pane.skippedItem', {
-            title: task.title,
-            when: formatTime(task.doneAt ?? task.updatedAt, nowMs),
-          })}
+          {hlTitle(
+            t(task.status === 'done' ? 'pane.doneItem' : 'pane.skippedItem', {
+              title: task.title,
+              when: formatTime(task.doneAt ?? task.updatedAt, nowMs),
+            }),
+            task.title,
+          )}
         </Text>
         <Button
           key={`dismiss:${sessionId}:${task.id}`}
