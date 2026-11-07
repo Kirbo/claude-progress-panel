@@ -57,8 +57,14 @@ export const en = {
   'pipe.jobTimed': '{glyph} {name}  {duration}',
   'pane.sort': 'Sort: {by}',
   'pane.taskFold': '{fold} {title}',
+  'pane.cancel': '  ✕  ',
+  'task.removedNote': 'removed in the Progress pane',
+  'notice.removed':
+    'The user removed these tasks in the Progress pane: {list}. Do not do them (they are now marked skipped); if you are working on one, stop it and move on.',
+  'tool.subagent':
+    'Not stored: a subagent does not report to the Progress pane — your coordinator does. Carry on with your task.',
   'pane.repoGroup': '{fold} {repo}  {open} open',
-  'pane.repoTask': '{repo} · {title}',
+  'pane.repoDoneGroup': '{fold} {repo}  {done} done',
   'pane.taskSteps': '{bar} {closed}/{total}',
   'pane.thisSession': '{project} (this session)',
   'pane.groupLive': '{fold} {name} · {when} · {open} open · {done} done',

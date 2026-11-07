@@ -91,6 +91,7 @@ function engine(
   // The engine beneath the classic hooks the plugin reads (they answer nothing of their own).
   on('classic.UserPromptSubmit', () => ({}) as never)
   on('classic.SessionStart', () => ({}) as never)
+  on('classic.PostToolUse', () => ({}) as never)
   // The engine's own system prompt, beneath the plugin's hook.
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' }] }))
   on('fs.list', (_, e) => {
@@ -417,6 +418,102 @@ test('no update check when nonessential traffic is off; the version still shows'
   const ui = await pane($)
   expect(await ui.find({ type: 'Text', text: 'v0.14.0' })).toBeTruthy()
   await ui.unmount()
+})
+
+test("✕ on an open task removes it from every pane, recorded in its session's sidecar", async ($, on) => {
+  const disk = makeDisk()
+  put(
+    disk,
+    `${DIR}/s-other.json`,
+    other('s-other', 'site', T0, { tasks: [{ title: 'Deploy docs' }, { title: 'Tag release' }] }),
+  )
+  const before = disk.files.get(`${DIR}/s-other.json`)?.text
+  engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  expect(await texts(ui)).toContain('○ Deploy docs')
+  await ui.press({ key: 'cancel:s-other:t1' })
+  const lines = await texts(ui)
+  expect(lines).not.toContain('○ Deploy docs')
+  expect(lines).toContain('○ Tag release')
+  // The pane never writes the session's own file: the removal waits in its sidecar.
+  expect(disk.files.get(`${DIR}/s-other.json`)?.text).toBe(before)
+  expect(JSON.parse(disk.files.get(`${DIR}/s-other.dismissed.json`)?.text ?? '{}').cancelled).toEqual(['t1'])
+  await ui.unmount()
+})
+
+test('the owning session marks a removed task skipped and tells its agent once, on the main loop only', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { tasks: [{ title: 'Write the docs' }, { title: 'Push' }] })
+  const ui = await pane($)
+  await ui.press({ key: 'cancel:s-me:t1' })
+  await ui.unmount()
+  await world.clock.advance(2000)
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]).toMatchObject({
+    id: 't1',
+    status: 'skipped',
+    note: 'removed in the Progress pane',
+  })
+
+  // A subagent's tool call is not where the note goes: the main loop's next one is.
+  const sub = await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'x1',
+    agent_id: 'sub-1',
+  } as never)
+  expect((sub as { additionalContext?: string[] }).additionalContext ?? []).toEqual([])
+  const main = await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'x2',
+  } as never)
+  const note = ((main as { additionalContext?: string[] }).additionalContext ?? []).join(' ')
+  expect(note).toContain('t1 "Write the docs"')
+  expect(note).toMatch(/do not/i)
+  const later = await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'x3',
+  } as never)
+  expect((later as { additionalContext?: string[] }).additionalContext ?? []).toEqual([])
+})
+
+test('a removal reaches the agent with the next prompt too, or in the next progress_update answer', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { tasks: [{ title: 'Alpha' }, { title: 'Beta' }] })
+  put(disk, `${DIR}/s-me.dismissed.json`, { version: 1, sessionId: 's-me', entries: [], cancelled: ['t1'] })
+  await world.clock.advance(2000)
+  const prompt = await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)
+  expect(((prompt as { additionalContext?: string[] }).additionalContext ?? []).join(' ')).toContain(
+    't1 "Alpha"',
+  )
+
+  put(disk, `${DIR}/s-me.dismissed.json`, {
+    version: 1,
+    sessionId: 's-me',
+    entries: [],
+    cancelled: ['t1', 't2'],
+  })
+  await world.clock.advance(2000)
+  const answer = await update($, { now: 'still going' })
+  expect(JSON.stringify(answer)).toContain('t2 \\"Beta\\"')
+})
+
+test("a subagent's progress_update is turned away: its coordinator reports", async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  const answer = await $.tool.call({ tool: TOOL, now: 'lane work', agentId: 'sub-1' } as never)
+  expect(JSON.stringify(answer)).toMatch(/subagent/i)
+  expect(disk.files.has(`${DIR}/s-me.json`)).toBe(false)
 })
 
 test('resolveProgressDir: the option wins, ~ expands, else <config dir>/progress', () => {
@@ -855,7 +952,9 @@ test("a session's tasks group by repo once they span more than one; untagged one
   expect(lines.indexOf('○ Fix the race')).toBeLessThan(lines.indexOf('○ Write the README'))
   expect(lines.indexOf('○ Write the README')).toBeLessThan(lines.indexOf('○ Push next'))
   await ui.press({ key: 'done:s-me' })
-  expect((await texts(ui)).some(l => l.startsWith('✓ claude-progress-panel · Ship 0.13'))).toBe(true)
+  // Done holds one repo only: no heading there, no prefix.
+  expect((await texts(ui)).some(l => l.startsWith('✓ Ship 0.13'))).toBe(true)
+  expect(await ui.find({ type: 'Button', key: 'donerepo:s-me:claude-progress-panel' })).toBeUndefined()
 
   // A repo folds on its own.
   await ui.press({ key: 'repo:s-me:claude-progress-panel' })
@@ -869,6 +968,40 @@ test("a session's tasks group by repo once they span more than one; untagged one
   const one = await pane($)
   expect(await one.find({ type: 'Button', key: 'repo:s-me:claude-progress-panel' })).toBeUndefined()
   await one.unmount()
+})
+
+test('repo headings follow each list: open tasks in one repo stay flat; Done groups once it spans repos', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, {
+    tasks: [
+      { title: 'Open here', repo: 'claude-progress-panel' },
+      { title: 'Also here', repo: 'claude-progress-panel' },
+      { title: 'Shipped switchboard', repo: 'switchboard', status: 'done' },
+      { title: 'Shipped panel', repo: 'claude-progress-panel', status: 'done' },
+    ],
+  })
+  const ui = await pane($)
+  // The open tasks work in one repo: no heading, tasks shown.
+  expect(await ui.find({ type: 'Button', key: 'repo:s-me:claude-progress-panel' })).toBeUndefined()
+  let lines = await texts(ui)
+  expect(lines).toContain('○ Open here')
+  // Done spans two repos: a heading per repo, open, each foldable on its own.
+  await ui.press({ key: 'done:s-me' })
+  expect((await ui.find({ type: 'Button', key: 'donerepo:s-me:switchboard' }))?.text).toBe(
+    '▾ switchboard  1 done',
+  )
+  expect((await ui.find({ type: 'Button', key: 'donerepo:s-me:claude-progress-panel' }))?.text).toBe(
+    '▾ claude-progress-panel  1 done',
+  )
+  lines = await texts(ui)
+  expect(lines.some(l => l.startsWith('✓ Shipped switchboard'))).toBe(true)
+  await ui.press({ key: 'donerepo:s-me:switchboard' })
+  lines = await texts(ui)
+  expect(lines.some(l => l.startsWith('✓ Shipped switchboard'))).toBe(false)
+  expect(lines.some(l => l.startsWith('✓ Shipped panel'))).toBe(true)
+  await ui.unmount()
 })
 
 test('the sort Button cycles plan → status → title → created → done and remembers it', async ($, on) => {

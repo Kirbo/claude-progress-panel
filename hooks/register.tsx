@@ -11,6 +11,7 @@ import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } f
 import {
   addDismissals,
   applyUpdate,
+  cancelTasks,
   formatClock,
   formatTime,
   groupByRepo,
@@ -109,6 +110,17 @@ let seenNeeds: Set<string> | undefined
 // Every read-modify-write of this session's own file runs one at a time: a timer's poll and a tool
 // call interleave at each await, and the later save would put a stale copy over the other's change.
 let ownChain: Promise<unknown> = Promise.resolve()
+
+// Tasks the person removed with ✕ that this session's agent has not been told about yet (id → title):
+// the next main-loop tool call, prompt or progress_update answer carries the note, once.
+const pendingRemovals = new Map<string, string>()
+
+function takeRemovalNotice(): string | undefined {
+  if (pendingRemovals.size === 0) return undefined
+  const list = [...pendingRemovals].map(([id, title]) => `${id} "${title}"`).join(', ')
+  pendingRemovals.clear()
+  return t('notice.removed', { list })
+}
 
 // The name Claude Code gives this session (`/rename`, a resumed session's title), as the classic
 // SessionStart / UserPromptSubmit events last carried it; the plugin API has no call for it.
@@ -265,12 +277,16 @@ async function save($: EngineInterface, dir: string, file: SessionFile): Promise
   }))
 }
 
-type Sidecar = { entries: Dismissal[]; pipelines: Pipeline[] }
+type Sidecar = { entries: Dismissal[]; pipelines: Pipeline[]; cancelled: string[] }
 
 async function readSidecar($: EngineInterface, dir: string, id: string): Promise<Sidecar> {
   const text = await $.fs.read(`${dir}/${id}${SIDECAR}`).catch(() => undefined)
   const parsed = text === undefined ? undefined : parseSidecar(text)
-  return { entries: parsed?.entries ?? [], pipelines: parsed?.pipelines ?? [] }
+  return {
+    entries: parsed?.entries ?? [],
+    pipelines: parsed?.pipelines ?? [],
+    cancelled: parsed?.cancelled ?? [],
+  }
 }
 
 // A pane's change to a session's sidecar: read fresh, change, write whole, so a ✕ and a pipeline
@@ -287,6 +303,7 @@ async function writeSidecar(
     sessionId: id,
     entries: next.entries,
     ...(next.pipelines.length > 0 ? { pipelines: next.pipelines } : {}),
+    ...(next.cancelled.length > 0 ? { cancelled: next.cancelled } : {}),
   }
   const path = `${dir}/${id}${SIDECAR}`
   await $.fs.write(path, `${JSON.stringify(file, null, 2)}\n`)
@@ -308,7 +325,15 @@ async function ownFile($: EngineInterface, dir: string): Promise<SessionFile> {
     const sidecar = await readSidecar($, dir, id)
     const merged = withTitle(mergeSidecar(existing, sidecar.entries))
     const pipelines = overlayPipelines(merged.pipelines ?? [], sidecar.pipelines)
-    return { ...merged, pipelines: visiblePipelines(pipelines, sidecar.entries) }
+    // Tasks the person removed with ✕: skipped here, and the agent told on its next step.
+    const folded = cancelTasks(
+      { ...merged, pipelines: visiblePipelines(pipelines, sidecar.entries) },
+      sidecar.cancelled,
+      await nowIso($),
+      t('task.removedNote'),
+    )
+    for (const task of folded.removed) pendingRemovals.set(task.id, task.title)
+    return folded.file
   }
   const cwd = await $.session.cwd()
   const repo = await $.session.repo().catch(() => null)
@@ -465,7 +490,12 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
       const parsed = text === undefined ? undefined : parseSidecar(text)
       // Unreadable (e.g. caught mid-write): keep the last good copy; its old mtime retries next tick.
       if (parsed)
-        sidecars[id] = { mtimeMs: entry.mtimeMs, entries: parsed.entries, pipelines: parsed.pipelines ?? [] }
+        sidecars[id] = {
+          mtimeMs: entry.mtimeMs,
+          entries: parsed.entries,
+          pipelines: parsed.pipelines ?? [],
+          cancelled: parsed.cancelled ?? [],
+        }
       else if (known) sidecars[id] = known
       continue
     }
@@ -505,7 +535,9 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
       await exclusive(async () => {
         const own = await ownFile($, dir)
         const pruned = pruneDone(own, doneHours, nowMs)
-        if (pruned !== own) await save($, dir, pruned)
+        // The fold of a removal changed it too: save, so the pane shows it skipped.
+        const folded = (own.cancelled?.length ?? 0) !== (file.cancelled?.length ?? 0)
+        if (pruned !== own || folded) await save($, dir, pruned)
       })
       continue
     }
@@ -550,7 +582,8 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
   await announce($, await read($, sessions), file.session.id)
   const added = watched.list.filter(p => !(updated.file.pipelines ?? []).some(old => old.key === p.key))
   if (added.length > 0) await pollPipelines($, options)
-  const text = summarize(file, [...updated.errors, ...watched.errors])
+  const notice = takeRemovalNotice()
+  const text = `${notice ? `${notice}\n` : ''}${summarize(file, [...updated.errors, ...watched.errors])}`
   return added.length > 0
     ? `${text}\n${t('tool.watching', { keys: added.map(p => p.key).join(', ') })}`
     : text
@@ -885,6 +918,32 @@ async function pollAll($: EngineInterface, options: PluginOptions): Promise<void
   await pollOrphans($, options)
 }
 
+// A background step nobody awaits (a timer tick, the startup lookups): one that fails — or outlives
+// its session, its state gone — is dropped; the next tick tries again. Never an unhandled rejection.
+function detached(work: Promise<unknown>): void {
+  work.catch(() => undefined)
+}
+
+function withRemovalNotice<R extends { additionalContext?: string[] }>(result: R): R {
+  const note = takeRemovalNotice()
+  return note ? { ...result, additionalContext: [...(result.additionalContext ?? []), note] } : result
+}
+
+// A ✕ on an open task: the removal goes to that session's sidecar (its own file keeps one writer);
+// the session folds it in and tells its agent.
+async function cancelTask(
+  $: EngineInterface,
+  options: PluginOptions,
+  id: string,
+  taskId: string,
+): Promise<void> {
+  const dir = await progressDir($, options)
+  if (!dir) return
+  await writeSidecar($, dir, id, sidecar =>
+    sidecar.cancelled.includes(taskId) ? sidecar : { ...sidecar, cancelled: [...sidecar.cancelled, taskId] },
+  )
+}
+
 async function markEnded($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
@@ -969,11 +1028,11 @@ export const register: Register = (on, options) => {
         if (!isBlank(own)) await save($, dir, own)
       })
     await scan($, options)
-    $.clock.every(REFRESH_MS, () => void scan($, options))
-    $.clock.every(PIPELINE_POLL_MS, () => void pollAll($, options))
-    void ownManifest($)
-    void checkRelease($)
-    $.clock.every(3_600_000, () => void checkRelease($))
+    $.clock.every(REFRESH_MS, () => detached(scan($, options)))
+    $.clock.every(PIPELINE_POLL_MS, () => detached(pollAll($, options)))
+    detached(ownManifest($))
+    detached(checkRelease($))
+    $.clock.every(3_600_000, () => detached(checkRelease($)))
     void $.ui.open({ id: PANE, title: t('pane.title') })
     return next(e)
   })
@@ -1000,7 +1059,13 @@ export const register: Register = (on, options) => {
   })
   on('classic.UserPromptSubmit', async ($, e, next) => {
     await noteTitle($, options, (e as { session_title?: unknown }).session_title)
-    return next(e)
+    return withRemovalNotice(await next(e))
+  })
+  // After every main-loop tool call: a task the person removed reaches the agent at its next step
+  // (a subagent's calls never take the note — it is the coordinator's).
+  on('classic.PostToolUse', async (_$, e, next) => {
+    const result = await next(e)
+    return (e as { agent_id?: unknown }).agent_id ? result : withRemovalNotice(result)
   })
 
   on('session.end', async ($, e, next) => {
@@ -1015,6 +1080,8 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', { tool: TOOL_ID }, async ($, e) => {
+    // One entry per session, kept by its main loop: a subagent's report would mix into it.
+    if ((e as { agentId?: unknown }).agentId) return { result: t('tool.subagent') }
     const input = e as unknown as ToolInput
     const text = await runUpdate($, options, {
       now: input.now,
@@ -1256,12 +1323,26 @@ export const register: Register = (on, options) => {
         </Box>
       ) : null
       // Nothing more to show: one plain line.
+      // ✕ removes an open task of a live session: it will not be done.
+      const live = all[sessionId]?.file.session.endedAt === null
+      const remove = live ? (
+        <Button
+          key={`cancel:${sessionId}:${task.id}`}
+          label={t('pane.cancel')}
+          plain
+          dimColor
+          onPress={() => void cancelTask($, options, sessionId, task.id)}
+        />
+      ) : null
       if (!task.detail && !task.steps?.length)
         return (
           <Box flexDirection="column">
-            <Text color={mark.color} bold>
-              {`${mark.sign} ${task.title}`}
-            </Text>
+            <Box flexDirection="row" justifyContent="space-between" gap={2}>
+              <Text color={mark.color} bold>
+                {`${mark.sign} ${task.title}`}
+              </Text>
+              {remove}
+            </Box>
             {note}
           </Box>
         )
@@ -1289,15 +1370,18 @@ export const register: Register = (on, options) => {
                 onPress={() => void toggle($, key, isOpen)}
               />
             </Box>
-            {steps.total > 0 ? (
-              <Text dimColor>
-                {t('pane.taskSteps', {
-                  bar: progressBar(steps.closed, steps.total),
-                  closed: steps.closed,
-                  total: steps.total,
-                })}
-              </Text>
-            ) : null}
+            <Box flexDirection="row">
+              {steps.total > 0 ? (
+                <Text dimColor>
+                  {t('pane.taskSteps', {
+                    bar: progressBar(steps.closed, steps.total),
+                    closed: steps.closed,
+                    total: steps.total,
+                  })}
+                </Text>
+              ) : null}
+              {remove}
+            </Box>
           </Box>
           {note}
           {isOpen ? (
@@ -1313,11 +1397,11 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const doneRow = (sessionId: string, task: Task, repo?: string) => (
+    const doneRow = (sessionId: string, task: Task) => (
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Text dimColor>
           {t(task.status === 'done' ? 'pane.doneItem' : 'pane.skippedItem', {
-            title: repo ? t('pane.repoTask', { repo, title: task.title }) : task.title,
+            title: task.title,
             when: formatTime(task.doneAt ?? task.updatedAt, nowMs),
           })}
         </Text>
@@ -1334,7 +1418,11 @@ export const register: Register = (on, options) => {
     const group = (file: SessionFile) => {
       const id = file.session.id
       const ended = file.session.endedAt
-      const shown = visibleTasks(file, all[id]?.sidecar?.entries ?? []).filter(x => matchesTask(x, query))
+      const shown = visibleTasks(
+        file,
+        all[id]?.sidecar?.entries ?? [],
+        all[id]?.sidecar?.cancelled ?? [],
+      ).filter(x => matchesTask(x, query))
       const open = sortTasks(
         shown.filter(x => !isClosed(x.status)),
         by,
@@ -1344,8 +1432,16 @@ export const register: Register = (on, options) => {
         by === 'status' || by === 'plan' ? 'done' : by,
       )
       // Tasks of several repos group by repo (in plan order, open and done alike).
-      const repos = groupByRepo(sortTasks(shown, by === 'status' ? 'plan' : by), file.session.project)
-      const repoOf = (task: Task) => (repos.length > 1 ? task.repo || file.session.project : undefined)
+      // Each list groups by repo on its own, and only once its tasks span more than one repo: open
+      // tasks in one repo stay flat even when Done holds another.
+      const repos = groupByRepo(
+        sortTasks(
+          shown.filter(x => !isClosed(x.status)),
+          by === 'status' ? 'plan' : by,
+        ),
+        file.session.project,
+      )
+      const doneRepos = groupByRepo(done, file.session.project)
       const groupKey = `group:${id}`
       const doneKey = `done:${id}`
       const isOpen = folded[groupKey] ?? ended === null
@@ -1433,7 +1529,32 @@ export const register: Register = (on, options) => {
               ) : null}
               {isDoneOpen ? (
                 <Box flexDirection="column" paddingLeft={INDENT}>
-                  {done.map(task => doneRow(id, task, repoOf(task)))}
+                  {doneRepos.length > 1
+                    ? doneRepos.map(({ repo, tasks }) => {
+                        const repoKey = `donerepo:${id}:${repo}`
+                        const isRepoOpen = folded[repoKey] ?? true
+                        return (
+                          <Box flexDirection="column">
+                            <Button
+                              key={repoKey}
+                              label={t('pane.repoDoneGroup', {
+                                fold: isRepoOpen ? '▾' : '▸',
+                                repo,
+                                done: tasks.length,
+                              })}
+                              plain
+                              dimColor
+                              onPress={() => void toggle($, repoKey, isRepoOpen)}
+                            />
+                            {isRepoOpen ? (
+                              <Box flexDirection="column" paddingLeft={INDENT}>
+                                {tasks.map(task => doneRow(id, task))}
+                              </Box>
+                            ) : null}
+                          </Box>
+                        )
+                      })
+                    : done.map(task => doneRow(id, task))}
                 </Box>
               ) : null}
             </Box>
@@ -1546,7 +1667,11 @@ export const register: Register = (on, options) => {
             .filter(
               f =>
                 !query.trim() ||
-                visibleTasks(f, all[f.session.id]?.sidecar?.entries ?? []).some(x => matchesTask(x, query)),
+                visibleTasks(
+                  f,
+                  all[f.session.id]?.sidecar?.entries ?? [],
+                  all[f.session.id]?.sidecar?.cancelled ?? [],
+                ).some(x => matchesTask(x, query)),
             )
             .map(group)}
         </Box>

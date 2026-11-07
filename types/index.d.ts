@@ -103,6 +103,8 @@ export type SessionFile = {
   seq: number
   /** CI pipelines this session watches (absent in files written before 0.4.0). */
   pipelines?: Pipeline[]
+  /** Tasks the person removed in a pane and this session folded in (0.16.0): never removed twice. */
+  cancelled?: string[]
 }
 
 /** One person's ✕ on a finished task: hides that task while it stays the same completion (`doneAt`). */
@@ -117,6 +119,8 @@ export type SidecarFile = {
   version: 1
   sessionId: string
   entries: Dismissal[]
+  /** Open tasks a person removed with ✕ (ids), for the session to fold in and stop (0.16.0). */
+  cancelled?: string[]
   /** Pipelines of this session that a pane refreshed because the session stopped polling them
    *  (absent in sidecars written before 0.11.1). A copy wins over the file's entry when checked later. */
   pipelines?: Pipeline[]
@@ -128,7 +132,7 @@ export type Loaded = Record<
   {
     mtimeMs: number
     file: SessionFile
-    sidecar?: { mtimeMs: number; entries: Dismissal[]; pipelines: Pipeline[] }
+    sidecar?: { mtimeMs: number; entries: Dismissal[]; pipelines: Pipeline[]; cancelled: string[] }
   }
 >
 

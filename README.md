@@ -48,8 +48,12 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   (else the repo or folder name).
 - **Tasks:** listed in plan order by default — the order the agent will do them (it reshuffles
   with `order`). A task with subtasks or a detail is a fold: its title shows `██░░ n/m` of its steps
-  done, and a press opens the detail and each step. A session whose tasks span several repos
-  groups them under one foldable heading per repo.
+  done, and a press opens the detail and each step. Once a session's open tasks span several repos
+  they group under one foldable heading per repo (one repo: no heading); its Done list does the
+  same on its own.
+- **Remove a task** with the `✕` on its row: every pane hides it at once, its session marks it
+  skipped ("removed in the Progress pane") and tells its agent right after its next step — "do not
+  do it; stop if you are on it". Works for any live session's tasks, not only this one's.
 - **Sort** cycles plan → status → title → created → done (remembered). **Filter tasks** beside it
   keeps only the tasks whose title, note, detail or steps hold what you type; sessions without a
   match step aside.

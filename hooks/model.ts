@@ -165,8 +165,43 @@ function isDismissedBy(task: Task, entries: readonly Dismissal[]): boolean {
 }
 
 /** The tasks a pane shows: the file's, minus closed ones a sidecar entry names for that same completion. */
-export function visibleTasks(file: SessionFile, entries: readonly Dismissal[]): Task[] {
-  return file.tasks.filter(task => !isDismissedBy(task, entries))
+export function visibleTasks(
+  file: SessionFile,
+  entries: readonly Dismissal[],
+  cancelled: readonly string[] = [],
+): Task[] {
+  // An open task a pane removed hides at once, before its session folds the removal in.
+  return file.tasks.filter(
+    task => !isDismissedBy(task, entries) && !(cancelled.includes(task.id) && !isClosed(task.status)),
+  )
+}
+
+/**
+ * The owner folds the panes' removals into its own file: each named task that is still open and was
+ * never removed before becomes `skipped` with `note` (so it shows under Done), and its id joins
+ * `cancelled` so a stale sidecar entry never removes it again once the session re-opens it.
+ */
+export function cancelTasks(
+  file: SessionFile,
+  ids: readonly string[],
+  nowIso: string,
+  note: string,
+): { file: SessionFile; removed: Task[] } {
+  const already = new Set(file.cancelled ?? [])
+  const removed = file.tasks.filter(t => ids.includes(t.id) && !already.has(t.id) && !isClosed(t.status))
+  if (removed.length === 0) return { file, removed }
+  const gone = new Set(removed.map(t => t.id))
+  return {
+    file: {
+      ...file,
+      tasks: file.tasks.map(t =>
+        gone.has(t.id) ? { ...t, status: 'skipped' as const, note, updatedAt: nowIso, doneAt: nowIso } : t,
+      ),
+      cancelled: [...already, ...gone],
+      updatedAt: nowIso,
+    },
+    removed,
+  }
 }
 
 /** The owner folds its sidecar into its own file: the named completions become ordinary dismissals. */
@@ -204,7 +239,15 @@ export function parseSidecar(text: string): SidecarFile | undefined {
       typeof d.id === 'string' &&
       (d.doneAt === null || typeof d.doneAt === 'string'),
   )
-  return { version: 1, sessionId: f.sessionId, entries, pipelines: asPipelines(f.pipelines) }
+  return {
+    version: 1,
+    sessionId: f.sessionId,
+    entries,
+    pipelines: asPipelines(f.pipelines),
+    cancelled: (Array.isArray(f.cancelled) ? f.cancelled : []).filter(
+      (id): id is string => typeof id === 'string',
+    ),
+  }
 }
 
 /** The well-formed pipelines of a stored list (a session file's, or a sidecar's refreshed copies). */
@@ -360,7 +403,18 @@ export function parseSessionFile(text: string): SessionFile | undefined {
   )
   const seq = typeof f.seq === 'number' && Number.isFinite(f.seq) ? f.seq : 0
   const pipelines = asPipelines(f.pipelines)
-  return { ...(f as unknown as SessionFile), needsYou, dismissed, tasks, seq, pipelines }
+  const cancelled = (Array.isArray(f.cancelled) ? f.cancelled : []).filter(
+    (id): id is string => typeof id === 'string',
+  )
+  return {
+    ...(f as unknown as SessionFile),
+    needsYou,
+    dismissed,
+    tasks,
+    seq,
+    pipelines,
+    ...(cancelled.length > 0 ? { cancelled } : {}),
+  }
 }
 
 const pad = (n: number) => String(n).padStart(2, '0')

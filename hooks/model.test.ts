@@ -3,6 +3,7 @@ import type { SessionFile, Task } from './model'
 import {
   addDismissals,
   applyUpdate,
+  cancelTasks,
   dismissTasks,
   formatClock,
   formatTime,
@@ -320,4 +321,44 @@ test('applyUpdate: a task takes the repo it belongs to; "" clears it', () => {
   expect(file.tasks[0]?.repo).toBe('claude-progress-panel')
   file = applyUpdate(file, { tasks: [{ id: 't1', repo: '' }] }, at).file
   expect(file.tasks[0]?.repo).toBeUndefined()
+})
+
+test('cancelTasks: open tasks the person removed become skipped, noted, and are never cancelled twice', () => {
+  const at = iso(T0)
+  const file = applyUpdate(
+    fresh(),
+    { tasks: [{ title: 'one' }, { title: 'two', status: 'doing' }, { title: 'done one', status: 'done' }] },
+    at,
+  ).file
+  const r = cancelTasks(file, ['t1', 't2', 't3', 'nope'], iso(T0 + 1000), 'removed in the pane')
+  expect(r.removed.map(t => t.id)).toEqual(['t1', 't2'])
+  expect(r.file.tasks.map(t => [t.id, t.status, t.note])).toEqual([
+    ['t1', 'skipped', 'removed in the pane'],
+    ['t2', 'skipped', 'removed in the pane'],
+    ['t3', 'done', undefined],
+  ])
+  expect(r.file.tasks[0]?.doneAt).toBe(iso(T0 + 1000))
+  expect(r.file.cancelled).toEqual(['t1', 't2'])
+  // Re-opened by the session after it was told: a stale sidecar entry never cancels it again.
+  const reopened = applyUpdate(r.file, { tasks: [{ id: 't1', status: 'doing' }] }, at).file
+  const again = cancelTasks(reopened, ['t1'], at, 'x')
+  expect(again.removed).toEqual([])
+  expect(again.file).toBe(reopened)
+})
+
+test('visibleTasks hides an open task a pane removed, before its session has folded it in', () => {
+  const at = iso(T0)
+  const file = applyUpdate(fresh(), { tasks: [{ title: 'one' }, { title: 'two' }] }, at).file
+  expect(visibleTasks(file, [], ['t1']).map(t => t.id)).toEqual(['t2'])
+  expect(visibleTasks(file, []).map(t => t.id)).toEqual(['t1', 't2'])
+})
+
+test('parseSidecar and parseSessionFile read the removals (strings only)', () => {
+  const side = parseSidecar(
+    JSON.stringify({ version: 1, sessionId: 's1', entries: [], cancelled: ['t1', 2, 't3'] }),
+  )
+  expect(side?.cancelled).toEqual(['t1', 't3'])
+  expect(parseSidecar(JSON.stringify({ version: 1, sessionId: 's1', entries: [] }))?.cancelled).toEqual([])
+  const file = parseSessionFile(JSON.stringify({ ...fresh(), cancelled: ['t2'] }))
+  expect(file?.cancelled).toEqual(['t2'])
 })

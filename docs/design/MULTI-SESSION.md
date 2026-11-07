@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0 · task removal, per-list repo groups, subagent refusal in 0.16.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -291,6 +291,25 @@ plus `↗` to its release page. The lookup (`releases?per_page=1`, anonymous, th
 shared by every session) while it is under 6 h old; a failure keeps the last answer. Skipped
 entirely under `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`. (A deliberate poll: GitLab cannot push to
 a local plugin.)
+
+## Removing a task; repo groups per list; subagents (0.16.0)
+
+- **✕ on an open task** (a live session's) writes its id to that session's sidecar `cancelled`
+  (the one-writer rule: panes never touch a session's file); every pane hides it at once
+  (`visibleTasks(file, entries, cancelled)`). The OWNER folds it in (`cancelTasks`, on its next
+  scan or write): status `skipped`, note "removed in the Progress pane", id into the file's
+  `cancelled` so a stale sidecar entry never removes it again after the session re-opens it. The
+  agent learns it once, at the first of: its next main-loop tool call (`classic.PostToolUse`
+  `additionalContext`), the person's next prompt (`classic.UserPromptSubmit`), its next
+  `progress_update` answer. A subagent's tool calls never take the note.
+- **Repo headings per list:** the open list groups by repo only when its OPEN tasks span more
+  than one repo; the Done list groups the same way on its own (`▾ <repo>  N done`, open by
+  default, each foldable). No prefixes.
+- **Subagents do not report:** a `progress_update` from a subagent (`tool.call` `agentId`) is
+  answered "not stored — your coordinator reports" and writes nothing, so lanes never mix their
+  tasks into the session's entry.
+- Every background step nobody awaits (timer ticks, the startup lookups) is `detached`: a failure
+  or a step outliving its session is dropped, never an unhandled rejection.
 
 ## Out of scope / later
 
