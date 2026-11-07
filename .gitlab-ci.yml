@@ -1,11 +1,13 @@
 # Lint, validate and test the plugin with the toolchain mise.lock pins.
+# Tags come from the release job's Releases: they start no pipeline of their own.
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
-    - if: $CI_COMMIT_TAG
 
-check:
+stages: [test, release]
+
+.mise:
   # Debian with curl, git and the shared libraries mise's Node needs (libatomic); pinned by digest.
   # (The jdxcode/mise image has no shell; buildpack-deps:bookworm-curl has no libatomic.)
   image: node:26.13.0-bookworm@sha256:a546d3f8acd2af4382668a7e6acd3bc4418e6a27478373e3246f8162f5181509
@@ -26,6 +28,10 @@ check:
     - chmod +x /usr/local/bin/mise
     - mise trust --yes .
     - mise install
+
+check:
+  extends: .mise
+  stage: test
   script:
     - mise exec -- biome ci .
     - mise exec -- claude --version
@@ -33,3 +39,20 @@ check:
     - mise exec -- claude plugin test .
     - mise exec -- node --test scripts/
     - mise exec -- node scripts/check-audits.mjs
+
+# Every plugin version without a Release yet gets one on main — tag `v<version>` at the commit that
+# first carried it, notes = git-cliff over the commits since the version before (scripts/release.mjs,
+# cliff.toml). The job token creates them; nothing else is needed.
+release:
+  extends: .mise
+  stage: release
+  needs: [check]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  variables:
+    # Whole history and tags: the script finds every version bump and the tags already made.
+    GIT_DEPTH: "0"
+  script:
+    # git-cliff reads the repo through its embedded git library: mark the checkout safe for it.
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - mise exec -- node scripts/release.mjs

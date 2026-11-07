@@ -6,6 +6,8 @@ claude = "2.1.318"
 node = "26.13.0"
 # age seals the open audit findings (scripts/seal.mjs); its age-plugin-pq reads the maintainer key.
 age = "1.3.2"
+# git-cliff renders each version's GitLab Release notes (scripts/release.mjs, cliff.toml).
+git-cliff = "2.14.2"
 
 [settings]
 lockfile = true

@@ -60,7 +60,11 @@ How to _use_ the panel during a task is the bundled skill:
 - **Done = green:** `biome check .`, `claude plugin test .`, `claude plugin validate .`,
   `node --test scripts/`, `node scripts/check-audits.mjs` all clean
   (validate's "plugin directory" notes about the icon are informational). Bump `version` in
-  `.claude-plugin/plugin.json` for any behaviour change — `claude plugin update` keys on it.
+  `.claude-plugin/plugin.json` for any behaviour change — `claude plugin update` keys on it — in
+  the LAST commit of that version: on `main`, CI's `release` job makes a GitLab Release `v<version>`
+  at the commit that first carried it, its notes git-cliff's (`cliff.toml`) over the Conventional
+  Commits since the version before (`scripts/release.mjs`; `node scripts/release.mjs --dry-run`
+  previews). So commit subjects are release notes: write them for users.
 - **Hooks:** once per clone `git config core.hooksPath .githooks`. The pre-commit hook runs Biome
   over the staged files first — fixes what it can, re-stages fully staged files (never a partly
   staged one), refuses the commit on anything left (`scripts/lint-staged.mjs`) — then seals audit
