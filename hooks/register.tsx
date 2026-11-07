@@ -951,7 +951,8 @@ export const register: Register = (on, options) => {
       // The state, bar, counts and times sit on the right, beside ↗ / ✕.
       const status = t('pipe.status', {
         state: t(`pipe.state.${p.state}`),
-        bar: progressBar(counts.finished, counts.total),
+        // The bar only while it runs: a finished pipeline's counts say it all.
+        bar: finished ? '' : `${progressBar(counts.finished, counts.total)} `,
         finished: counts.finished,
         total: counts.total,
         duration: ((d: number | null) => {

@@ -882,7 +882,7 @@ test('the session polls its unfinished pipelines every 15 s and stops once they 
 
   const ui = await pane($)
   expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe(
-    `▸ app #42 · main · failed  ████████ 1/1 · ${formatTime(isoAt(T0 + 15_000), T0 + 75_000)}`,
+    `▸ app #42 · main · failed  1/1 · ${formatTime(isoAt(T0 + 15_000), T0 + 75_000)}`,
   )
   await ui.unmount()
 })
@@ -1016,7 +1016,7 @@ test("another session's finished pipelines show read-only and are never polled h
   expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()
   await ui.press({ key: 'pipelines' })
   expect(await pipeLine(ui, 'pipe:s-other:g/site#7')).toBe(
-    `▸ site #7 · main · success  ████████ 1/1 · ${formatTime(isoAt(T0), T0)}`,
+    `▸ site #7 · main · success  1/1 · ${formatTime(isoAt(T0), T0)}`,
   )
   await ui.press({ key: 'unpipe:s-other:g/site#7' })
   expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()
@@ -1080,7 +1080,7 @@ test("a stopped session's unfinished pipeline is refreshed by any pane, into its
   )
   await ui.press({ key: 'pipelines' })
   expect(await pipeLine(ui, 'pipe:s-other:g/site#7')).toBe(
-    `▸ site #7 · main · success  ████████ 1/1 · 1m09s · ${formatTime(isoAt(T0 + 15_000), T0 + 15_000)}`,
+    `▸ site #7 · main · success  1/1 · 1m09s · ${formatTime(isoAt(T0 + 15_000), T0 + 15_000)}`,
   )
 
   // Finished: nobody polls it again.
@@ -1265,7 +1265,7 @@ test("the pipeline line ends with its duration: live while running, GitLab's onc
   ui = await pane($)
   await ui.press({ key: 'pipelines' })
   expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe(
-    `▸ app #42 · main · success  ████████ 1/1 · 1m10s · ${formatTime(isoAt(T0 + 10_000), T0 + 15_000)}`,
+    `▸ app #42 · main · success  1/1 · 1m10s · ${formatTime(isoAt(T0 + 10_000), T0 + 15_000)}`,
   )
   await ui.unmount()
 })

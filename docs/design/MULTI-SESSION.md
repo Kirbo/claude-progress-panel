@@ -159,7 +159,7 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   session then stops polling what already finished). Two panes may both poll an orphan in the
   same 15 s tick; the cost is one duplicate read, the results are identical.
 - States: GitLab's statuses fold into queued / running / success / failed / canceled / skipped /
-  manual. Header: `label #id · ref` on the left; `state  ██░░ finished/total · duration` on the right beside `↗` / `✕` (0.14.0; a second Button, folding like the name), finished = success + failed +
+  manual. Header: `label #id · ref` on the left; `state  ██░░ finished/total · duration` on the right beside `↗` / `✕` (0.14.0; a second Button, folding like the name; the bar only while it runs — a finished one reads `success  15/15 · 18m30s · 20:23`), finished = success + failed +
   canceled + skipped; a finished pipeline's header ends with `· HH:MM` (0.12.0) — when it finished,
   GitLab's own time else when it was seen to finish, with the date once that is not today, like a
   done task's time. Then the counts line (each state in its colour, zeros dimmed) and the jobs

@@ -18,7 +18,7 @@ export const en = {
   'pane.pipelinesCanceled': ' · {n} canceled',
   'pane.pipelinesFinished': '{fold} Finished ({count})',
   'pipe.header': '{fold} {label} #{id}{ref}',
-  'pipe.status': '{state}  {bar} {finished}/{total}{duration}{ended}',
+  'pipe.status': '{state}  {bar}{finished}/{total}{duration}{ended}',
   'pipe.duration': ' · {d}',
   'pipe.ended': ' · {when}',
   'pipe.durationEstimate': ' · {d} / {e}',
