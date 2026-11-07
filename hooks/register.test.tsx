@@ -2,7 +2,7 @@ import type { TestBody } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 
 import type { SessionFile } from './model'
-import { applyUpdate, newSession } from './model'
+import { applyUpdate, formatTime, newSession } from './model'
 import { resolveProgressDir } from './paths'
 import type { Pipeline } from './pipelines'
 
@@ -716,7 +716,7 @@ test('the session polls its unfinished pipelines every 15 s and stops once they 
 
   const ui = await pane($)
   expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
-    '▸ app #42 · main · failed  ████████ 1/1',
+    `▸ app #42 · main · failed  ████████ 1/1 · ${formatTime(isoAt(T0 + 15_000), T0 + 75_000)}`,
   )
   await ui.unmount()
 })
@@ -782,7 +782,7 @@ test("another session's finished pipelines show read-only and are never polled h
   expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()
   await ui.press({ key: 'pipelines' })
   expect((await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' }))?.text).toBe(
-    '▸ site #7 · main · success  ████████ 1/1',
+    `▸ site #7 · main · success  ████████ 1/1 · ${formatTime(isoAt(T0), T0)}`,
   )
   await ui.press({ key: 'unpipe:s-other:g/site#7' })
   expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()
@@ -846,7 +846,7 @@ test("a stopped session's unfinished pipeline is refreshed by any pane, into its
   )
   await ui.press({ key: 'pipelines' })
   expect((await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' }))?.text).toBe(
-    '▸ site #7 · main · success  ████████ 1/1 · 1m09s',
+    `▸ site #7 · main · success  ████████ 1/1 · 1m09s · ${formatTime(isoAt(T0 + 15_000), T0 + 15_000)}`,
   )
 
   // Finished: nobody polls it again.
@@ -907,6 +907,41 @@ test("the owner folds the panes' refreshes into its own file and stops polling a
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ key: 'g/app#42', state: 'success' })
   await world.clock.advance(30_000)
   expect(glabCalls(world.runs, PIPE)).toBe(0)
+})
+
+test("a finished pipeline's line ends with when it finished: GitLab's time, else when it was seen", async ($, on) => {
+  const disk = makeDisk()
+  const theirs = other('s-other', 'site', T0, {})
+  const ok = [{ name: 'deploy', stage: 'build', state: 'success' as const, durationS: 5 }]
+  theirs.pipelines = [
+    sitePipe({
+      jobs: ok,
+      state: 'success',
+      checkedAt: isoAt(T0),
+      pipelineFinishedAt: isoAt(T0 - 1_800_000),
+      finishedAt: isoAt(T0),
+    }),
+    // GitLab gave no finish time: when the pane saw it finish; another day carries the date.
+    sitePipe({
+      key: 'g/site#8',
+      id: 8,
+      state: 'failed',
+      checkedAt: isoAt(T0),
+      finishedAt: isoAt(T0 - 30 * HOUR),
+    }),
+    sitePipe({ key: 'g/site#9', id: 9, checkedAt: isoAt(T0) }),
+  ]
+  put(disk, `${DIR}/s-other.json`, theirs)
+  engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  const line = async (n: number) => (await ui.find({ type: 'Button', key: `pipe:s-other:g/site#${n}` }))?.text
+  expect(await line(7)).toMatch(new RegExp(` · ${formatTime(isoAt(T0 - 1_800_000), T0)}$`))
+  expect(formatTime(isoAt(T0 - 30 * HOUR), T0)).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/)
+  expect(await line(8)).toMatch(new RegExp(` · ${formatTime(isoAt(T0 - 30 * HOUR), T0)}$`))
+  // Still running: the live elapsed time ends the line, no finish time.
+  expect(await line(9)).toBe('▸ site #9 · main · running  ░░░░░░░░ 0/1 · 1h00m')
+  await ui.unmount()
 })
 
 test('the Pipelines section folds itself once every pipeline succeeded, and opens on news', async ($, on) => {
@@ -998,7 +1033,7 @@ test("the pipeline line ends with its duration: live while running, GitLab's onc
   ui = await pane($)
   await ui.press({ key: 'pipelines' })
   expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe(
-    '▸ app #42 · main · success  ████████ 1/1 · 1m10s',
+    `▸ app #42 · main · success  ████████ 1/1 · 1m10s · ${formatTime(isoAt(T0 + 10_000), T0 + 15_000)}`,
   )
   await ui.unmount()
 })

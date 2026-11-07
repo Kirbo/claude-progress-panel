@@ -109,7 +109,7 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   (GitHub) every 15 s until it finishes (neither forge can push to a local plugin; if that session ends or dies first, any open pane takes over after 1 min), writes it into its file, and every pane shows
   it: a progress bar of finished / all jobs, how long it has run (live, beside an estimate from the average of
   up to 5 earlier successful runs of the same branch and trigger, cached 24 h; GitLab's duration
-  once finished), the counts per state (coloured) and every job, grouped
+  once finished, followed by the time it finished), the counts per state (coloured) and every job, grouped
   by stage in pipeline order, with its result and time. The section header sums up every pipeline (watching / succeeded / failed) and folds itself once
   all of them succeeded (it opens again on news). Pipelines are listed newest first; a success folds to one line, and one that succeeded more
   than an hour ago moves into a folded "Finished" row. A pipeline starts folded — its header and

@@ -807,6 +807,11 @@ export const register: Register = (on, options) => {
             return t('pipe.durationEstimate', { d: formatDuration(d), e: formatEstimate(p.estimateS) })
           return t('pipe.duration', { d: formatDuration(d) })
         })(pipelineDuration(p, nowMs)),
+        // When it finished, like a done task's time: GitLab's own, else when this pane saw it end.
+        ended: ((at: string | undefined) => {
+          const when = finished && at ? formatTime(at, nowMs) : ''
+          return when ? t('pipe.ended', { when }) : ''
+        })(p.pipelineFinishedAt ?? p.finishedAt),
       })
       const countParts = COUNT_ORDER.filter(s => ALWAYS_COUNTED.has(s) || counts[s] > 0)
       // Names padded to the widest in this pipeline, so the times line up in a column.

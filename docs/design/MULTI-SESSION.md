@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -144,7 +144,9 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   same 15 s tick; the cost is one duplicate read, the results are identical.
 - States: GitLab's statuses fold into queued / running / success / failed / canceled / skipped /
   manual. Header: `label #id · ref · state  ██░░ finished/total · duration`, finished = success + failed +
-  canceled + skipped. Then the counts line (each state in its colour, zeros dimmed) and the jobs
+  canceled + skipped; a finished pipeline's header ends with `· HH:MM` (0.12.0) — when it finished,
+  GitLab's own time else when it was seen to finish, with the date once that is not today, like a
+  done task's time. Then the counts line (each state in its colour, zeros dimmed) and the jobs
   grouped by stage in pipeline order (GitLab lists newest first; sorted by job id), names padded
   so the durations line up. Layout (0.4.1): one indent step per level — section → item → details →
   jobs — for Needs you, Now, Pipelines and Sessions alike.
