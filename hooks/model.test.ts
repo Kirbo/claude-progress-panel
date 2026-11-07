@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 import type { SessionFile, Task } from './model'
 import {
   addDismissals,
+  applyAgentUpdate,
   applyUpdate,
   cancelTasks,
   dismissTasks,
@@ -377,4 +378,31 @@ test('splitMatches cuts a text around every case-insensitive hit of the query; b
     { text: 'aa', hit: true },
     { text: 'a', hit: false },
   ])
+})
+
+test('applyAgentUpdate upserts one agent entry from a patch, never touching the session tasks', () => {
+  const at = iso(T0)
+  let file = applyAgentUpdate(
+    fresh(),
+    { id: 'a1', label: 'Lane A' },
+    { now: 'x', tasks: [{ title: 's1' }], eta: 3 },
+    at,
+  ).file
+  expect(file.agents?.[0]).toMatchObject({
+    id: 'a1',
+    label: 'Lane A',
+    now: 'x',
+    etaMin: 3,
+    endedAt: null,
+    startedAt: at,
+  })
+  file = applyAgentUpdate(
+    file,
+    { id: 'a1', label: 'Lane A' },
+    { tasks: [{ id: 't1', status: 'done' }] },
+    iso(T0 + 1000),
+  ).file
+  expect(file.agents?.[0]?.tasks[0]?.status).toBe('done')
+  expect(file.agents?.[0]?.now).toBe('x')
+  expect(file.tasks).toEqual([])
 })

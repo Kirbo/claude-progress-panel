@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0 · task removal, per-list repo groups, subagent refusal in 0.16.0
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0 · task removal, per-list repo groups in 0.16.0 · subagent progress (Agents) in 0.17.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -312,9 +312,16 @@ a local plugin.)
   row is drawn `inverse` (`splitMatches`); a foldable task's title moves beside its fold arrow as
   text (a Button label cannot be styled), and a hit inside its detail or steps unfolds it until the
   person folds it.
-- **Subagents do not report:** a `progress_update` from a subagent (`tool.call` `agentId`) is
-  answered "not stored — your coordinator reports" and writes nothing, so lanes never mix their
-  tasks into the session's entry.
+- **Subagents report into their own entries (0.17.0; 0.16.0 refused them):** a `progress_update`
+  from a subagent (`tool.call` `agentId`) upserts `agents[]` in the session file (`AgentEntry`:
+  label = its Agent call's description from `$.agent.list()`, else `agent <id8>`; `now`, its own
+  `tasks` through the one task logic, `etaMin` from the tool's `eta`), never the session's tasks.
+  `classic.SubagentStop` marks it finished; finished ones fold and stay (no automatic clean-up —
+  user, 2026-11-07: never auto-prune, only collapse). The pane
+  shows `▾ Agents  N running · M finished` per session (running: label, `██░░ n/m · ~N min left`,
+  its `now`; finished folded). The coordinator's own answers end with `Subagents: <label> n/m, ~N
+  min left; …`. The reporting rule and the tool description tell subagents to report every few
+  steps.
 - Every background step nobody awaits (timer ticks, the startup lookups) is `detached`: a failure
   or a step outliving its session is dropped, never an unhandled rejection.
 

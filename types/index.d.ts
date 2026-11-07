@@ -3,6 +3,22 @@
 
 export type Status = 'todo' | 'doing' | 'blocked' | 'done' | 'skipped'
 
+/** A subagent's progress under its coordinator's session: its steps, what it is on, its estimate. */
+export type AgentEntry = {
+  id: string
+  /** The Agent call's description (`$.agent.list()`), else a short id. */
+  label: string
+  now: string | null
+  tasks: Task[]
+  seq: number
+  /** Minutes it expects to need for the rest, as last reported. */
+  etaMin?: number
+  startedAt: string
+  updatedAt: string
+  /** When the subagent stopped (SubagentStop); null while it runs. */
+  endedAt: string | null
+}
+
 /** One subtask of a task: a title and its own status. */
 export type Step = { title: string; status: Status }
 
@@ -105,6 +121,8 @@ export type SessionFile = {
   pipelines?: Pipeline[]
   /** Tasks the person removed in a pane and this session folded in (0.16.0): never removed twice. */
   cancelled?: string[]
+  /** The session's subagents' own progress (0.17.0), apart from the session's tasks. */
+  agents?: AgentEntry[]
 }
 
 /** One person's ✕ on a finished task: hides that task while it stays the same completion (`doneAt`). */

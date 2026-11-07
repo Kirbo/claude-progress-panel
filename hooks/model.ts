@@ -1,6 +1,16 @@
 // The session file and every pure operation on it — no I/O here (see store.ts for that).
 
-import type { Dismissal, Pipeline, SessionFile, SessionInfo, SidecarFile, Status, Step, Task } from '../types'
+import type {
+  AgentEntry,
+  Dismissal,
+  Pipeline,
+  SessionFile,
+  SessionInfo,
+  SidecarFile,
+  Status,
+  Step,
+  Task,
+} from '../types'
 
 export type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task }
 
@@ -30,6 +40,8 @@ export type UpdateInput = {
   remove?: string[]
   /** Task ids (or exact titles) in the order the session will do them; the rest keep theirs after. */
   order?: string[]
+  /** A subagent's estimate of the minutes it still needs. */
+  eta?: number
 }
 
 export function isClosed(status: Status): boolean {
@@ -265,7 +277,11 @@ function asPipelines(value: unknown): Pipeline[] {
 /** Nothing reported: no task, no "now", no ask, no pipeline — a session like this is never stored or shown. */
 export function isBlank(file: SessionFile): boolean {
   return (
-    file.tasks.length === 0 && !file.now && file.needsYou.length === 0 && (file.pipelines ?? []).length === 0
+    file.tasks.length === 0 &&
+    !file.now &&
+    file.needsYou.length === 0 &&
+    (file.pipelines ?? []).length === 0 &&
+    (file.agents ?? []).length === 0
   )
 }
 
@@ -361,6 +377,65 @@ export function stepCounts(task: Pick<Task, 'steps'>): { closed: number; total: 
   return { closed: steps.filter(s => isClosed(s.status)).length, total: steps.length }
 }
 
+/** A subagent's progress patch, upserted into its entry under the session — never the session's tasks. */
+export function applyAgentUpdate(
+  file: SessionFile,
+  who: { id: string; label: string },
+  input: UpdateInput,
+  nowIso: string,
+): { file: SessionFile; errors: string[] } {
+  const agents = file.agents ?? []
+  const old = agents.find(a => a.id === who.id)
+  // The agent's own list runs through the one task logic (ids, statuses, order), on a scratch file.
+  const scratch: SessionFile = {
+    ...file,
+    now: old?.now ?? null,
+    tasks: old?.tasks ?? [],
+    seq: old?.seq ?? 0,
+    dismissed: [],
+    needsYou: [],
+  }
+  const r = applyUpdate(
+    scratch,
+    { now: input.now, tasks: input.tasks, remove: input.remove, order: input.order },
+    nowIso,
+  )
+  const eta =
+    typeof input.eta === 'number' && Number.isFinite(input.eta) && input.eta >= 0
+      ? Math.round(input.eta)
+      : old?.etaMin
+  const entry: AgentEntry = {
+    id: who.id,
+    label: who.label,
+    now: r.file.now ?? null,
+    tasks: r.file.tasks,
+    seq: r.file.seq,
+    ...(eta !== undefined ? { etaMin: eta } : {}),
+    startedAt: old?.startedAt ?? nowIso,
+    updatedAt: nowIso,
+    endedAt: null,
+  }
+  return {
+    file: {
+      ...file,
+      agents: old ? agents.map(a => (a.id === who.id ? entry : a)) : [...agents, entry],
+      updatedAt: nowIso,
+    },
+    errors: r.errors,
+  }
+}
+
+/** The subagent that stopped, marked finished (unchanged when it is unknown or already finished). */
+export function endAgent(file: SessionFile, id: string, nowIso: string): SessionFile {
+  const agent = file.agents?.find(a => a.id === id)
+  if (!agent || agent.endedAt !== null) return file
+  return {
+    ...file,
+    agents: (file.agents ?? []).map(a => (a.id === id ? { ...a, endedAt: nowIso, updatedAt: nowIso } : a)),
+    updatedAt: nowIso,
+  }
+}
+
 /** The named tasks (id or exact title) first, in that order; every other keeps its place after them. */
 function reorder(tasks: Task[], order: readonly string[], errors: string[]): Task[] {
   const named: Task[] = []
@@ -422,6 +497,13 @@ export function parseSessionFile(text: string): SessionFile | undefined {
   const cancelled = (Array.isArray(f.cancelled) ? f.cancelled : []).filter(
     (id): id is string => typeof id === 'string',
   )
+  const agents = (Array.isArray(f.agents) ? f.agents : []).filter(
+    (a): a is AgentEntry =>
+      typeof a === 'object' &&
+      a !== null &&
+      typeof (a as AgentEntry).id === 'string' &&
+      Array.isArray((a as AgentEntry).tasks),
+  )
   return {
     ...(f as unknown as SessionFile),
     needsYou,
@@ -430,6 +512,7 @@ export function parseSessionFile(text: string): SessionFile | undefined {
     seq,
     pipelines,
     ...(cancelled.length > 0 ? { cancelled } : {}),
+    ...(agents.length > 0 ? { agents } : {}),
   }
 }
 

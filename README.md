@@ -51,6 +51,11 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   done, and a press opens the detail and each step. Once a session's open tasks span several repos
   they group under one foldable heading per repo (one repo: no heading); its Done list does the
   same on its own.
+- **Subagents report too:** a subagent's `progress_update` lands under its coordinator's session,
+  in an **Agents** part — its steps (`██░░ 3/7`), `~N min left` and what it is on — never among the
+  session's tasks; it folds away once the subagent stops (and stays — nothing is cleaned up
+  automatically). The coordinator
+  sees its running subagents in every `progress_update` answer.
 - **Remove a task** with the `✕` on its row: every pane hides it at once, its session marks it
   skipped ("removed in the Progress pane") and tells its agent right after its next step — "do not
   do it; stop if you are on it". Works for any live session's tasks, not only this one's.

@@ -92,6 +92,10 @@ function engine(
   on('classic.UserPromptSubmit', () => ({}) as never)
   on('classic.SessionStart', () => ({}) as never)
   on('classic.PostToolUse', () => ({}) as never)
+  on('classic.SubagentStop', () => ({}) as never)
+  // The session's subagents, as $.agent.list() answers (their Agent call's description).
+  const agents: { id: string; description: string; type: string; status: string }[] = []
+  on('agent.list', () => ({ value: agents }) as never)
   // The engine's own system prompt, beneath the plugin's hook.
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' }] }))
   on('fs.list', (_, e) => {
@@ -209,6 +213,7 @@ function engine(
     gitlab,
     github,
     tea,
+    agents,
     programs,
     net,
     web,
@@ -507,13 +512,102 @@ test('a removal reaches the agent with the next prompt too, or in the next progr
   expect(JSON.stringify(answer)).toContain('t2 \\"Beta\\"')
 })
 
-test("a subagent's progress_update is turned away: its coordinator reports", async ($, on) => {
+test("a subagent's progress lands under its coordinator's session, never among the session's tasks", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({
+    id: 'sub-1',
+    description: 'Lane A: scopes',
+    type: 'general-purpose',
+    status: 'running',
+  })
+  await start($)
+  await update($, { tasks: [{ title: 'Coordinate the lanes', status: 'doing' }] })
+  const answer = await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-1',
+    now: 'Writing the section table',
+    tasks: [
+      { title: 'read', status: 'done' },
+      { title: 'table', status: 'done' },
+      { title: 'authz', status: 'done' },
+      { title: 'tests' },
+    ],
+    eta: 5,
+  } as never)
+  expect(JSON.stringify(answer)).toMatch(/coordinator/i)
+  const file = read(disk, `${DIR}/s-me.json`)
+  expect(file.tasks.map(t => t.title)).toEqual(['Coordinate the lanes'])
+  expect(file.agents?.[0]).toMatchObject({
+    id: 'sub-1',
+    label: 'Lane A: scopes',
+    now: 'Writing the section table',
+    etaMin: 5,
+    endedAt: null,
+  })
+  expect(file.agents?.[0]?.tasks.map(t => t.status)).toEqual(['done', 'done', 'done', 'todo'])
+
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe(
+    '▾ Agents  1 running · 0 finished',
+  )
+  const lines = await texts(ui)
+  expect(lines).toContain('● Lane A: scopes')
+  expect(lines).toContain('██████░░ 3/4 · ~5 min left')
+  expect(lines).toContain('Writing the section table')
+  await ui.unmount()
+
+  // The coordinator's own next answer lists its running subagents.
+  const mine = await update($, { now: 'waiting on lanes' })
+  expect(JSON.stringify(mine)).toContain('Lane A: scopes 3/4, ~5 min left')
+})
+
+test('a subagent that stops is marked finished and folded under Agents — and stays, never cleaned up', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({
+    id: 'sub-2',
+    description: 'Lane B: the rest',
+    type: 'general-purpose',
+    status: 'running',
+  })
+  await start($)
+  await update($, { now: 'coordinating' })
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-2',
+    now: 'tests',
+    tasks: [{ title: 'one', status: 'done' }],
+  } as never)
+  await $.classic.SubagentStop({
+    agent_id: 'sub-2',
+    agent_type: 'general-purpose',
+    stop_hook_active: false,
+    agent_transcript_path: '/t',
+  } as never)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.endedAt).toBe(new Date(T0).toISOString())
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe(
+    '▸ Agents  0 running · 1 finished',
+  )
+  await ui.press({ key: 'agents:s-me' })
+  expect((await texts(ui)).some(l => l.startsWith('✓ Lane B: the rest'))).toBe(true)
+  await ui.unmount()
+  const mine = await update($, { now: 'still here' })
+  expect(JSON.stringify(mine)).not.toContain('Lane B')
+  await world.clock.advance(HOUR + 2000)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.label)).toEqual(['Lane B: the rest'])
+})
+
+test("an agent the session doesn't list still reports, under its id", async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
   await start($)
-  const answer = await $.tool.call({ tool: TOOL, now: 'lane work', agentId: 'sub-1' } as never)
-  expect(JSON.stringify(answer)).toMatch(/subagent/i)
-  expect(disk.files.has(`${DIR}/s-me.json`)).toBe(false)
+  await $.tool.call({ tool: TOOL, agentId: 'abcdef123456', now: 'working' } as never)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]).toMatchObject({
+    id: 'abcdef123456',
+    label: 'agent abcdef12',
+  })
 })
 
 test('resolveProgressDir: the option wins, ~ expands, else <config dir>/progress', () => {

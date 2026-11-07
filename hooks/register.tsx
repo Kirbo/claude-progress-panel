@@ -10,8 +10,10 @@ import { t, tn } from './i18n'
 import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
 import {
   addDismissals,
+  applyAgentUpdate,
   applyUpdate,
   cancelTasks,
+  endAgent,
   formatClock,
   formatTime,
   groupByRepo,
@@ -210,6 +212,11 @@ const INPUT_SCHEMA = {
       },
     },
     remove: { type: 'array', items: { type: 'string' } },
+    eta: {
+      type: 'number',
+      description:
+        'A subagent only: the minutes you expect the rest of your job to take, re-estimated each call.',
+    },
     order: {
       type: 'array',
       items: { type: 'string' },
@@ -585,7 +592,8 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
   const added = watched.list.filter(p => !(updated.file.pipelines ?? []).some(old => old.key === p.key))
   if (added.length > 0) await pollPipelines($, options)
   const notice = takeRemovalNotice()
-  const text = `${notice ? `${notice}\n` : ''}${summarize(file, [...updated.errors, ...watched.errors])}`
+  const agents = agentsLine(file)
+  const text = `${notice ? `${notice}\n` : ''}${summarize(file, [...updated.errors, ...watched.errors])}${agents ? `\n${agents}` : ''}`
   return added.length > 0
     ? `${text}\n${t('tool.watching', { keys: added.map(p => p.key).join(', ') })}`
     : text
@@ -655,6 +663,42 @@ async function refreshCommandRun(
     undefined,
     at,
   )
+}
+
+// A subagent's progress_update: upserted into its entry, labelled by its Agent call's description.
+async function runAgentUpdate(
+  $: EngineInterface,
+  options: PluginOptions,
+  id: string,
+  input: ToolInput,
+): Promise<string> {
+  const dir = await progressDir($, options)
+  if (!dir) return t('tool.noDir')
+  const listed = await $.agent.list().catch(() => [])
+  const label =
+    listed.find(a => a.id === id)?.description?.trim() || t('agent.fallbackLabel', { id: id.slice(0, 8) })
+  const at = await nowIso($)
+  const { errors, entry } = await exclusive(async () => {
+    const r = applyAgentUpdate(await ownFile($, dir), { id, label }, input, at)
+    await save($, dir, r.file)
+    return { errors: r.errors, entry: r.file.agents?.find(a => a.id === id) }
+  })
+  const steps = entry ? entry.tasks : []
+  const done = steps.filter(x => isClosed(x.status)).length
+  return [t('tool.agentSaved', { done, total: steps.length }), ...errors].join('\n')
+}
+
+// One line per running subagent for the coordinator's answer: label, steps, estimate.
+function agentsLine(file: SessionFile): string | undefined {
+  const running = (file.agents ?? []).filter(a => a.endedAt === null)
+  if (running.length === 0) return undefined
+  const parts = running.map(a => {
+    const done = a.tasks.filter(x => isClosed(x.status)).length
+    const steps = a.tasks.length > 0 ? ` ${done}/${a.tasks.length}` : ''
+    const eta = typeof a.etaMin === 'number' ? t('agent.eta', { min: a.etaMin }) : ''
+    return `${a.label}${steps}${eta}`
+  })
+  return t('tool.agents', { list: parts.join('; ') })
 }
 
 // One CLI call: its output, or its error as one line.
@@ -1065,6 +1109,21 @@ export const register: Register = (on, options) => {
   })
   // After every main-loop tool call: a task the person removed reaches the agent at its next step
   // (a subagent's calls never take the note — it is the coordinator's).
+  // A subagent stopped: its entry is marked finished — it folds under Agents and stays (nothing is
+  // cleaned up automatically).
+  on('classic.SubagentStop', async ($, e, next) => {
+    const id = (e as { agent_id?: unknown }).agent_id
+    const dir = await progressDir($, options)
+    if (typeof id === 'string' && dir) {
+      const at = await nowIso($)
+      await exclusive(async () => {
+        const own = await ownFile($, dir)
+        const ended = endAgent(own, id, at)
+        if (ended !== own) await save($, dir, ended)
+      })
+    }
+    return next(e)
+  })
   on('classic.PostToolUse', async (_$, e, next) => {
     const result = await next(e)
     return (e as { agent_id?: unknown }).agent_id ? result : withRemovalNotice(result)
@@ -1083,7 +1142,11 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: TOOL_ID }, async ($, e) => {
     // One entry per session, kept by its main loop: a subagent's report would mix into it.
-    if ((e as { agentId?: unknown }).agentId) return { result: t('tool.subagent') }
+    // A subagent's report goes to ITS entry under the session (its steps, what it is on, its
+    // estimate) — never the session's own tasks, which its coordinator keeps.
+    const agentId = (e as { agentId?: unknown }).agentId
+    if (typeof agentId === 'string' && agentId)
+      return { result: await runAgentUpdate($, options, agentId, e as unknown as ToolInput) }
     const input = e as unknown as ToolInput
     const text = await runUpdate($, options, {
       now: input.now,
@@ -1091,6 +1154,7 @@ export const register: Register = (on, options) => {
       tasks: input.tasks,
       remove: input.remove,
       order: input.order,
+      eta: input.eta,
       watch: input.watch,
       unwatch: input.unwatch,
     })
@@ -1450,6 +1514,69 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    // The session's subagents: running ones with their steps and estimate, finished ones folded.
+    const agentsBlock = (file: SessionFile) => {
+      const agents = file.agents ?? []
+      if (agents.length === 0) return null
+      const id = file.session.id
+      const running = agents.filter(a => a.endedAt === null)
+      const finishedList = agents.filter(a => a.endedAt !== null)
+      const key = `agents:${id}`
+      const isOpen = folded[key] ?? running.length > 0
+      return (
+        <Box flexDirection="column">
+          <Button
+            key={key}
+            label={t('pane.agents', {
+              fold: isOpen ? '▾' : '▸',
+              running: running.length,
+              finished: finishedList.length,
+            })}
+            plain
+            dimColor={running.length === 0}
+            onPress={() => void toggle($, key, isOpen)}
+          />
+          {isOpen ? (
+            <Box flexDirection="column" paddingLeft={INDENT}>
+              {running.map(a => {
+                const closed = a.tasks.filter(x => isClosed(x.status)).length
+                const steps =
+                  a.tasks.length > 0
+                    ? t('pane.agentSteps', {
+                        bar: progressBar(closed, a.tasks.length),
+                        done: closed,
+                        total: a.tasks.length,
+                      })
+                    : ''
+                const eta = typeof a.etaMin === 'number' ? t('pane.agentEta', { min: a.etaMin }) : ''
+                return (
+                  <Box flexDirection="column">
+                    <Box flexDirection="row" justifyContent="space-between" gap={2}>
+                      <Text color="yellow">{t('pane.agentRow', { label: a.label })}</Text>
+                      {steps || eta ? <Text dimColor>{`${steps}${eta}`}</Text> : null}
+                    </Box>
+                    {a.now ? (
+                      <Box paddingLeft={INDENT}>
+                        <Text dimColor>{a.now}</Text>
+                      </Box>
+                    ) : null}
+                  </Box>
+                )
+              })}
+              {finishedList.map(a => (
+                <Text dimColor>
+                  {t('pane.agentFinished', {
+                    label: a.label,
+                    when: formatTime(a.endedAt ?? a.updatedAt, nowMs),
+                  })}
+                </Text>
+              ))}
+            </Box>
+          ) : null}
+        </Box>
+      )
+    }
+
     const group = (file: SessionFile) => {
       const id = file.session.id
       const ended = file.session.endedAt
@@ -1541,6 +1668,7 @@ export const register: Register = (on, options) => {
                     )
                   })
                 : open.map(task => taskRow(id, task))}
+              {agentsBlock(file)}
               {done.length > 0 ? (
                 <Box flexDirection="row" justifyContent="space-between" gap={2}>
                   <Button
