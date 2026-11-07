@@ -179,7 +179,19 @@ export function parseSidecar(text: string): SidecarFile | undefined {
       typeof d.id === 'string' &&
       (d.doneAt === null || typeof d.doneAt === 'string'),
   )
-  return { version: 1, sessionId: f.sessionId, entries }
+  return { version: 1, sessionId: f.sessionId, entries, pipelines: asPipelines(f.pipelines) }
+}
+
+/** The well-formed pipelines of a stored list (a session file's, or a sidecar's refreshed copies). */
+function asPipelines(value: unknown): Pipeline[] {
+  return (Array.isArray(value) ? value : []).filter(
+    (p): p is Pipeline =>
+      typeof p === 'object' &&
+      p !== null &&
+      typeof (p as Pipeline).key === 'string' &&
+      typeof (p as Pipeline).project === 'string' &&
+      Array.isArray((p as Pipeline).jobs),
+  )
 }
 
 /** Nothing reported: no task, no "now", no ask, no pipeline — a session like this is never stored or shown. */
@@ -249,14 +261,7 @@ export function parseSessionFile(text: string): SessionFile | undefined {
       isStatus((t as Task).status),
   )
   const seq = typeof f.seq === 'number' && Number.isFinite(f.seq) ? f.seq : 0
-  const pipelines = (Array.isArray(f.pipelines) ? f.pipelines : []).filter(
-    (p): p is Pipeline =>
-      typeof p === 'object' &&
-      p !== null &&
-      typeof (p as Pipeline).key === 'string' &&
-      typeof (p as Pipeline).project === 'string' &&
-      Array.isArray((p as Pipeline).jobs),
-  )
+  const pipelines = asPipelines(f.pipelines)
   return { ...(f as unknown as SessionFile), needsYou, dismissed, tasks, seq, pipelines }
 }
 

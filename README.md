@@ -92,7 +92,7 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 - Each session writes only its own file, `<progressDir>/<session-id>.json`, through the
   `progress_update` tool — nobody else writes it, so sessions never overwrite each other. Your ✕ /
   Clear all go to a separate `<session-id>.dismissed.json`, which the session folds in on its next
-  update; a file caught half-written is ignored until the next refresh (the last good copy stays).
+  update (so do pipeline refreshes a pane made for a session that stopped polling); a file caught half-written is ignored until the next refresh (the last good copy stays).
   The tool takes a patch (`now`, `needsYou`, `tasks` upserted by id or title, `remove`), and
   the plugin stamps created / updated / done times. The format is in
   [`docs/design/MULTI-SESSION.md`](docs/design/MULTI-SESSION.md).
@@ -106,7 +106,7 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 - **Pipelines:** the agent can `watch` a GitLab CI pipeline or a GitHub Actions workflow run (by
   id, or by commit sha before it exists) — the bundled skill tells it to watch every push to a repo
   that has CI. The session that watches it polls it through your own `glab` (GitLab) or `gh`
-  (GitHub) every 15 s until it finishes (neither forge can push to a local plugin), writes it into its file, and every pane shows
+  (GitHub) every 15 s until it finishes (neither forge can push to a local plugin; if that session ends or dies first, any open pane takes over after 1 min), writes it into its file, and every pane shows
   it: a progress bar of finished / all jobs, how long it has run (live, beside an estimate from the average of
   up to 5 earlier successful runs of the same branch and trigger, cached 24 h; GitLab's duration
   once finished), the counts per state (coloured) and every job, grouped

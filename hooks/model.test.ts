@@ -140,6 +140,31 @@ test('parseSidecar accepts a v1 sidecar, drops bad entries, refuses anything els
   expect(parseSidecar('null')).toBeUndefined()
 })
 
+test("parseSidecar reads the panes' refreshed pipelines, keeping only well-formed ones", () => {
+  const pipe = {
+    key: 'g/a#1',
+    project: 'g/a',
+    id: 1,
+    label: 'a',
+    state: 'success',
+    jobs: [],
+    addedAt: iso(T0),
+    checkedAt: iso(T0),
+  }
+  const text = JSON.stringify({
+    version: 1,
+    sessionId: 's1',
+    entries: [],
+    pipelines: [pipe, { key: 2 }, null],
+  })
+  expect(parseSidecar(text)?.pipelines).toEqual([pipe])
+  // A sidecar from before 0.11.1 has no pipelines: none, not an error.
+  expect(parseSidecar(JSON.stringify({ version: 1, sessionId: 's1', entries: [] }))?.pipelines).toEqual([])
+  expect(
+    parseSidecar(JSON.stringify({ version: 1, sessionId: 's1', entries: [], pipelines: 'x' }))?.pipelines,
+  ).toEqual([])
+})
+
 test('pruneDone removes done tasks older than the limit; 0 hours never prunes', () => {
   const file = {
     ...fresh(),

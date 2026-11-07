@@ -7,9 +7,11 @@ import {
   formatDuration,
   formatEstimate,
   isFinished,
+  isOrphaned,
   jobCounts,
   jobEstimatesFrom,
   jobState,
+  overlayPipelines,
   parseJobs,
   parsePipeline,
   parseSampleIds,
@@ -21,6 +23,7 @@ import {
 
 const T0 = Date.UTC(2026, 10, 6, 20, 0, 0)
 const iso = (ms: number) => new Date(ms).toISOString()
+const HOUR_MS = 3_600_000
 
 function job(name: string, state: PipelineJob['state'], durationS: number | null = null): PipelineJob {
   return { name, stage: 'build', state, durationS }
@@ -274,4 +277,42 @@ test('applyWatch: a GitHub run by id or by commit, keyed apart from GitLab (gh:o
     ['Kirbo/switchboard-ha#42328151166', undefined, 42328151166, 'switchboard-ha'],
   ])
   expect(errors).toEqual(['watch[4]: unknown provider bitbucket (gitlab or github)'])
+})
+
+function watched(over: Partial<Pipeline> = {}): Pipeline {
+  return {
+    key: 'g/a#1',
+    project: 'g/a',
+    id: 1,
+    label: 'a',
+    state: 'running',
+    jobs: [],
+    addedAt: iso(T0),
+    checkedAt: iso(T0),
+    ...over,
+  }
+}
+
+test("overlayPipelines: a pane's newer check wins; older ones and unwatched keys are ignored", () => {
+  const mine = [watched(), watched({ key: 'g/b#2', id: 2 })]
+  const newer = watched({ state: 'success', checkedAt: iso(T0 + 1000) })
+  const older = watched({ key: 'g/b#2', id: 2, state: 'failed', checkedAt: iso(T0 - 1000) })
+  const gone = watched({ key: 'g/c#3', id: 3, checkedAt: iso(T0 + 1000) })
+  expect(overlayPipelines(mine, [newer, older, gone])).toEqual([newer, mine[1]])
+  // Never checked by its owner: any pane's check is newer.
+  expect(overlayPipelines([watched({ checkedAt: null })], [newer])).toEqual([newer])
+  // A pane copy never checked brings nothing.
+  expect(overlayPipelines(mine, [watched({ checkedAt: null, state: 'failed' })])).toEqual(mine)
+  expect(overlayPipelines(mine, [])).toBe(mine)
+})
+
+test('isOrphaned: unfinished and not checked for longer than the limit (never checked: since added)', () => {
+  const limit = 60_000
+  expect(isOrphaned(watched(), T0 + limit, limit)).toBe(false)
+  expect(isOrphaned(watched(), T0 + limit + 1, limit)).toBe(true)
+  expect(isOrphaned(watched({ checkedAt: null }), T0 + limit + 1, limit)).toBe(true)
+  expect(isOrphaned(watched({ checkedAt: null }), T0 + 1000, limit)).toBe(false)
+  expect(isOrphaned(watched({ state: 'unknown' }), T0 + HOUR_MS, limit)).toBe(true)
+  expect(isOrphaned(watched({ state: 'success' }), T0 + HOUR_MS, limit)).toBe(false)
+  expect(isOrphaned(watched({ state: 'failed' }), T0 + HOUR_MS, limit)).toBe(false)
 })

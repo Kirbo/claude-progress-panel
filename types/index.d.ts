@@ -40,7 +40,8 @@ export type PipelineProvider = 'gitlab' | 'github'
 
 /**
  * A CI pipeline the session watches; the session's own timer refreshes it through `glab` (GitLab)
- * or `gh` (GitHub Actions, where a "pipeline" is one workflow run).
+ * or `gh` (GitHub Actions, where a "pipeline" is one workflow run) — and any pane does once the
+ * session stopped (its copy goes to the session's sidecar).
  */
 export type Pipeline = {
   /** `project#id`, or `project@sha` until the pipeline of that commit is found; GitHub runs carry
@@ -95,15 +96,27 @@ export type SessionFile = {
 export type Dismissal = { id: string; doneAt: string | null }
 
 /**
- * `<session-id>.dismissed.json` beside a session's file. Only panes write it (✕ / Clear all), so a
- * session's own file keeps exactly one writer, its session. The owner merges it on its next write.
+ * `<session-id>.dismissed.json` beside a session's file. Only panes write it (✕ / Clear all, and
+ * refreshes of pipelines the session stopped polling), so a session's own file keeps exactly one
+ * writer, its session. The owner merges it on its next write.
  */
-export type SidecarFile = { version: 1; sessionId: string; entries: Dismissal[] }
+export type SidecarFile = {
+  version: 1
+  sessionId: string
+  entries: Dismissal[]
+  /** Pipelines of this session that a pane refreshed because the session stopped polling them
+   *  (absent in sidecars written before 0.11.1). A copy wins over the file's entry when checked later. */
+  pipelines?: Pipeline[]
+}
 
 /** Every session the pane knows, by session id: its file and its sidecar, with the mtimes read at. */
 export type Loaded = Record<
   string,
-  { mtimeMs: number; file: SessionFile; sidecar?: { mtimeMs: number; entries: Dismissal[] } }
+  {
+    mtimeMs: number
+    file: SessionFile
+    sidecar?: { mtimeMs: number; entries: Dismissal[]; pipelines: Pipeline[] }
+  }
 >
 
 /** Fold state this pane's person set, by Button key (`group:<id>`, `done:<id>`); unset = the default. */

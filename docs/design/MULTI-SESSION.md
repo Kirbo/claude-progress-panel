@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -55,7 +55,9 @@ per session, `<session-id>.json`, written only whole:
 - **One writer per file.** A session's file is written only by that session (its tool calls,
   its `session.end`, its own auto-clear). Any pane may write only the **sidecar**
   `<session-id>.dismissed.json` — `{ "version": 1, "sessionId": "…", "entries": [{ "id": "t3",
-  "doneAt": "ISO" }] }` — on ✕ / Clear all (read it fresh, add, write). So a person's click can never
+  "doneAt": "ISO" }], "pipelines": [ … ] }` — on ✕ / Clear all, and with refreshed copies of the
+  session's orphaned pipelines (see Pipelines); always read fresh, change, write whole, so neither
+  drops the other's part. So a person's click can never
   race the session writing its status. (Exception: an *ended* session's file, whose session is
   gone, is auto-cleared and deleted by whichever pane gets there; concurrent panes write identical
   results.)
@@ -130,6 +132,16 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   session; the plugin API has neither. So the **watching session** polls through the user's
   `glab api` every 15 s — only its own pipelines, only while unfinished — and stops at the first
   finished state. Other panes read the result from the file (no extra GitLab calls).
+- **Orphaned pipelines (0.11.1).** A session that ends (or is killed) mid-pipeline stops polling,
+  and its watch used to freeze at its last state forever (seen 2026-11-07: a 69 s pipeline shown
+  "running" for 9 h). Now any pane polls another session's unfinished pipeline once its
+  `checkedAt` (or `addedAt`, never checked) is older than 1 min — four of the owner's poll periods,
+  so a live owner keeps sole charge. The fresh copy goes to that session's **sidecar**
+  `pipelines`, never its file (one writer). Panes draw the file's list with the sidecar's copies
+  laid over it — per key, the later `checkedAt` wins; copies of unwatched keys are ignored and
+  pruned on the next write — and the owner folds them into its file on its next write (a resumed
+  session then stops polling what already finished). Two panes may both poll an orphan in the
+  same 15 s tick; the cost is one duplicate read, the results are identical.
 - States: GitLab's statuses fold into queued / running / success / failed / canceled / skipped /
   manual. Header: `label #id · ref · state  ██░░ finished/total · duration`, finished = success + failed +
   canceled + skipped. Then the counts line (each state in its colour, zeros dimmed) and the jobs

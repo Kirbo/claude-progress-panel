@@ -4,6 +4,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { SessionFile } from './model'
 import { applyUpdate, newSession } from './model'
 import { resolveProgressDir } from './paths'
+import type { Pipeline } from './pipelines'
 
 type On = Parameters<TestBody>[1]
 type $Test = Parameters<TestBody>[0]
@@ -749,7 +750,7 @@ test('a glab failure shows on the pipeline instead of breaking the pane', async 
   await ui.unmount()
 })
 
-test("another session's pipelines show read-only and are never polled here; ✕ hides a finished one", async ($, on) => {
+test("another session's finished pipelines show read-only and are never polled here; ✕ hides one", async ($, on) => {
   const disk = makeDisk()
   const theirs = other('s-other', 'site', T0, {})
   theirs.pipelines = [
@@ -788,6 +789,124 @@ test("another session's pipelines show read-only and are never polled here; ✕ 
   expect(disk.files.get(`${DIR}/s-other.json`)?.text).toBe(before)
   expect(sidecar(disk, 's-other').map(d => d.id)).toEqual(['pipeline:g/site#7'])
   await ui.unmount()
+})
+
+const SITE = 'projects/g%2Fsite/pipelines/7'
+const isoAt = (ms: number) => new Date(ms).toISOString()
+
+function sitePipe(over: Partial<Pipeline> = {}): Pipeline {
+  return {
+    key: 'g/site#7',
+    project: 'g/site',
+    id: 7,
+    label: 'site',
+    state: 'running',
+    ref: 'main',
+    jobs: [{ name: 'deploy', stage: 'build', state: 'running', durationS: null }],
+    addedAt: isoAt(T0 - HOUR),
+    checkedAt: isoAt(T0 - HOUR),
+    startedAt: isoAt(T0 - HOUR),
+    ...over,
+  }
+}
+
+function sidecarFile(disk: Disk, id: string): { entries: { id: string }[]; pipelines?: Pipeline[] } {
+  const file = disk.files.get(`${DIR}/${id}.dismissed.json`)
+  if (!file) throw new Error(`no sidecar for ${id}`)
+  return JSON.parse(file.text)
+}
+
+const glabCalls = (runs: string[][], path: string) =>
+  runs.filter(r => r[0] === 'glab' && r[2] === path).length
+
+test("a stopped session's unfinished pipeline is refreshed by any pane, into its sidecar", async ($, on) => {
+  const disk = makeDisk()
+  const theirs = other('s-other', 'site', T0 - HOUR, {})
+  theirs.session.endedAt = isoAt(T0 - HOUR)
+  theirs.pipelines = [sitePipe()]
+  put(disk, `${DIR}/s-other.json`, theirs)
+  const before = disk.files.get(`${DIR}/s-other.json`)?.text
+  const world = engine(on, disk)
+  world.gitlab.set(SITE, { id: 7, status: 'success', ref: 'main', duration: 69 })
+  world.gitlab.set(`${SITE}/jobs?per_page=100`, jobsOf(['deploy', 'success']))
+  await start($)
+  await world.clock.advance(15_000)
+
+  // Its file keeps its one writer; the refreshed copy goes to the sidecar.
+  expect(disk.files.get(`${DIR}/s-other.json`)?.text).toBe(before)
+  expect(sidecarFile(disk, 's-other').pipelines?.[0]).toMatchObject({
+    key: 'g/site#7',
+    state: 'success',
+    durationS: 69,
+    jobs: [{ name: 'deploy', state: 'success' }],
+  })
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
+    '▸ Pipelines  0 watching · 1 succeeded · 0 failed',
+  )
+  await ui.press({ key: 'pipelines' })
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' }))?.text).toBe(
+    '▸ site #7 · main · success  ████████ 1/1 · 1m09s',
+  )
+
+  // Finished: nobody polls it again.
+  const polled = glabCalls(world.runs, SITE)
+  await world.clock.advance(60_000)
+  expect(glabCalls(world.runs, SITE)).toBe(polled)
+
+  // ✕ on the refreshed copy hides it and keeps the copy beside the dismissal.
+  await ui.press({ key: 'unpipe:s-other:g/site#7' })
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-other:g/site#7' })).toBeUndefined()
+  expect(sidecarFile(disk, 's-other')).toMatchObject({
+    entries: [{ id: 'pipeline:g/site#7' }],
+    pipelines: [{ key: 'g/site#7', state: 'success' }],
+  })
+  await ui.unmount()
+})
+
+test("a live session's pipeline is left to its owner until its checks stop for 1 min", async ($, on) => {
+  const disk = makeDisk()
+  const theirs = other('s-other', 'site', T0, {})
+  theirs.pipelines = [sitePipe({ checkedAt: isoAt(T0) })]
+  put(disk, `${DIR}/s-other.json`, theirs)
+  const world = engine(on, disk)
+  world.gitlab.set(SITE, { id: 7, status: 'running', ref: 'main' })
+  world.gitlab.set(`${SITE}/jobs?per_page=100`, jobsOf(['deploy', 'running']))
+  await start($)
+  await world.clock.advance(60_000)
+  expect(glabCalls(world.runs, SITE)).toBe(0)
+  expect(disk.files.has(`${DIR}/s-other.dismissed.json`)).toBe(false)
+
+  // Its owner went quiet (killed without ending): this pane takes over.
+  await world.clock.advance(15_000)
+  expect(glabCalls(world.runs, SITE)).toBe(1)
+  expect(sidecarFile(disk, 's-other').pipelines?.[0]).toMatchObject({
+    state: 'running',
+    checkedAt: isoAt(T0 + 75_000),
+  })
+  // Its own check is fresh again: no second poll until it ages out.
+  await world.clock.advance(15_000)
+  expect(glabCalls(world.runs, SITE)).toBe(1)
+})
+
+test("the owner folds the panes' refreshes into its own file and stops polling a finished one", async ($, on) => {
+  const disk = makeDisk()
+  const mine = other('s-me', 'app', T0 - HOUR, { now: 'waiting' })
+  const watchedPipe = sitePipe({ key: 'g/app#42', project: 'g/app', id: 42, label: 'app' })
+  mine.pipelines = [watchedPipe]
+  put(disk, `${DIR}/s-me.json`, mine)
+  const done = {
+    ...watchedPipe,
+    state: 'success' as const,
+    checkedAt: isoAt(T0 - 1000),
+    finishedAt: isoAt(T0 - 1000),
+  }
+  put(disk, `${DIR}/s-me.dismissed.json`, { version: 1, sessionId: 's-me', entries: [], pipelines: [done] })
+  const world = engine(on, disk)
+  await start($)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ key: 'g/app#42', state: 'success' })
+  await world.clock.advance(30_000)
+  expect(glabCalls(world.runs, PIPE)).toBe(0)
 })
 
 test('the Pipelines section folds itself once every pipeline succeeded, and opens on news', async ($, on) => {

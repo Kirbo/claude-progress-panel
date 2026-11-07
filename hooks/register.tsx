@@ -29,8 +29,10 @@ import {
   formatDuration,
   formatEstimate,
   isFinished,
+  isOrphaned,
   jobCounts,
   jobEstimatesFrom,
+  overlayPipelines,
   parseJobs,
   parsePipeline,
   parseSampleIds,
@@ -53,6 +55,9 @@ const DAY_MS = 24 * 3_600_000
 // updates need a browser websocket session), so the session that watches a pipeline polls it
 // through the user's own `glab` — only while it is unfinished, and only that session.
 const PIPELINE_POLL_MS = 15_000
+// Once the watching session has not checked an unfinished pipeline for this long (it ended, or was
+// killed without ending), any pane polls it instead, writing to that session's sidecar.
+const ORPHAN_AFTER_MS = 4 * PIPELINE_POLL_MS
 // A pipeline that succeeded longer ago than this moves into the folded "Finished" list.
 const ARCHIVE_AFTER_MS = 3_600_000
 // Similar-run estimates are cached in the plugin's store this long, per project + ref + source.
@@ -61,7 +66,7 @@ const FINISHED_KEY = 'pipelines-finished'
 const SORT_KEY = 'sortTasksBy'
 
 const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {} as Loaded, {
-  shape: 'sessions-2',
+  shape: 'sessions-3',
 })
 const SIDECAR = '.dismissed.json'
 const folds = atom({ plugin: 'progress-panel', key: 'folds' } as const, {} as Folds, { shape: 'folds-1' })
@@ -186,9 +191,37 @@ async function save($: EngineInterface, dir: string, file: SessionFile): Promise
   }))
 }
 
-async function readSidecar($: EngineInterface, dir: string, id: string): Promise<Dismissal[]> {
+type Sidecar = { entries: Dismissal[]; pipelines: Pipeline[] }
+
+async function readSidecar($: EngineInterface, dir: string, id: string): Promise<Sidecar> {
   const text = await $.fs.read(`${dir}/${id}${SIDECAR}`).catch(() => undefined)
-  return (text === undefined ? undefined : parseSidecar(text))?.entries ?? []
+  const parsed = text === undefined ? undefined : parseSidecar(text)
+  return { entries: parsed?.entries ?? [], pipelines: parsed?.pipelines ?? [] }
+}
+
+// A pane's change to a session's sidecar: read fresh, change, write whole, so a ✕ and a pipeline
+// refresh never drop each other's part.
+async function writeSidecar(
+  $: EngineInterface,
+  dir: string,
+  id: string,
+  change: (sidecar: Sidecar) => Sidecar,
+): Promise<void> {
+  const next = change(await readSidecar($, dir, id))
+  const file: SidecarFile = {
+    version: 1,
+    sessionId: id,
+    entries: next.entries,
+    ...(next.pipelines.length > 0 ? { pipelines: next.pipelines } : {}),
+  }
+  const path = `${dir}/${id}${SIDECAR}`
+  await $.fs.write(path, `${JSON.stringify(file, null, 2)}\n`)
+  const stat = await $.fs.stat(path).catch(() => undefined)
+  await update($, sessions, all => {
+    const known = all[id]
+    if (!known) return all
+    return { ...all, [id]: { ...known, sidecar: { mtimeMs: stat?.mtimeMs ?? 0, ...next } } }
+  })
 }
 
 // This session's file as it is on disk now, with the panes' dismissals folded in; a fresh one when
@@ -198,9 +231,10 @@ async function ownFile($: EngineInterface, dir: string): Promise<SessionFile> {
   const text = await $.fs.read(`${dir}/${id}.json`).catch(() => undefined)
   const existing = text === undefined ? undefined : parseSessionFile(text)
   if (existing) {
-    const entries = await readSidecar($, dir, id)
-    const merged = mergeSidecar(existing, entries)
-    return { ...merged, pipelines: visiblePipelines(merged.pipelines ?? [], entries) }
+    const sidecar = await readSidecar($, dir, id)
+    const merged = mergeSidecar(existing, sidecar.entries)
+    const pipelines = overlayPipelines(merged.pipelines ?? [], sidecar.pipelines)
+    return { ...merged, pipelines: visiblePipelines(pipelines, sidecar.entries) }
   }
   const cwd = await $.session.cwd()
   const repo = await $.session.repo().catch(() => null)
@@ -217,19 +251,7 @@ async function dismiss(
 ): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir || tasks.length === 0) return
-  const sidecar: SidecarFile = {
-    version: 1,
-    sessionId: id,
-    entries: addDismissals(await readSidecar($, dir, id), tasks),
-  }
-  const path = `${dir}/${id}${SIDECAR}`
-  await $.fs.write(path, `${JSON.stringify(sidecar, null, 2)}\n`)
-  const stat = await $.fs.stat(path).catch(() => undefined)
-  await update($, sessions, all => {
-    const known = all[id]
-    if (!known) return all
-    return { ...all, [id]: { ...known, sidecar: { mtimeMs: stat?.mtimeMs ?? 0, entries: sidecar.entries } } }
-  })
+  await writeSidecar($, dir, id, sidecar => ({ ...sidecar, entries: addDismissals(sidecar.entries, tasks) }))
 }
 
 // The plugin API has no file delete: the platform's own command removes the file.
@@ -286,7 +308,7 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
   if (!entries) return
   const before = await read($, sessions)
   const next: Loaded = {}
-  const sidecars: Record<string, { mtimeMs: number; entries: Dismissal[] }> = {}
+  const sidecars: Record<string, { mtimeMs: number } & Sidecar> = {}
   for (const entry of entries) {
     if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
     if (entry.name.endsWith(SIDECAR)) {
@@ -299,7 +321,8 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
       const text = await $.fs.read(`${dir}/${entry.name}`).catch(() => undefined)
       const parsed = text === undefined ? undefined : parseSidecar(text)
       // Unreadable (e.g. caught mid-write): keep the last good copy; its old mtime retries next tick.
-      if (parsed) sidecars[id] = { mtimeMs: entry.mtimeMs, entries: parsed.entries }
+      if (parsed)
+        sidecars[id] = { mtimeMs: entry.mtimeMs, entries: parsed.entries, pipelines: parsed.pipelines ?? [] }
       else if (known) sidecars[id] = known
       continue
     }
@@ -556,6 +579,41 @@ async function pollPipelines($: EngineInterface, options: PluginOptions): Promis
   await save($, dir, { ...file, pipelines: next })
 }
 
+// Other sessions' unfinished pipelines they stopped polling (ended, or killed without ending):
+// refreshed here, the copies written to that session's sidecar — never to its own file.
+async function pollOrphans($: EngineInterface, options: PluginOptions): Promise<void> {
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const me = await $.session.id()
+  const nowMs = await $.clock.now()
+  for (const [id, known] of Object.entries(await read($, sessions))) {
+    if (id === me) continue
+    const watched = known.file.pipelines ?? []
+    const list = overlayPipelines(watched, known.sidecar?.pipelines ?? [])
+    const orphans = list.filter(p => isOrphaned(p, nowMs, ORPHAN_AFTER_MS))
+    if (orphans.length === 0) continue
+    const at = new Date(nowMs).toISOString()
+    const fresh: Pipeline[] = []
+    for (const p of orphans) fresh.push(await refreshPipeline($, p, at))
+    await writeSidecar($, dir, id, sidecar => ({
+      ...sidecar,
+      // The fresh copies replace older ones; copies of pipelines the session no longer watches go.
+      pipelines: [
+        ...sidecar.pipelines.filter(
+          p => watched.some(w => w.key === p.key) && !fresh.some(f => f.key === p.key),
+        ),
+        ...fresh,
+      ],
+    }))
+  }
+}
+
+// The session's own pipelines first, then the ones other sessions left behind.
+async function pollAll($: EngineInterface, options: PluginOptions): Promise<void> {
+  await pollPipelines($, options)
+  await pollOrphans($, options)
+}
+
 async function markEnded($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
@@ -636,7 +694,7 @@ export const register: Register = (on, options) => {
     if (dir && own && !isBlank(own)) await save($, dir, own)
     await scan($, options)
     $.clock.every(REFRESH_MS, () => void scan($, options))
-    $.clock.every(PIPELINE_POLL_MS, () => void pollPipelines($, options))
+    $.clock.every(PIPELINE_POLL_MS, () => void pollAll($, options))
     void $.ui.open({ id: PANE, title: t('pane.title') })
     return next(e)
   })
@@ -684,7 +742,10 @@ export const register: Register = (on, options) => {
     const startedMs = (p: Pipeline) => Date.parse(p.startedAt ?? p.addedAt) || 0
     const pipelineRows = ordered
       .flatMap(f =>
-        visiblePipelines(f.pipelines ?? [], all[f.session.id]?.sidecar?.entries ?? []).map(pipeline => ({
+        visiblePipelines(
+          overlayPipelines(f.pipelines ?? [], all[f.session.id]?.sidecar?.pipelines ?? []),
+          all[f.session.id]?.sidecar?.entries ?? [],
+        ).map(pipeline => ({
           sessionId: f.session.id,
           pipeline,
         })),

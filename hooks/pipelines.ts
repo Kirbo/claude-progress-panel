@@ -251,6 +251,29 @@ export function visiblePipelines(list: readonly Pipeline[], entries: readonly Di
   )
 }
 
+/**
+ * The owner's list with the panes' refreshed copies laid over it: per key, a copy checked later
+ * than the owner's entry wins. Copies of keys the owner no longer watches are dropped.
+ */
+export function overlayPipelines(list: Pipeline[], refreshed: readonly Pipeline[]): Pipeline[] {
+  if (refreshed.length === 0) return list
+  const checkedMs = (p: Pipeline) =>
+    p.checkedAt === null ? Number.NEGATIVE_INFINITY : Date.parse(p.checkedAt)
+  return list.map(p => {
+    const copy = refreshed.find(r => r.key === p.key)
+    return copy && copy.checkedAt !== null && checkedMs(copy) > checkedMs(p) ? copy : p
+  })
+}
+
+/**
+ * Unfinished and not checked for longer than `limitMs` (one never checked: since it was added) —
+ * the session watching it stopped polling, so any pane picks it up.
+ */
+export function isOrphaned(p: Pipeline, nowMs: number, limitMs: number): boolean {
+  if (isFinished(p.state)) return false
+  return nowMs - Date.parse(p.checkedAt ?? p.addedAt) > limitMs
+}
+
 /** The jobs grouped by stage, stages in the order they first appear (pipeline order). */
 export function stageGroups(jobs: readonly PipelineJob[]): { stage: string; jobs: PipelineJob[] }[] {
   const groups: { stage: string; jobs: PipelineJob[] }[] = []
