@@ -6,6 +6,7 @@ import {
   dismissTasks,
   formatClock,
   formatTime,
+  isBlank,
   mergeSidecar,
   newSession,
   parseSessionFile,
@@ -190,4 +191,16 @@ test('formatTime: HH:MM today, date and time otherwise', () => {
 
 test('formatClock: local HH:MM:SS', () => {
   expect(formatClock(new Date(2026, 10, 6, 9, 5, 7).getTime())).toBe('09:05:07')
+})
+
+test('isBlank: nothing reported — no tasks, now, asks or pipelines; any one of them is something', () => {
+  const blank = fresh()
+  expect(isBlank(blank)).toBe(true)
+  expect(isBlank({ ...blank, now: '' })).toBe(true)
+  expect(isBlank({ ...blank, dismissed: ['t1'], seq: 1 })).toBe(true)
+  expect(isBlank({ ...blank, now: 'Reading' })).toBe(false)
+  expect(isBlank({ ...blank, needsYou: ['Pick'] })).toBe(false)
+  expect(isBlank({ ...blank, tasks: [task({})] })).toBe(false)
+  const pipelines = [{ key: 'g/p#1' }] as unknown as SessionFile['pipelines']
+  expect(isBlank({ ...blank, pipelines })).toBe(false)
 })

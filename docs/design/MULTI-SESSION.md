@@ -67,6 +67,11 @@ per session, `<session-id>.json`, written only whole:
   so a pane may read a half-written file. An unreadable file keeps its last good copy and is
   re-read on the next tick — the group never flickers out and its asks are never re-toasted.
 - Forgetting an ended session deletes both its files.
+- **A blank session is never stored or shown** (0.11.0, asked for 2026-11-07: sessions that never
+  reported anything piled up in the pane). Blank = no task, no `now`, no ask, no pipeline. A
+  session's file is created by its first `progress_update`, not at start; a session still blank
+  at `session.end` deletes its file and sidecar instead of stamping `endedAt`; any pane deletes an
+  ended blank file it finds (older versions wrote one at start), and the pane skips a live blank one.
 
 ## Writing: the `progress_update` tool
 

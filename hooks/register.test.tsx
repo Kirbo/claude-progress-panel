@@ -195,14 +195,51 @@ test('resolveProgressDir: the option wins, ~ expands, else <config dir>/progress
   expect(resolveProgressDir('', {})).toBeUndefined()
 })
 
-test('a session registers its tool and writes its own file, named after its repo', async ($, on) => {
+test('a session writes its own file, named after its repo, on its first report — not before', async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
   await start($)
+  expect(disk.files.has(`${DIR}/s-me.json`)).toBe(false)
 
+  await update($, { now: 'Reading' })
   const file = read(disk, `${DIR}/s-me.json`)
   expect(file.session).toMatchObject({ id: 's-me', project: 'app', cwd: '/w/app/sub', endedAt: null })
   expect(file.tasks).toEqual([])
+})
+
+test('a session that reported nothing leaves nothing behind; one emptied before its end is deleted', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await $.session.end({ reason: 'clear' } as never)
+  expect([...disk.files.keys()]).toEqual([])
+
+  world.switchId('s-next')
+  await update($, { tasks: [{ title: 'Try', status: 'doing' }] })
+  await update($, { remove: ['t1'] })
+  expect(disk.files.has(`${DIR}/s-next.json`)).toBe(true)
+  await $.session.end({ reason: 'exit' } as never)
+  expect(disk.files.has(`${DIR}/s-next.json`)).toBe(false)
+  expect(disk.removed).toContain(`${DIR}/s-next.dismissed.json`)
+})
+
+test('blank sessions never show: an ended one is deleted by any pane, a live one is skipped', async ($, on) => {
+  const disk = makeDisk()
+  const ended = other('s-ended', 'ended', T0 - HOUR, {})
+  ended.session.endedAt = new Date(T0 - HOUR / 2).toISOString()
+  put(disk, `${DIR}/s-ended.json`, ended)
+  put(disk, `${DIR}/s-idle.json`, other('s-idle', 'idle', T0 - HOUR, {}))
+  put(disk, `${DIR}/s-busy.json`, other('s-busy', 'busy', T0 - HOUR, { now: 'Working' }))
+  engine(on, disk)
+  await start($)
+
+  expect(disk.removed).toEqual([`${DIR}/s-ended.json`, `${DIR}/s-ended.dismissed.json`])
+  expect(disk.files.has(`${DIR}/s-idle.json`)).toBe(true)
+  const ui = await pane($)
+  expect(await ui.find({ type: 'Button', key: 'group:s-idle' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'group:s-me' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'group:s-busy' })).toBeTruthy()
+  await ui.unmount()
 })
 
 test('progress_update patches the file and answers with the task list', async ($, on) => {
@@ -414,6 +451,7 @@ test('session.end stamps endedAt; /clear moves on to a fresh file under the new 
   const disk = makeDisk()
   const world = engine(on, disk)
   await start($)
+  await update($, { now: 'before clear' })
   await $.session.end({ reason: 'clear' } as never)
   expect(read(disk, `${DIR}/s-me.json`).session.endedAt).not.toBeNull()
 
@@ -427,7 +465,7 @@ test(
   { options: { autoClearDoneHours: '1', keepEndedSessionsDays: '1' } },
   async ($, on) => {
     const disk = makeDisk()
-    const gone = other('s-gone', 'gone', T0 - 3 * 24 * HOUR, {})
+    const gone = other('s-gone', 'gone', T0 - 3 * 24 * HOUR, { now: 'Was here' })
     gone.session.endedAt = new Date(T0 - 2 * 24 * HOUR).toISOString()
     put(disk, `${DIR}/s-gone.json`, gone)
     const world = engine(on, disk)
@@ -478,6 +516,7 @@ test('CLAUDE_CONFIG_DIR moves the store', async ($, on) => {
   const disk = makeDisk()
   engine(on, disk, { env: { HOME: '/home/me', CLAUDE_CONFIG_DIR: '/cfg' } })
   await start($)
+  await update($, { now: 'x' })
   expect(disk.files.has('/cfg/progress/s-me.json')).toBe(true)
 })
 
@@ -485,6 +524,7 @@ test('the progressDir option names the folder', { options: { progressDir: '~/sta
   const disk = makeDisk()
   engine(on, disk)
   await start($)
+  await update($, { now: 'x' })
   expect(disk.files.has('/home/me/status/s-me.json')).toBe(true)
 })
 
@@ -494,6 +534,7 @@ test('an unreadable file in the folder is skipped, not fatal', async ($, on) => 
   disk.files.set(`${DIR}/notes.txt`, { text: 'x', mtimeMs: 1 })
   engine(on, disk)
   await start($)
+  await update($, { now: 'x' })
   const ui = await pane($)
   expect(await ui.find({ type: 'Button', key: 'group:s-me' })).toBeTruthy()
   await ui.unmount()
@@ -513,7 +554,7 @@ test('/progress reopens the pane', async ($, on) => {
 
 test('an ended session can be forgotten with its ✕; Windows deletes with del', async ($, on) => {
   const disk = makeDisk()
-  const ended = other('s-old', 'old', T0 - HOUR, {})
+  const ended = other('s-old', 'old', T0 - HOUR, { now: 'Was here' })
   ended.session.endedAt = new Date(T0 - HOUR / 2).toISOString()
   put(disk, '/Users/me/.claude/progress/s-old.json', ended)
   const world = engine(on, disk, { env: { USERPROFILE: '/Users/me', OS: 'Windows_NT' } })
@@ -568,25 +609,26 @@ test('the header says when the pane last checked, and flags a check that stopped
   const world = engine(on, disk)
   await start($)
   await update($, { now: 'x' })
+  await world.clock.advance(2000)
   const clock = (ms: number) => {
     const d = new Date(ms)
     return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':')
   }
 
   let ui = await pane($)
-  expect((await texts(ui))[0]).toMatch(new RegExp(`· checked ${clock(T0)}$`))
+  expect((await texts(ui))[0]).toMatch(new RegExp(`· checked ${clock(T0 + 2000)}$`))
   await ui.unmount()
 
   await world.clock.advance(4000)
   ui = await pane($)
-  expect((await texts(ui))[0]).toMatch(new RegExp(`· checked ${clock(T0 + 4000)}$`))
+  expect((await texts(ui))[0]).toMatch(new RegExp(`· checked ${clock(T0 + 6000)}$`))
   await ui.unmount()
 
   disk.listFails = true
   await world.clock.advance(12_000)
   ui = await pane($)
   const header = await ui.find({ type: 'Text', text: /checked/ })
-  expect(header?.text).toMatch(new RegExp(`· checked ${clock(T0 + 4000)} \\(stale\\)$`))
+  expect(header?.text).toMatch(new RegExp(`· checked ${clock(T0 + 6000)} \\(stale\\)$`))
   await ui.unmount()
 })
 

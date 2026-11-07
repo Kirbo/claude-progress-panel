@@ -10,6 +10,7 @@ import {
   applyUpdate,
   formatClock,
   formatTime,
+  isBlank,
   isClosed,
   mergeSidecar,
   newSession,
@@ -327,7 +328,9 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
   const keepDays = optionNumber(options, 'keepEndedSessionsDays', 7)
   for (const { file } of Object.values(next)) {
     const ended = file.session.endedAt
-    if (ended !== null && keepDays > 0 && Date.parse(ended) < nowMs - keepDays * DAY_MS) {
+    const expired = keepDays > 0 && ended !== null && Date.parse(ended) < nowMs - keepDays * DAY_MS
+    // An ended session with nothing in it (left by an older version, or auto-cleared empty) goes too.
+    if (ended !== null && (expired || isBlank(file))) {
       await forgetSession($, options, file.session.id)
       continue
     }
@@ -557,6 +560,8 @@ async function markEnded($: EngineInterface, options: PluginOptions): Promise<vo
   const dir = await progressDir($, options)
   if (!dir) return
   const file = await ownFile($, dir)
+  // Nothing to look back on: the session leaves no file (nor sidecar) behind.
+  if (isBlank(file)) return forgetSession($, options, file.session.id)
   await save($, dir, { ...file, session: { ...file.session, endedAt: await nowIso($) } })
 }
 
@@ -600,10 +605,11 @@ function lastActivity(file: SessionFile): number {
   return Date.parse(file.session.endedAt ?? file.updatedAt) || 0
 }
 
-// This session first, then live sessions by newest update, then ended ones by when they ended.
+// Sessions with something in them: this session first, then live sessions by newest update, then ended ones by when they ended.
 function orderSessions(all: Loaded, me: string): SessionFile[] {
   return Object.values(all)
     .map(s => s.file)
+    .filter(f => !isBlank(f))
     .sort((a, b) => {
       if (a.session.id === me) return -1
       if (b.session.id === me) return 1
@@ -623,8 +629,11 @@ export const register: Register = (on, options) => {
       inputSchema: INPUT_SCHEMA,
       isDeferred: false,
     })
+    // A session's file is created by its first report, never blank (a session that reports
+    // nothing leaves nothing behind); a resumed session's existing file is kept as it is.
     const dir = await progressDir($, options)
-    if (dir) await save($, dir, await ownFile($, dir))
+    const own = dir ? await ownFile($, dir) : undefined
+    if (dir && own && !isBlank(own)) await save($, dir, own)
     await scan($, options)
     $.clock.every(REFRESH_MS, () => void scan($, options))
     $.clock.every(PIPELINE_POLL_MS, () => void pollPipelines($, options))

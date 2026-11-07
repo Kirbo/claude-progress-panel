@@ -182,6 +182,13 @@ export function parseSidecar(text: string): SidecarFile | undefined {
   return { version: 1, sessionId: f.sessionId, entries }
 }
 
+/** Nothing reported: no task, no "now", no ask, no pipeline — a session like this is never stored or shown. */
+export function isBlank(file: SessionFile): boolean {
+  return (
+    file.tasks.length === 0 && !file.now && file.needsYou.length === 0 && (file.pipelines ?? []).length === 0
+  )
+}
+
 /** Auto-clear: done tasks finished more than `hours` ago go (0 = never). Same object when nothing goes. */
 export function pruneDone(file: SessionFile, hours: number, nowMs: number): SessionFile {
   if (hours <= 0) return file
