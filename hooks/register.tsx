@@ -2,6 +2,7 @@ import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 
 import type { Folds, Loaded, SortChoice } from '../types'
+import { apiHost, parseRemote } from './forges'
 import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
 import { t } from './i18n'
 import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
@@ -401,9 +402,19 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
   const dir = await progressDir($, options)
   if (!dir) return t('tool.noDir')
   const at = await nowIso($)
+  // A watch of the session's own repo takes its host from the `origin` remote.
+  const remote = input.watch?.length
+    ? parseRemote((await $.session.repo().catch(() => null))?.remote)
+    : undefined
   const { updated, watched, file } = await exclusive(async () => {
     const updated = applyUpdate(await ownFile($, dir), input, at)
-    const watched = applyWatch(updated.file.pipelines ?? [], input.watch ?? [], input.unwatch ?? [], at)
+    const watched = applyWatch(
+      updated.file.pipelines ?? [],
+      input.watch ?? [],
+      input.unwatch ?? [],
+      at,
+      remote,
+    )
     const file = { ...updated.file, pipelines: watched.list }
     await save($, dir, file)
     return { updated, watched, file }
@@ -417,14 +428,17 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
     : text
 }
 
-// One `<cli> api <path>` (`glab` for GitLab, `gh` for GitHub): the JSON text, or the CLI's error
-// as one line.
+// One `<cli> api [--hostname <host>] <path>` (`glab` for GitLab, `gh` for GitHub): the JSON text,
+// or the CLI's error as one line. The host is always named when known, so the answer never depends
+// on the repo the command happens to run in.
 async function cliApi(
   $: EngineInterface,
   cli: 'glab' | 'gh',
   path: string,
+  host: string | undefined,
 ): Promise<{ text?: string; error?: string }> {
-  const ran = await $.process.run([cli, 'api', path]).catch((err: unknown) => ({
+  const argv = host ? [cli, 'api', '--hostname', host, path] : [cli, 'api', path]
+  const ran = await $.process.run(argv).catch((err: unknown) => ({
     exitCode: 127,
     stdout: '',
     stderr: err instanceof Error ? err.message : String(err),
@@ -434,8 +448,8 @@ async function cliApi(
   return { error: line || `${cli} exited ${ran.exitCode}` }
 }
 
-const glabApi = ($: EngineInterface, path: string) => cliApi($, 'glab', path)
-const ghApi = ($: EngineInterface, path: string) => cliApi($, 'gh', path)
+const glabApi = ($: EngineInterface, path: string, host: string | undefined) => cliApi($, 'glab', path, host)
+const ghApi = ($: EngineInterface, path: string, host: string | undefined) => cliApi($, 'gh', path, host)
 
 type CachedEstimate = { atMs: number; s: number | null; jobs?: Record<string, number> }
 type Estimates = { s: number | null; jobs: Record<string, number> }
@@ -445,6 +459,7 @@ type Estimates = { s: number | null; jobs: Record<string, number> }
 // jobs call per sample run (at most 5), cached afterwards.
 async function estimateFor(
   $: EngineInterface,
+  host: string | undefined,
   project: string,
   ref: string,
   source: string | undefined,
@@ -452,7 +467,7 @@ async function estimateFor(
   nowMs: number,
 ): Promise<Estimates> {
   // `estimate2:` — 0.8.0 read durations from the list (GitLab has none there) and cached nulls.
-  const key = `estimate2:${project}@${ref}:${source ?? '*'}`
+  const key = `estimate2:${host && host !== 'gitlab.com' ? `${host}/` : ''}${project}@${ref}:${source ?? '*'}`
   const cached = (await $.store.get(key)) as CachedEstimate | undefined
   if (cached && typeof cached.atMs === 'number' && nowMs - cached.atMs < ESTIMATE_TTL_MS)
     return { s: cached.s ?? null, jobs: cached.jobs ?? {} }
@@ -461,15 +476,20 @@ async function estimateFor(
     `projects/${encodeURIComponent(project)}/pipelines?ref=${encodeURIComponent(ref)}&status=success${
       source ? `&source=${encodeURIComponent(source)}` : ''
     }&per_page=6`,
+    host,
   )
   if (list.text === undefined) return { s: null, jobs: {} }
   const durations: number[] = []
   const runs: PipelineJob[][] = []
   for (const id of parseSampleIds(list.text, exceptId)) {
-    const head = await glabApi($, `projects/${encodeURIComponent(project)}/pipelines/${id}`)
+    const head = await glabApi($, `projects/${encodeURIComponent(project)}/pipelines/${id}`, host)
     const d = head.text === undefined ? undefined : parsePipeline(head.text)?.durationS
     if (typeof d === 'number' && d > 0) durations.push(d)
-    const jobs = await glabApi($, `projects/${encodeURIComponent(project)}/pipelines/${id}/jobs?per_page=100`)
+    const jobs = await glabApi(
+      $,
+      `projects/${encodeURIComponent(project)}/pipelines/${id}/jobs?per_page=100`,
+      host,
+    )
     const parsed = jobs.text === undefined ? undefined : parseJobs(jobs.text)
     if (parsed) runs.push(parsed)
   }
@@ -484,6 +504,7 @@ async function estimateFor(
 // job name from those runs' jobs; cached like GitLab's.
 async function ghEstimateFor(
   $: EngineInterface,
+  host: string | undefined,
   project: string,
   workflowId: number,
   ref: string,
@@ -491,7 +512,7 @@ async function ghEstimateFor(
   exceptId: number,
   nowMs: number,
 ): Promise<Estimates> {
-  const key = `estimate-gh:${project}@${workflowId}:${ref}:${event ?? '*'}`
+  const key = `estimate-gh:${host && host !== 'github.com' ? `${host}/` : ''}${project}@${workflowId}:${ref}:${event ?? '*'}`
   const cached = (await $.store.get(key)) as CachedEstimate | undefined
   if (cached && typeof cached.atMs === 'number' && nowMs - cached.atMs < ESTIMATE_TTL_MS)
     return { s: cached.s ?? null, jobs: cached.jobs ?? {} }
@@ -500,12 +521,13 @@ async function ghEstimateFor(
     `repos/${project}/actions/workflows/${workflowId}/runs?branch=${encodeURIComponent(ref)}${
       event ? `&event=${encodeURIComponent(event)}` : ''
     }&status=success&per_page=6`,
+    host,
   )
   if (list.text === undefined) return { s: null, jobs: {} }
   const samples = ghEstimateSamples(list.text, exceptId)
   const runs: PipelineJob[][] = []
   for (const { id } of samples) {
-    const jobs = await ghApi($, `repos/${project}/actions/runs/${id}/jobs?per_page=100`)
+    const jobs = await ghApi($, `repos/${project}/actions/runs/${id}/jobs?per_page=100`, host)
     const parsed = jobs.text === undefined ? undefined : parseGhJobs(jobs.text)
     if (parsed) runs.push(parsed)
   }
@@ -523,17 +545,27 @@ async function refreshGithubRun($: EngineInterface, p: Pipeline, at: string): Pr
       ? await ghApi(
           $,
           `repos/${p.project}/actions/runs?head_sha=${encodeURIComponent(p.sha ?? '')}&per_page=1`,
+          apiHost(p),
         )
-      : await ghApi($, `repos/${p.project}/actions/runs/${p.id}`)
+      : await ghApi($, `repos/${p.project}/actions/runs/${p.id}`, apiHost(p))
   const parsed = head.text === undefined ? undefined : parseGhRun(head.text)
   if (!parsed && p.id === null && !head.error) return { ...p, checkedAt: at }
   if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'gh: unreadable workflow run' }
   const id = parsed.id
   const estimate =
     p.estimateS == null && parsed.ref && parsed.workflowId !== undefined && !isFinished(parsed.state)
-      ? await ghEstimateFor($, p.project, parsed.workflowId, parsed.ref, parsed.source, id, Date.parse(at))
+      ? await ghEstimateFor(
+          $,
+          apiHost(p),
+          p.project,
+          parsed.workflowId,
+          parsed.ref,
+          parsed.source,
+          id,
+          Date.parse(at),
+        )
       : undefined
-  const jobsText = await ghApi($, `repos/${p.project}/actions/runs/${id}/jobs?per_page=100`)
+  const jobsText = await ghApi($, `repos/${p.project}/actions/runs/${id}/jobs?per_page=100`, apiHost(p))
   const jobs: PipelineJob[] = (jobsText.text === undefined ? undefined : parseGhJobs(jobsText.text)) ?? p.jobs
   return merged(p, parsed, id, estimate, jobs, jobsText.error, at)
 }
@@ -575,8 +607,12 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
   // By commit, GitLab's list answer already carries the newest pipeline's status: no second call.
   const head =
     p.id === null
-      ? await glabApi($, `projects/${project}/pipelines?sha=${encodeURIComponent(p.sha ?? '')}&per_page=1`)
-      : await glabApi($, `projects/${project}/pipelines/${p.id}`)
+      ? await glabApi(
+          $,
+          `projects/${project}/pipelines?sha=${encodeURIComponent(p.sha ?? '')}&per_page=1`,
+          apiHost(p),
+        )
+      : await glabApi($, `projects/${project}/pipelines/${p.id}`, apiHost(p))
   const parsed = head.text === undefined ? undefined : parsePipeline(head.text)
   // Not created yet (a fresh push): no error, try again next round.
   if (!parsed && p.id === null && !head.error) return { ...p, checkedAt: at }
@@ -584,9 +620,9 @@ async function refreshPipeline($: EngineInterface, p: Pipeline, at: string): Pro
   const id = parsed.id
   const estimate =
     p.estimateS == null && parsed.ref && !isFinished(parsed.state)
-      ? await estimateFor($, p.project, parsed.ref, parsed.source, id, Date.parse(at))
+      ? await estimateFor($, apiHost(p), p.project, parsed.ref, parsed.source, id, Date.parse(at))
       : undefined
-  const jobsText = await glabApi($, `projects/${project}/pipelines/${id}/jobs?per_page=100`)
+  const jobsText = await glabApi($, `projects/${project}/pipelines/${id}/jobs?per_page=100`, apiHost(p))
   const jobs: PipelineJob[] = (jobsText.text === undefined ? undefined : parseJobs(jobsText.text)) ?? p.jobs
   return merged(p, parsed, id, estimate, jobs, jobsText.error, at)
 }

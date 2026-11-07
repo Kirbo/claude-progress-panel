@@ -2,6 +2,8 @@
 // session's own timer fetches them through `glab` (register.tsx).
 
 import type { Dismissal, JobState, Pipeline, PipelineJob, PipelineProvider } from '../types'
+import type { Remote } from './forges'
+import { defaultHost, watchHost } from './forges'
 import { baseName } from './paths'
 
 export type { JobState, Pipeline, PipelineJob, PipelineProvider }
@@ -14,11 +16,27 @@ export type WatchInput = {
   run?: number
   sha?: string
   label?: string
+  /** The forge's host (self-hosted GitLab, GitHub Enterprise, Gitea/Forgejo); default: the
+   *  session's remote host when the watch is that repo, else the forge's public host. */
+  host?: string
 }
 
-/** A watched pipeline's key: GitLab's `project#id` / `project@sha`, GitHub's with a `gh:` prefix. */
-export function pipelineKey(provider: PipelineProvider, project: string, ref: string): string {
-  return `${provider === 'github' ? 'gh:' : ''}${project}${ref}`
+const PROVIDERS: readonly PipelineProvider[] = ['gitlab', 'github', 'gitea', 'command']
+const KEY_PREFIX: Record<PipelineProvider, string> = {
+  gitlab: '',
+  github: 'gh:',
+  gitea: 'gt:',
+  command: 'ci:',
+}
+
+/**
+ * A watched pipeline's key: GitLab's `project#id` / `project@sha`; GitHub's, Gitea's and a custom
+ * command's with a `gh:` / `gt:` / `ci:` prefix; a host other than the forge's public one leads
+ * the project (`git.example.com/team/app#7`).
+ */
+export function pipelineKey(provider: PipelineProvider, project: string, ref: string, host?: string): string {
+  const where = host && host !== defaultHost(provider) ? `${host}/` : ''
+  return `${KEY_PREFIX[provider]}${where}${project}${ref}`
 }
 
 const QUEUED = new Set(['created', 'pending', 'waiting_for_resource', 'preparing', 'scheduled'])
@@ -196,6 +214,7 @@ export function applyWatch(
   watch: readonly WatchInput[],
   unwatch: readonly string[],
   nowIso: string,
+  remote?: Remote,
 ): { list: Pipeline[]; errors: string[] } {
   const errors: string[] = []
   let next = [...list]
@@ -205,29 +224,43 @@ export function applyWatch(
   }
   watch.forEach((w, i) => {
     const provider = w.provider ?? 'gitlab'
-    if (provider !== 'gitlab' && provider !== 'github') {
-      errors.push(`watch[${i}]: unknown provider ${String(provider)} (gitlab or github)`)
+    if (!PROVIDERS.includes(provider)) {
+      errors.push(`watch[${i}]: unknown provider ${String(provider)} (gitlab, github, gitea or command)`)
       return
     }
     const project = (w.project ?? '').trim()
     if (!project) {
       errors.push(
-        `watch[${i}]: a pipeline needs a project (${provider === 'github' ? 'owner/repo' : 'group/name'})`,
+        `watch[${i}]: a pipeline needs a project (${provider === 'gitlab' ? 'group/name' : provider === 'command' ? 'a name your command knows' : 'owner/repo'})`,
       )
       return
     }
-    const given = provider === 'github' ? (w.run ?? w.pipeline) : w.pipeline
+    // A custom command gets the project as an argument: never one that reads as an option.
+    if (project.startsWith('-')) {
+      errors.push(`watch[${i}]: a project may not start with "-"`)
+      return
+    }
+    const isRun = provider === 'github' || provider === 'gitea'
+    const given = isRun ? (w.run ?? w.pipeline) : w.pipeline
     const id = typeof given === 'number' && given > 0 ? given : null
     const sha = w.sha?.trim()
     if (id === null && !sha) {
-      errors.push(`watch[${i}]: give a ${provider === 'github' ? 'run' : 'pipeline'} id or a commit sha`)
+      errors.push(`watch[${i}]: give a ${isRun ? 'run' : 'pipeline'} id or a commit sha`)
       return
     }
-    const key = pipelineKey(provider, project, id !== null ? `#${id}` : `@${sha}`)
+    const host = provider === 'command' ? undefined : watchHost(w.host, project, remote)
+    if (provider === 'gitea' && !host) {
+      errors.push(
+        `watch[${i}]: a Gitea/Forgejo pipeline needs a host (or watch it from a session in that repo)`,
+      )
+      return
+    }
+    const key = pipelineKey(provider, project, id !== null ? `#${id}` : `@${sha}`, host)
     if (next.some(p => p.key === key)) return
     next.push({
       key,
-      ...(provider === 'github' ? { provider } : {}),
+      ...(provider !== 'gitlab' ? { provider } : {}),
+      ...(host ? { host } : {}),
       project,
       id,
       ...(sha ? { sha } : {}),

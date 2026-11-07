@@ -52,7 +52,11 @@ function read(disk: Disk, path: string): SessionFile {
 }
 
 // Stands in for the engine: one session (s-me) in repo /w/app, a mocked clock, a tiny disk.
-function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: string } = {}) {
+function engine(
+  on: On,
+  disk: Disk,
+  opts: { env?: Record<string, string>; id?: string; remote?: string | null } = {},
+) {
   const clock = mock.clock(on, { now: T0 })
   const store = new Map<string, unknown>()
   on('store.get', (_, e) => ({ value: store.get(e.key) }))
@@ -79,7 +83,7 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
   on('session.end', () => ({ sessionId: id }))
   on('session.id', () => ({ value: id }))
   on('session.cwd', () => ({ value: '/w/app/sub' }))
-  on('session.repo', () => ({ value: { root: '/w/app', remote: null } }) as never)
+  on('session.repo', () => ({ value: { root: '/w/app', remote: opts.remote ?? null } }) as never)
   on('tool.call', () => ({ result: {} }))
   // The engine's own system prompt, beneath the plugin's hook.
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' }] }))
@@ -125,9 +129,13 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
       net.onHeld?.()
       await net.hold
     }
+    // `<cli> api [--hostname <host>] <path>`: answered by `<host> <path>`, else by `<path>` alone.
+    const path = e.argv[e.argv.length - 1] as string
+    const host = e.argv[2] === '--hostname' ? (e.argv[3] as string) : undefined
+    const answer = (forge: Map<string, unknown>) => forge.get(`${host} ${path}`) ?? forge.get(path)
     if (e.argv[0] === 'gh') {
       // `gh api <path>`: answered from the fake GitHub (or the CLI's 404 when the path is unknown).
-      const body = github.get(e.argv[2] as string)
+      const body = answer(github)
       return {
         value:
           body === undefined
@@ -137,7 +145,7 @@ function engine(on: On, disk: Disk, opts: { env?: Record<string, string>; id?: s
     }
     if (e.argv[0] === 'glab') {
       // `glab api <path>`: answered from the fake GitLab (or a CLI failure when the path is unknown).
-      const body = gitlab.get(e.argv[2] as string)
+      const body = answer(gitlab)
       return {
         value:
           body === undefined
@@ -766,7 +774,7 @@ test('the session polls its unfinished pipelines every 15 s and stops once they 
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
   // The pipeline + jobs reads (the one similar-runs lookup for the estimate is not a poll).
   const calls = () =>
-    world.runs.filter(r => r[0] === 'glab' && !(r[2] ?? '').includes('status=success')).length
+    world.runs.filter(r => r[0] === 'glab' && !(r[r.length - 1] ?? '').includes('status=success')).length
   expect(calls()).toBe(2)
 
   world.gitlab.set(PIPE, { id: 42, status: 'failed', ref: 'main' })
@@ -819,6 +827,40 @@ test('an update sent while the session polls its pipeline is never overwritten b
   expect(file.tasks[0]).toMatchObject({ id: 't1', status: 'done' })
   expect(file.now).toBe('shipped')
   expect(file.pipelines?.[0]).toMatchObject({ key: 'g/app#42', state: 'success' })
+})
+
+test("every forge call names its host: the remote's for the session's own repo, else the public one", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk, { remote: 'git@git.example.com:team/app.git' })
+  const own = 'projects/team%2Fapp/pipelines/7'
+  world.gitlab.set(`git.example.com ${own}`, { id: 7, status: 'running', ref: 'main' })
+  world.gitlab.set(`git.example.com ${own}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  world.github.set('ghe.example.com repos/o/r/actions/runs/9', {
+    id: 9,
+    status: 'in_progress',
+    head_branch: 'main',
+  })
+  world.github.set('ghe.example.com repos/o/r/actions/runs/9/jobs?per_page=100', { jobs: [] })
+  await start($)
+  await update($, {
+    watch: [
+      { project: 'team/app', pipeline: 7 },
+      { provider: 'github', project: 'o/r', run: 9, host: 'ghe.example.com' },
+      { project: 'g/app', pipeline: 42 },
+    ],
+  })
+  const heads = world.runs.filter(r => /pipelines\/(7|42)$|runs\/9$/.test(r[r.length - 1] ?? ''))
+  expect(heads).toEqual([
+    ['glab', 'api', '--hostname', 'git.example.com', own],
+    ['gh', 'api', '--hostname', 'ghe.example.com', 'repos/o/r/actions/runs/9'],
+    ['glab', 'api', '--hostname', 'gitlab.com', 'projects/g%2Fapp/pipelines/42'],
+  ])
+  const keys = read(disk, `${DIR}/s-me.json`).pipelines?.map(p => [p.key, p.state])
+  expect(keys).toEqual([
+    ['git.example.com/team/app#7', 'running'],
+    ['gh:ghe.example.com/o/r#9', 'running'],
+    ['g/app#42', 'unknown'],
+  ])
 })
 
 test('a pipeline watched by commit is found once GitLab has it', async ($, on) => {
@@ -917,7 +959,7 @@ function sidecarFile(disk: Disk, id: string): { entries: { id: string }[]; pipel
 }
 
 const glabCalls = (runs: string[][], path: string) =>
-  runs.filter(r => r[0] === 'glab' && r[2] === path).length
+  runs.filter(r => r[0] === 'glab' && r[r.length - 1] === path).length
 
 test("a stopped session's unfinished pipeline is refreshed by any pane, into its sidecar", async ($, on) => {
   const disk = makeDisk()
@@ -1236,7 +1278,7 @@ test('a running pipeline shows elapsed / estimate, the estimate fetched once and
   )
   await ui.unmount()
   const listCalls = () =>
-    world.runs.filter(r => r[0] === 'glab' && (r[2] ?? '').includes('status=success')).length
+    world.runs.filter(r => r[0] === 'glab' && (r[r.length - 1] ?? '').includes('status=success')).length
   expect(listCalls()).toBe(1)
 
   // A later poll, and a second pipeline of the same kind, reuse the estimate.

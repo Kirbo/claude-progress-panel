@@ -276,7 +276,7 @@ test('applyWatch: a GitHub run by id or by commit, keyed apart from GitLab (gh:o
     ['gh:Kirbo/switchboard-ha@8e6b5df', 'github', null, 'ha'],
     ['Kirbo/switchboard-ha#42328151166', undefined, 42328151166, 'switchboard-ha'],
   ])
-  expect(errors).toEqual(['watch[4]: unknown provider bitbucket (gitlab or github)'])
+  expect(errors).toEqual(['watch[4]: unknown provider bitbucket (gitlab, github, gitea or command)'])
 })
 
 function watched(over: Partial<Pipeline> = {}): Pipeline {
@@ -315,4 +315,56 @@ test('isOrphaned: unfinished and not checked for longer than the limit (never ch
   expect(isOrphaned(watched({ state: 'unknown' }), T0 + HOUR_MS, limit)).toBe(true)
   expect(isOrphaned(watched({ state: 'success' }), T0 + HOUR_MS, limit)).toBe(false)
   expect(isOrphaned(watched({ state: 'failed' }), T0 + HOUR_MS, limit)).toBe(false)
+})
+
+test('applyWatch: a host from the watch or the remote; keys carry it unless it is the public one', () => {
+  const remote = { host: 'git.example.com', path: 'team/app' }
+  const { list, errors } = applyWatch(
+    [],
+    [
+      // The session's own repo on a self-hosted GitLab: its host comes from the remote.
+      { project: 'team/app', pipeline: 7 },
+      // Another repo, host given; GitHub Enterprise likewise.
+      { project: 'team/lib', pipeline: 8, host: 'https://git.example.com/' },
+      { provider: 'github', project: 'o/r', run: 9, host: 'ghe.example.com' },
+      // The public hosts: stored, but the keys read as before 0.14.0.
+      { project: 'g/pub', pipeline: 10, host: 'gitlab.com' },
+      { provider: 'github', project: 'o/pub', run: 11 },
+    ],
+    [],
+    iso(T0),
+    remote,
+  )
+  expect(errors).toEqual([])
+  expect(list.map(p => [p.key, p.host])).toEqual([
+    ['git.example.com/team/app#7', 'git.example.com'],
+    ['git.example.com/team/lib#8', 'git.example.com'],
+    ['gh:ghe.example.com/o/r#9', 'ghe.example.com'],
+    ['g/pub#10', 'gitlab.com'],
+    ['gh:o/pub#11', undefined],
+  ])
+})
+
+test('applyWatch: Gitea/Forgejo needs a host; a custom CI command takes any project name', () => {
+  const { list, errors } = applyWatch(
+    [],
+    [
+      { provider: 'gitea', project: 'team/app', run: 5, host: 'codeberg.org' },
+      { provider: 'gitea', project: 'team/app', sha: 'abc' },
+      { provider: 'command', project: 'jenkins/nightly', pipeline: 12 },
+      { provider: 'command', project: 'jenkins/nightly', sha: 'def', label: 'nightly' },
+      { provider: 'command', project: '-rf', pipeline: 1 },
+    ],
+    [],
+    iso(T0),
+  )
+  expect(list.map(p => [p.key, p.provider, p.host, p.label])).toEqual([
+    ['gt:codeberg.org/team/app#5', 'gitea', 'codeberg.org', 'app'],
+    ['ci:jenkins/nightly#12', 'command', undefined, 'nightly'],
+    ['ci:jenkins/nightly@def', 'command', undefined, 'nightly'],
+  ])
+  expect(errors).toEqual([
+    'watch[1]: a Gitea/Forgejo pipeline needs a host (or watch it from a session in that repo)',
+    'watch[4]: a project may not start with "-"',
+  ])
 })

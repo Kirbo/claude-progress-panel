@@ -36,7 +36,7 @@ export type PipelineJob = {
 }
 
 /** Where a watched pipeline lives: GitLab CI (the default) or GitHub Actions. */
-export type PipelineProvider = 'gitlab' | 'github'
+export type PipelineProvider = 'gitlab' | 'github' | 'gitea' | 'command'
 
 /**
  * A CI pipeline the session watches; the session's own timer refreshes it through `glab` (GitLab)
@@ -49,6 +49,8 @@ export type Pipeline = {
   key: string
   /** Absent = GitLab (every pipeline written before 0.10.0). */
   provider?: PipelineProvider
+  /** The forge host its calls go to (absent: the forge's public host — gitlab.com, github.com). */
+  host?: string
   project: string
   id: number | null
   sha?: string
