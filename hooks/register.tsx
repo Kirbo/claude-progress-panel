@@ -86,6 +86,10 @@ let seenNeeds: Set<string> | undefined
 // Every read-modify-write of this session's own file runs one at a time: a timer's poll and a tool
 // call interleave at each await, and the later save would put a stale copy over the other's change.
 let ownChain: Promise<unknown> = Promise.resolve()
+
+// The name Claude Code gives this session (`/rename`, a resumed session's title), as the classic
+// SessionStart / UserPromptSubmit events last carried it; the plugin API has no call for it.
+let sessionTitle: string | undefined
 function exclusive<T>(work: () => Promise<T>): Promise<T> {
   const run = ownChain.then(work, work)
   ownChain = run.catch(() => undefined)
@@ -247,13 +251,32 @@ async function ownFile($: EngineInterface, dir: string): Promise<SessionFile> {
   const existing = text === undefined ? undefined : parseSessionFile(text)
   if (existing) {
     const sidecar = await readSidecar($, dir, id)
-    const merged = mergeSidecar(existing, sidecar.entries)
+    const merged = withTitle(mergeSidecar(existing, sidecar.entries))
     const pipelines = overlayPipelines(merged.pipelines ?? [], sidecar.pipelines)
     return { ...merged, pipelines: visiblePipelines(pipelines, sidecar.entries) }
   }
   const cwd = await $.session.cwd()
   const repo = await $.session.repo().catch(() => null)
-  return newSession({ id, project: baseName(repo?.root ?? cwd), cwd }, await nowIso($))
+  return withTitle(newSession({ id, project: baseName(repo?.root ?? cwd), cwd }, await nowIso($)))
+}
+
+function withTitle(file: SessionFile): SessionFile {
+  return sessionTitle && file.session.title !== sessionTitle
+    ? { ...file, session: { ...file.session, title: sessionTitle } }
+    : file
+}
+
+// A title the classic events carried: remembered, and written at once when the session has a file
+// (one that reported nothing still writes nothing).
+async function noteTitle($: EngineInterface, options: PluginOptions, title: unknown): Promise<void> {
+  if (typeof title !== 'string' || !title.trim() || title.trim() === sessionTitle) return
+  sessionTitle = title.trim()
+  const dir = await progressDir($, options)
+  if (!dir) return
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    if (!isBlank(own)) await save($, dir, own)
+  })
 }
 
 // A press (✕ / Clear all) on any session's rows: the completions go to that session's sidecar, never
@@ -287,13 +310,18 @@ async function forgetSession($: EngineInterface, options: PluginOptions, id: str
   })
 }
 
+/** How the pane names a session: Claude Code's name for it, else its repo / folder. */
+function sessionName(file: SessionFile): string {
+  return file.session.title || file.session.project
+}
+
 function liveNeeds(all: Loaded): { project: string; item: string; key: string }[] {
   return Object.values(all)
     .filter(s => s.file.session.endedAt === null)
     .sort((a, b) => Date.parse(b.file.updatedAt) - Date.parse(a.file.updatedAt))
     .flatMap(s =>
       s.file.needsYou.map(item => ({
-        project: s.file.session.project,
+        project: sessionName(s.file),
         item,
         key: `${s.file.session.id}\u0000${item}`,
       })),
@@ -784,6 +812,17 @@ export const register: Register = (on, options) => {
     }
   })
 
+  // The session's name (the plugin API has none): SessionStart carries a resumed session's title,
+  // UserPromptSubmit the current one, so a `/rename` shows from the next prompt on.
+  on('classic.SessionStart', async ($, e, next) => {
+    await noteTitle($, options, (e as { session_title?: unknown }).session_title)
+    return next(e)
+  })
+  on('classic.UserPromptSubmit', async ($, e, next) => {
+    await noteTitle($, options, (e as { session_title?: unknown }).session_title)
+    return next(e)
+  })
+
   on('session.end', async ($, e, next) => {
     await markEnded($, options)
     return next(e)
@@ -1059,7 +1098,7 @@ export const register: Register = (on, options) => {
       const doneKey = `done:${id}`
       const isOpen = folded[groupKey] ?? ended === null
       const isDoneOpen = folded[doneKey] ?? false
-      const name = id === me ? t('pane.thisSession', { project: file.session.project }) : file.session.project
+      const name = id === me ? t('pane.thisSession', { project: sessionName(file) }) : sessionName(file)
       const label = t(ended === null ? 'pane.groupLive' : 'pane.groupEnded', {
         fold: isOpen ? '▾' : '▸',
         name,
@@ -1125,7 +1164,7 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         <Text dimColor>
-          {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs), project: newest.session.project })} · `}
+          {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs), project: sessionName(newest) })} · `}
           {nowMs - lastCheck > STALE_AFTER_MS ? (
             <Text color="yellow">{t('pane.checkedStale', { when: formatClock(lastCheck) })}</Text>
           ) : (
@@ -1154,7 +1193,7 @@ export const register: Register = (on, options) => {
                 .filter(f => f.now)
                 .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
                 .map(f => (
-                  <Text>{t('pane.nowItem', { project: f.session.project, now: f.now ?? '' })}</Text>
+                  <Text>{t('pane.nowItem', { project: sessionName(f), now: f.now ?? '' })}</Text>
                 ))}
             </Box>
           </Box>

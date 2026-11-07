@@ -85,6 +85,9 @@ function engine(
   on('session.cwd', () => ({ value: '/w/app/sub' }))
   on('session.repo', () => ({ value: { root: '/w/app', remote: opts.remote ?? null } }) as never)
   on('tool.call', () => ({ result: {} }))
+  // The engine beneath the classic hooks the plugin reads (they answer nothing of their own).
+  on('classic.UserPromptSubmit', () => ({}) as never)
+  on('classic.SessionStart', () => ({}) as never)
   // The engine's own system prompt, beneath the plugin's hook.
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' }] }))
   on('fs.list', (_, e) => {
@@ -250,6 +253,45 @@ test('resolveProgressDir: the option wins, ~ expands, else <config dir>/progress
   expect(resolveProgressDir('', { home: '/h', configDir: '/cfg/' })).toBe('/cfg/progress')
   expect(resolveProgressDir('  ', { home: 'C:\\Users\\me' })).toBe('C:\\Users\\me/.claude/progress')
   expect(resolveProgressDir('', {})).toBeUndefined()
+})
+
+test('a session is shown by the name Claude Code gives it, and follows a rename', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, { now: 'testing', needsYou: ['an OK'] })
+  let ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ app \(this session\)/)
+  await ui.unmount()
+
+  // `/rename` reaches the plugin with the next prompt (UserPromptSubmit carries the title).
+  await $.classic.UserPromptSubmit({ prompt: 'go on', session_title: 'Switchboard + Panel' } as never)
+  expect(read(disk, `${DIR}/s-me.json`).session).toMatchObject({
+    project: 'app',
+    title: 'Switchboard + Panel',
+  })
+  ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(
+    /^▾ Switchboard \+ Panel \(this session\)/,
+  )
+  const lines = await texts(ui)
+  expect(lines).toContain('Switchboard + Panel · testing')
+  expect(lines).toContain('• Switchboard + Panel: an OK')
+  await ui.unmount()
+
+  // A prompt without a title (an unnamed session) keeps the one it has.
+  await $.classic.UserPromptSubmit({ prompt: 'more' } as never)
+  expect(read(disk, `${DIR}/s-me.json`).session.title).toBe('Switchboard + Panel')
+})
+
+test('a resumed session takes its name from SessionStart; one that reported nothing still writes nothing', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await $.classic.SessionStart({ source: 'resume', session_title: 'Named' } as never)
+  expect(disk.files.has(`${DIR}/s-me.json`)).toBe(false)
+  await update($, { now: 'x' })
+  expect(read(disk, `${DIR}/s-me.json`).session.title).toBe('Named')
 })
 
 test('a session writes its own file, named after its repo, on its first report — not before', async ($, on) => {

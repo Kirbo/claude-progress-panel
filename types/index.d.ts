@@ -16,6 +16,8 @@ export type Task = {
 export type SessionInfo = {
   id: string
   project: string
+  /** Claude Code's name for the session (`/rename`, a resumed title); the pane shows it over `project`. */
+  title?: string
   cwd: string
   startedAt: string
   endedAt: string | null
