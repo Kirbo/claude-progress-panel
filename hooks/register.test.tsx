@@ -156,10 +156,14 @@ function engine(
   const tea: { logins: unknown[]; api: Map<string, unknown> } = { logins: [], api: new Map() }
   // Any other program (a custom CI command): its stdout by the whole argv joined with spaces.
   const programs = new Map<string, string>()
+  // A forge CLI call that fails as given, by its API path (before any forge answer).
+  const failures = new Map<string, { exitCode: number; stdout: string; stderr: string }>()
   // While set, every forge call waits on it: a slow network the test releases by hand.
   const net: { hold?: Promise<void>; onHeld?: () => void } = {}
   on('process.run', async (_, e) => {
     runs.push([...e.argv])
+    const failure = failures.get(e.argv[e.argv.length - 1] as string)
+    if (failure) return { value: failure } as never
     if (net.hold && (e.argv[0] === 'glab' || e.argv[0] === 'gh')) {
       net.onHeld?.()
       await net.hold
@@ -221,6 +225,7 @@ function engine(
     agents,
     opened,
     programs,
+    failures,
     net,
     web,
     fetched,
@@ -1819,6 +1824,45 @@ test('a glab failure shows on the pipeline instead of breaking the pane', async 
   await update($, { watch: [{ project: 'g/none', pipeline: 9 }] })
   const ui = await pane($)
   expect(await texts(ui)).toContain('glab: 404 Not Found')
+  await ui.unmount()
+})
+
+test('a CLI that fails with its answer on stdout shows a short error, never the answer', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'failed', ref: 'main' })
+  const body = JSON.stringify(jobsOf(['check', 'failed']))
+  world.failures.set(`${PIPE}/jobs?per_page=100`, { exitCode: 1, stdout: body, stderr: '' })
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toBe('glab exited 1')
+})
+
+test('a long error stored earlier shows clipped to one short line', async ($, on) => {
+  const disk = makeDisk()
+  const theirs = other('s-other', 'site', T0, {})
+  theirs.pipelines = [
+    {
+      key: 'g/site#7',
+      project: 'g/site',
+      id: 7,
+      label: 'site',
+      state: 'failed',
+      ref: 'main',
+      jobs: [{ name: 'deploy', stage: 'deploy', state: 'failed', durationS: 61 }],
+      addedAt: new Date(T0).toISOString(),
+      checkedAt: new Date(T0).toISOString(),
+      finishedAt: new Date(T0).toISOString(),
+      error: `[${'x'.repeat(5000)}]`,
+    },
+  ]
+  put(disk, `${DIR}/s-other.json`, theirs)
+  engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  const shown = (await texts(ui)).filter(line => line.includes('xxx'))
+  expect(shown.length).toBe(1)
+  expect(shown[0]?.length).toBeLessThan(250)
   await ui.unmount()
 })
 

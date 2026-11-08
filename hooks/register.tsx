@@ -49,6 +49,7 @@ import {
   jobCounts,
   jobEstimatesFrom,
   NO_PIPELINE_HINT_MS,
+  oneLine,
   overlayPipelines,
   parseCommitSha,
   parseJobs,
@@ -768,7 +769,8 @@ function agentsLine(file: SessionFile): string | undefined {
   return t('tool.agents', { list: parts.join('; ') })
 }
 
-// One CLI call: its output, or its error as one line.
+// One CLI call: its output, or its error as one short line — from stderr only: stdout is the API's
+// answer (a whole jobs list once stood in for the error), never a message.
 async function runCli($: EngineInterface, argv: string[]): Promise<{ text?: string; error?: string }> {
   const ran = await $.process.run(argv).catch((err: unknown) => ({
     exitCode: 127,
@@ -776,8 +778,7 @@ async function runCli($: EngineInterface, argv: string[]): Promise<{ text?: stri
     stderr: err instanceof Error ? err.message : String(err),
   }))
   if (ran.exitCode === 0) return { text: ran.stdout }
-  const line = (ran.stderr || ran.stdout).trim().split('\n').pop() ?? ''
-  return { error: line || `${argv[0]} exited ${ran.exitCode}` }
+  return { error: oneLine(ran.stderr) || `${argv[0]} exited ${ran.exitCode}` }
 }
 
 // One `<cli> api [--hostname <host>] <path>` (`glab` for GitLab, `gh` for GitHub): the JSON text,
@@ -1440,7 +1441,7 @@ export const register: Register = (on, options) => {
             </Box>
           </Box>
           <Box flexDirection="column" paddingLeft={INDENT * 2}>
-            {p.error ? <Text color="red">{p.error}</Text> : null}
+            {p.error ? <Text color="red">{oneLine(p.error)}</Text> : null}
             {/* A success folds to its one header line; anything else keeps its counts line. */}
             {counts.total > 0 && (isOpen || p.state !== 'success') ? (
               <Text>

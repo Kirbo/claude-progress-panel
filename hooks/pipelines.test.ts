@@ -13,6 +13,7 @@ import {
   jobEstimatesFrom,
   jobState,
   NO_PIPELINE_HINT_MS,
+  oneLine,
   overlayPipelines,
   parseCommitSha,
   parseJobs,
@@ -420,4 +421,12 @@ test('shouldPoll: every unfinished pipeline; a failed / canceled one for 2 h aft
   expect(
     shouldPoll(watched({ state: 'success', finishedAt: ended, checkedAt: ended }), T0 + RETRY_CHECK_MS),
   ).toBe(false)
+})
+
+test('oneLine keeps the last non-empty line, clipped', () => {
+  expect(oneLine('warning: x\nglab: 404 Not Found\n\n')).toBe('glab: 404 Not Found')
+  expect(oneLine('  ')).toBe('')
+  const long = oneLine('y'.repeat(500))
+  expect(long.length).toBe(200)
+  expect(long.endsWith('…')).toBe(true)
 })

@@ -90,6 +90,22 @@ export function formatDuration(seconds: number | null): string {
   return `${Math.floor(s / 3600)}h${pad(Math.floor((s % 3600) / 60))}m`
 }
 
+const ERROR_MAX = 200
+
+/**
+ * A CLI's message as one short line: its last non-empty line, clipped to 200 characters ('' when
+ * there is none). Never fed a forge CLI's stdout — that is the API's answer, not a message.
+ */
+export function oneLine(text: string): string {
+  const line =
+    text
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .pop() ?? ''
+  return line.length > ERROR_MAX ? `${line.slice(0, ERROR_MAX - 1)}…` : line
+}
+
 function json(text: string): unknown {
   try {
     return JSON.parse(text)
