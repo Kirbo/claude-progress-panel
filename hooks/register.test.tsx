@@ -1569,7 +1569,7 @@ test('a pipeline unfolded while it ran folds again once it finishes; a press ope
   await ui.unmount()
 })
 
-test('the session polls its unfinished pipelines every 15 s and stops once they finish', async ($, on) => {
+test('the session polls an unfinished pipeline every 15 s; once failed, only once a minute (a retry)', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
   world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
@@ -1589,8 +1589,11 @@ test('the session polls its unfinished pipelines every 15 s and stops once they 
   expect(p).toMatchObject({ state: 'failed', jobs: [{ name: 'lint', state: 'failed' }] })
   expect(p?.finishedAt).toBeTruthy()
 
-  await world.clock.advance(60_000)
+  // Failed: no longer every 15 s, but once a minute for a while (a retry would restart it).
+  await world.clock.advance(30_000)
   expect(calls()).toBe(4)
+  await world.clock.advance(30_000)
+  expect(calls()).toBe(6)
 
   const ui = await pane($)
   expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe(
@@ -1783,6 +1786,30 @@ test('a watch whose commit has no pipeline says so after 10 minutes instead of w
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toMatch(
     /^no pipeline for commit bbbbbbbbbbbb after 10 min/,
   )
+})
+
+test('a failed pipeline that is retried shows running again, then its new outcome', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'failed', ref: 'main', finished_at: new Date(T0).toISOString() })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['check', 'failed']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ state: 'failed' })
+
+  // Someone presses Retry: the job runs again.
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['check', 'running']))
+  await world.clock.advance(60_000)
+  const live = read(disk, `${DIR}/s-me.json`).pipelines?.[0]
+  expect(live).toMatchObject({ state: 'running' })
+  expect(live?.finishedAt).toBeUndefined()
+  expect(live?.pipelineFinishedAt).toBeUndefined()
+
+  world.gitlab.set(PIPE, { id: 42, status: 'success', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['check', 'success']))
+  await world.clock.advance(15_000)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ state: 'success' })
 })
 
 test('a glab failure shows on the pipeline instead of breaking the pane', async ($, on) => {

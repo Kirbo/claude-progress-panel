@@ -153,6 +153,11 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   `unwatch` (keys) maintain the session file's `pipelines` list: key (`project#id`, or
   `project@sha` until found), state, ref, url, jobs (`name`, `stage`, `state`, `durationS`),
   `addedAt`, `checkedAt`, `finishedAt`, `error`.
+- **A retried pipeline is followed again** (0.21.1): a failed or canceled pipeline is still
+  re-checked once a minute for 2 h after it ended (`shouldPoll`), since a Retry turns it back into
+  a running one; then it shows running again (its old finish times cleared) and finally its new
+  outcome. A success is never re-checked. (2026-11-08: a retried pipeline stayed "failed" in the
+  pane while its retry ran and passed.)
 - A by-commit watch with an **abbreviated sha** (GitLab's `pipelines?sha=` and GitHub's
   `runs?head_sha=` match only the whole id) is resolved once through the forge's commit API
   (`repository/commits/<sha>`, `commits/<sha>`) and kept whole; the key stays as watched, so an

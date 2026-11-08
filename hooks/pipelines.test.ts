@@ -20,6 +20,9 @@ import {
   parseSampleIds,
   pipelineDuration,
   progressBar,
+  RETRY_CHECK_MS,
+  RETRY_WATCH_MS,
+  shouldPoll,
   stageGroups,
   stillWaiting,
   visiblePipelines,
@@ -401,4 +404,20 @@ test('stillWaiting drops an old error, and says so once the watch has waited 10 
   expect(early.error).toBeUndefined()
   expect(early.checkedAt).toBe(iso(T0 + 60_000))
   expect(stillWaiting(p, iso(T0 + NO_PIPELINE_HINT_MS + 1), 'none yet').error).toBe('none yet')
+})
+
+test('shouldPoll: every unfinished pipeline; a failed / canceled one for 2 h after it ended, once a minute', () => {
+  const ended = iso(T0)
+  expect(shouldPoll(watched({ state: 'running' }), T0)).toBe(true)
+  const failed = watched({ state: 'failed', finishedAt: ended, checkedAt: ended })
+  expect(shouldPoll(failed, T0 + 30_000)).toBe(false)
+  expect(shouldPoll(failed, T0 + RETRY_CHECK_MS)).toBe(true)
+  expect(
+    shouldPoll(watched({ state: 'canceled', finishedAt: ended, checkedAt: ended }), T0 + RETRY_CHECK_MS),
+  ).toBe(true)
+  expect(shouldPoll(failed, T0 + RETRY_WATCH_MS + 1)).toBe(false)
+  // A success never comes back.
+  expect(
+    shouldPoll(watched({ state: 'success', finishedAt: ended, checkedAt: ended }), T0 + RETRY_CHECK_MS),
+  ).toBe(false)
 })

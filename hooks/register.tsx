@@ -56,6 +56,7 @@ import {
   parseSampleIds,
   pipelineDuration,
   progressBar,
+  shouldPoll,
   stageGroups,
   stillWaiting,
   visiblePipelines,
@@ -928,7 +929,11 @@ function merged(
   jobsError: string | undefined,
   at: string,
 ): Pipeline {
-  const { error: _cleared, ...rest } = p
+  const { error: _cleared, ...kept } = p
+  // Back to running (a retry of a failed or canceled pipeline): its old finish times go, so it reads
+  // as live again and its fold resets with the new run.
+  const { finishedAt: _f, pipelineFinishedAt: _g, ...live } = kept
+  const rest = isFinished(parsed.state) ? kept : live
   return {
     ...rest,
     id,
@@ -1008,9 +1013,10 @@ async function refreshPipeline(
 async function pollPipelines($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
-  const unfinished = ((await ownFile($, dir)).pipelines ?? []).filter(p => !isFinished(p.state))
-  if (unfinished.length === 0) return
   const at = await nowIso($)
+  // Unfinished ones, and a failed / canceled one for a while after it ended (a retry restarts it).
+  const unfinished = ((await ownFile($, dir)).pipelines ?? []).filter(p => shouldPoll(p, Date.parse(at)))
+  if (unfinished.length === 0) return
   // The forge calls take seconds and run outside the lock; only their results are written, onto the
   // file as it is by then (a task, a watch or an unwatch sent meanwhile stays).
   const fresh: Pipeline[] = []

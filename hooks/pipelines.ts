@@ -344,3 +344,19 @@ export function stillWaiting(p: Pipeline, at: string, hint: string): Pipeline {
   const waited = Date.parse(at) - Date.parse(p.addedAt)
   return waited > NO_PIPELINE_HINT_MS ? { ...rest, checkedAt: at, error: hint } : { ...rest, checkedAt: at }
 }
+
+/** How long a failed or canceled pipeline is still re-checked after it finished — a retry turns it
+ *  back into a running one — and how often (2026-11-08: a retried pipeline stayed "failed" in the
+ *  pane while its retry ran and passed). */
+export const RETRY_WATCH_MS = 2 * 3_600_000
+export const RETRY_CHECK_MS = 60_000
+
+/** Whether a poll round asks the forge about `p` now: every unfinished pipeline; a failed or
+ *  canceled one within RETRY_WATCH_MS of finishing, at most every RETRY_CHECK_MS. */
+export function shouldPoll(p: Pipeline, nowMs: number): boolean {
+  if (!isFinished(p.state)) return true
+  if (p.state !== 'failed' && p.state !== 'canceled') return false
+  const ended = Date.parse(p.finishedAt ?? '') || 0
+  const checked = Date.parse(p.checkedAt ?? '') || 0
+  return nowMs - ended < RETRY_WATCH_MS && nowMs - checked >= RETRY_CHECK_MS
+}
