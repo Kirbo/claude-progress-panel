@@ -317,3 +317,30 @@ export function stageGroups(jobs: readonly PipelineJob[]): { stage: string; jobs
   }
   return groups
 }
+
+/** A whole commit id (SHA-1's 40 or SHA-256's 64 hex digits) — what every forge's by-commit
+ *  pipeline / run filter matches; an abbreviated one finds nothing. */
+export function isFullSha(sha: string | undefined): boolean {
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha ?? '')
+}
+
+/** The full commit id in a forge's commit answer (GitLab `id`, GitHub `sha`), if whole. */
+export function parseCommitSha(text: string): string | undefined {
+  const raw = json(text) as Record<string, unknown> | undefined
+  const sha = raw && typeof raw === 'object' ? (raw.sha ?? raw.id) : undefined
+  return typeof sha === 'string' && isFullSha(sha) ? sha : undefined
+}
+
+/** How long a by-commit watch waits quietly for its pipeline before saying it has found none. */
+export const NO_PIPELINE_HINT_MS = 10 * 60_000
+
+/**
+ * A by-commit watch that found no pipeline this round: checked, any earlier error dropped (it was
+ * about a call that has since answered), and — once it has waited NO_PIPELINE_HINT_MS — a note
+ * instead of an endless "unknown 0/0" (2026-11-08: a watch by an abbreviated sha waited forever).
+ */
+export function stillWaiting(p: Pipeline, at: string, hint: string): Pipeline {
+  const { error: _dropped, ...rest } = p
+  const waited = Date.parse(at) - Date.parse(p.addedAt)
+  return waited > NO_PIPELINE_HINT_MS ? { ...rest, checkedAt: at, error: hint } : { ...rest, checkedAt: at }
+}

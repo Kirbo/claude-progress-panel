@@ -153,6 +153,12 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   `unwatch` (keys) maintain the session file's `pipelines` list: key (`project#id`, or
   `project@sha` until found), state, ref, url, jobs (`name`, `stage`, `state`, `durationS`),
   `addedAt`, `checkedAt`, `finishedAt`, `error`.
+- A by-commit watch with an **abbreviated sha** (GitLab's `pipelines?sha=` and GitHub's
+  `runs?head_sha=` match only the whole id) is resolved once through the forge's commit API
+  (`repository/commits/<sha>`, `commits/<sha>`) and kept whole; the key stays as watched, so an
+  `unwatch` by it still works. While no pipeline exists the watch waits quietly, any earlier error
+  dropped; after 10 minutes it says "no pipeline for commit … — is the sha right?" (0.20.1; before,
+  a short sha showed `unknown 0/0` forever, under the last error any call had hit).
 - **Push is not possible** from GitLab to a local plugin: webhooks need a reachable HTTP server,
   and GitLab's own live updates (GraphQL subscriptions over ActionCable) need a browser websocket
   session; the plugin API has neither. So the **watching session** polls through the user's

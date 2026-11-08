@@ -44,16 +44,20 @@ import {
   formatDuration,
   formatEstimate,
   isFinished,
+  isFullSha,
   isOrphaned,
   jobCounts,
   jobEstimatesFrom,
+  NO_PIPELINE_HINT_MS,
   overlayPipelines,
+  parseCommitSha,
   parseJobs,
   parsePipeline,
   parseSampleIds,
   pipelineDuration,
   progressBar,
   stageGroups,
+  stillWaiting,
   visiblePipelines,
 } from './pipelines'
 import { isNewer, latestReleaseUrl, parseLatestRelease } from './update'
@@ -873,7 +877,12 @@ async function refreshGithubRun($: EngineInterface, p: Pipeline, at: string): Pr
         )
       : await ghApi($, `repos/${p.project}/actions/runs/${p.id}`, apiHost(p))
   const parsed = head.text === undefined ? undefined : parseGhRun(head.text)
-  if (!parsed && p.id === null && !head.error) return { ...p, checkedAt: at }
+  // As GitLab's (refreshPipeline): an abbreviated sha resolved once, else wait, then say so.
+  if (!parsed && p.id === null && !head.error) {
+    const full = await fullSha($, p)
+    if (full) return refreshGithubRun($, { ...p, sha: full }, at)
+    return stillWaiting(p, at, noneYet(p))
+  }
   if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'gh: unreadable workflow run' }
   const id = parsed.id
   const estimate =
@@ -924,6 +933,23 @@ function merged(
   }
 }
 
+// The whole commit id behind a watch's abbreviated sha (GitLab / GitHub commit API), or undefined:
+// already whole, not found, or the forge could not say — the watch then simply keeps waiting.
+async function fullSha($: EngineInterface, p: Pipeline): Promise<string | undefined> {
+  if (!p.sha || isFullSha(p.sha)) return undefined
+  const sha = encodeURIComponent(p.sha)
+  const answer =
+    p.provider === 'github'
+      ? await ghApi($, `repos/${p.project}/commits/${sha}`, apiHost(p))
+      : await glabApi($, `projects/${encodeURIComponent(p.project)}/repository/commits/${sha}`, apiHost(p))
+  const full = answer.text === undefined ? undefined : parseCommitSha(answer.text)
+  return full && full !== p.sha ? full : undefined
+}
+
+function noneYet(p: Pipeline): string {
+  return t('pipe.noneYet', { sha: (p.sha ?? '').slice(0, 12), minutes: NO_PIPELINE_HINT_MS / 60_000 })
+}
+
 // Fetches one pipeline's head and jobs (finding it by commit first, when only the sha is known).
 async function refreshPipeline(
   $: EngineInterface,
@@ -945,8 +971,13 @@ async function refreshPipeline(
         )
       : await glabApi($, `projects/${project}/pipelines/${p.id}`, apiHost(p))
   const parsed = head.text === undefined ? undefined : parsePipeline(head.text)
-  // Not created yet (a fresh push): no error, try again next round.
-  if (!parsed && p.id === null && !head.error) return { ...p, checkedAt: at }
+  // None by this commit yet (a fresh push) — or an abbreviated sha, which GitLab's filter never
+  // matches: resolved to the whole id once and asked again; else wait quietly, then say so.
+  if (!parsed && p.id === null && !head.error) {
+    const full = await fullSha($, p)
+    if (full) return refreshPipeline($, options, { ...p, sha: full }, at)
+    return stillWaiting(p, at, noneYet(p))
+  }
   if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'glab: unreadable pipeline' }
   const id = parsed.id
   const estimate =

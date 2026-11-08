@@ -94,7 +94,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 
 ### Pipelines
 
-The agent `watch`es a CI run by id, or by commit sha before the run exists, and the pane follows it
+The agent `watch`es a CI run by id, or by commit sha (whole or abbreviated) before the run exists,
+and the pane follows it
 live: state, a progress bar of finished / all jobs while it runs, how long it has run (beside an
 estimate from up to 5 earlier successful runs of the same branch and trigger, GitLab and GitHub),
 and once finished the counts, the duration and the time it finished — all on the right of the

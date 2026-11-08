@@ -7,17 +7,21 @@ import {
   formatDuration,
   formatEstimate,
   isFinished,
+  isFullSha,
   isOrphaned,
   jobCounts,
   jobEstimatesFrom,
   jobState,
+  NO_PIPELINE_HINT_MS,
   overlayPipelines,
+  parseCommitSha,
   parseJobs,
   parsePipeline,
   parseSampleIds,
   pipelineDuration,
   progressBar,
   stageGroups,
+  stillWaiting,
   visiblePipelines,
 } from './pipelines'
 
@@ -367,4 +371,34 @@ test('applyWatch: Gitea/Forgejo needs a host; a custom CI command takes any proj
     'watch[1]: a Gitea/Forgejo pipeline needs a host (or watch it from a session in that repo)',
     'watch[4]: a project may not start with "-"',
   ])
+})
+
+const SHA40 = '70a2803ab1cc3b4c3b523884dab20e4dde71cd16'
+
+test('isFullSha: a whole SHA-1 or SHA-256 commit id, any case; an abbreviated one is not', () => {
+  expect(isFullSha(SHA40)).toBe(true)
+  expect(isFullSha(SHA40.toUpperCase())).toBe(true)
+  expect(isFullSha('a'.repeat(64))).toBe(true)
+  for (const s of ['70a2803', `${SHA40}0`, 'g'.repeat(40), '', undefined]) expect(isFullSha(s)).toBe(false)
+})
+
+test("parseCommitSha reads GitLab's `id` and GitHub's `sha`, only when whole", () => {
+  expect(parseCommitSha(JSON.stringify({ id: SHA40, short_id: '70a2803' }))).toBe(SHA40)
+  expect(parseCommitSha(JSON.stringify({ sha: SHA40 }))).toBe(SHA40)
+  expect(parseCommitSha(JSON.stringify({ id: '70a2803' }))).toBeUndefined()
+  expect(parseCommitSha('not json')).toBeUndefined()
+})
+
+test('stillWaiting drops an old error, and says so once the watch has waited 10 minutes', () => {
+  const p = watched({
+    key: 'g/a@70a2803',
+    id: null,
+    sha: '70a2803',
+    state: 'unknown',
+    error: 'glab: timed out',
+  })
+  const early = stillWaiting(p, iso(T0 + 60_000), 'none yet')
+  expect(early.error).toBeUndefined()
+  expect(early.checkedAt).toBe(iso(T0 + 60_000))
+  expect(stillWaiting(p, iso(T0 + NO_PIPELINE_HINT_MS + 1), 'none yet').error).toBe('none yet')
 })

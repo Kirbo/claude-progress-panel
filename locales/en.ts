@@ -35,6 +35,7 @@ export const en = {
   'pipe.durationEstimate': ' · {d} / {e}',
   'pipe.ref': ' · {ref}',
   'pipe.noCommand': 'no custom CI command set (plugin settings: Custom CI command)',
+  'pipe.noneYet': 'no pipeline for commit {sha} after {minutes} min — is the sha right?',
   'pipe.dismiss': '  ✕  ',
   // Opens the pipeline's / job's GitLab page in the browser (an OSC 8 link; padded like ✕ for a wider hitbox).
   'pipe.open': ' ↗ ',

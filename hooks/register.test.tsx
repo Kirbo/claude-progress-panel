@@ -1687,6 +1687,41 @@ test('a pipeline watched by commit is found once GitLab has it', async ($, on) =
   })
 })
 
+test('a watch by an abbreviated sha is resolved to the whole commit id and finds its pipeline', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  const full = '70a2803ab1cc3b4c3b523884dab20e4dde71cd16'
+  // GitLab's by-commit filter matches only the whole id: the short one lists nothing.
+  world.gitlab.set('projects/g%2Fapp/pipelines?sha=70a2803&per_page=1', [])
+  world.gitlab.set('projects/g%2Fapp/repository/commits/70a2803', { id: full, short_id: '70a2803' })
+  world.gitlab.set(`projects/g%2Fapp/pipelines?sha=${full}&per_page=1`, [
+    { id: 42, status: 'success', ref: 'main' },
+  ])
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'success']))
+  await update($, { watch: [{ project: 'g/app', sha: '70a2803', label: 'app' }] })
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({
+    key: 'g/app@70a2803',
+    sha: full,
+    id: 42,
+    state: 'success',
+  })
+})
+
+test('a watch whose commit has no pipeline says so after 10 minutes instead of waiting silently', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  const full = 'b'.repeat(40)
+  world.gitlab.set(`projects/g%2Fapp/pipelines?sha=${full}&per_page=1`, [])
+  await update($, { watch: [{ project: 'g/app', sha: full, label: 'app' }] })
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toBeUndefined()
+  await world.clock.advance(11 * 60_000)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toMatch(
+    /^no pipeline for commit bbbbbbbbbbbb after 10 min/,
+  )
+})
+
 test('a glab failure shows on the pipeline instead of breaking the pane', async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
