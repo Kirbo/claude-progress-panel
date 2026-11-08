@@ -106,6 +106,15 @@ export function oneLine(text: string): string {
   return line.length > ERROR_MAX ? `${line.slice(0, ERROR_MAX - 1)}…` : line
 }
 
+/**
+ * A pipeline's stored error as the pane draws it: one short line — or nothing when it is an API
+ * answer (JSON), which 0.21.1 and earlier stored as the error of a CLI that failed with a quiet
+ * stderr; a finished pipeline is never polled again, so that value would otherwise stay.
+ */
+export function shownError(stored: string): string {
+  return /^\s*[[{]/.test(stored) ? '' : oneLine(stored)
+}
+
 function json(text: string): unknown {
   try {
     return JSON.parse(text)

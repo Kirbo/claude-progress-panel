@@ -1853,7 +1853,7 @@ test('a long error stored earlier shows clipped to one short line', async ($, on
       addedAt: new Date(T0).toISOString(),
       checkedAt: new Date(T0).toISOString(),
       finishedAt: new Date(T0).toISOString(),
-      error: `[${'x'.repeat(5000)}]`,
+      error: `glab: ${'x'.repeat(5000)}`,
     },
   ]
   put(disk, `${DIR}/s-other.json`, theirs)
@@ -1863,6 +1863,32 @@ test('a long error stored earlier shows clipped to one short line', async ($, on
   const shown = (await texts(ui)).filter(line => line.includes('xxx'))
   expect(shown.length).toBe(1)
   expect(shown[0]?.length).toBeLessThan(250)
+  await ui.unmount()
+})
+
+test('an API answer stored as an error by 0.21.1 and earlier shows no error line', async ($, on) => {
+  const disk = makeDisk()
+  const theirs = other('s-other', 'site', T0, {})
+  theirs.pipelines = [
+    {
+      key: 'g/site#7',
+      project: 'g/site',
+      id: 7,
+      label: 'site',
+      state: 'failed',
+      ref: 'main',
+      jobs: [{ name: 'deploy', stage: 'deploy', state: 'failed', durationS: 61 }],
+      addedAt: new Date(T0).toISOString(),
+      checkedAt: new Date(T0).toISOString(),
+      finishedAt: new Date(T0).toISOString(),
+      error: JSON.stringify([{ id: 17843656780, status: 'canceled', stage: 'cleanup' }]),
+    },
+  ]
+  put(disk, `${DIR}/s-other.json`, theirs)
+  engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  expect((await texts(ui)).filter(line => line.includes('17843656780'))).toEqual([])
   await ui.unmount()
 })
 

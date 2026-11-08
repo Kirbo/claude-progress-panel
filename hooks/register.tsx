@@ -58,6 +58,7 @@ import {
   pipelineDuration,
   progressBar,
   shouldPoll,
+  shownError,
   stageGroups,
   stillWaiting,
   visiblePipelines,
@@ -1441,7 +1442,7 @@ export const register: Register = (on, options) => {
             </Box>
           </Box>
           <Box flexDirection="column" paddingLeft={INDENT * 2}>
-            {p.error ? <Text color="red">{oneLine(p.error)}</Text> : null}
+            {p.error && shownError(p.error) ? <Text color="red">{shownError(p.error)}</Text> : null}
             {/* A success folds to its one header line; anything else keeps its counts line. */}
             {counts.total > 0 && (isOpen || p.state !== 'success') ? (
               <Text>

@@ -24,6 +24,7 @@ import {
   RETRY_CHECK_MS,
   RETRY_WATCH_MS,
   shouldPoll,
+  shownError,
   stageGroups,
   stillWaiting,
   visiblePipelines,
@@ -429,4 +430,10 @@ test('oneLine keeps the last non-empty line, clipped', () => {
   const long = oneLine('y'.repeat(500))
   expect(long.length).toBe(200)
   expect(long.endsWith('…')).toBe(true)
+})
+
+test('shownError: a stored API answer (JSON) is no message and shows nothing; any other is one line', () => {
+  expect(shownError('[{"id":1,"status":"canceled"}]')).toBe('')
+  expect(shownError('  {"message":"404"}')).toBe('')
+  expect(shownError('glab: 404 Not Found')).toBe('glab: 404 Not Found')
 })
