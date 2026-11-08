@@ -26,6 +26,11 @@ Sessions                              [Sort: status]
 - Every `▾`/`▸` line is a Button that folds its part. Defaults: live sessions open, ended
   sessions folded, every Done section folded. Fold state is per pane (`$.state`).
 - Done rows read `✓ title  YYYY-MM-DD HH:MM  [✕]` (time the task was done, local time).
+- An open Done lists its **newest 10** finished tasks, and the finished agents its newest 5; the
+  rest fold behind `▸ N older` (`capNewest`, 0.20.0). A session's history grows all day — one had
+  70 finished tasks and 59 finished agents by evening — and an open Done that long pushed the Now
+  line and the open tasks out of a 20-row pane, which then looked frozen: the person saw only old
+  finished rows and no live work.
 - "Clear all" shows only while its Done section is open (0.14.0): nothing is cleared unseen.
 - The pane scrolls when taller than its window (the engine's own scrolling).
 - With anything in Needs you, the status line reads `⚠ N need you`; an item that appears from
@@ -112,6 +117,11 @@ with the session's task list (ids, statuses) so the agent can address tasks by i
 There is no file-watch API for plugins, so each session lists the folder every **2 s**
 (`$.clock.every`) and reads a file only when its mtime changed — one directory listing per tick.
 A session's own write redraws at once. (Deliberate poll: push is impossible here.)
+A tick folds its result into the store as it is when the tick ends (`mergeScan`), not as it was
+when it began: a session's own save that landed during the scan's awaits keeps its newer copy
+(it used to be overwritten by the scan's older read until the next tick), and a tick that finds
+the previous scan still running skips, so slow disks never stack scans that land out of order
+(0.20.0).
 The header's `checked HH:MM:SS` is the end of the last successful listing; older than 10 s (five
 missed ticks) it turns yellow with "(stale)" — a failed listing keeps the last known state rather
 than blanking the pane. (Added in 0.3.0, asked for 2026-11-06: "updated" alone could not tell an

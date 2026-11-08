@@ -884,6 +884,64 @@ test('Done folds, shows done times; ✕ / Clear all go to the sidecar and stay g
   await ui.unmount()
 })
 
+test('an open Done lists its newest 10; the older rest folds behind "N older"', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  // 25 tasks finished a minute apart: Task 1 first, Task 25 last.
+  for (let i = 1; i <= 25; i++) {
+    await update($, { tasks: [{ id: `d${i}`, title: `Task ${i}`, status: 'done' }] })
+    await world.clock.advance(60_000)
+  }
+  await update($, { now: 'Working', tasks: [{ id: 'live', title: 'Live work', status: 'doing' }] })
+
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-me' })
+  expect(await ui.find({ type: 'Text', text: /^✓ Task 25 / })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^✓ Task 16 / })).toBeTruthy()
+  expect(await ui.find({ type: 'Text', text: /^✓ Task 15 / })).toBeUndefined()
+  const older = await ui.find({ type: 'Button', key: 'doneolder:s-me' })
+  expect(older?.text).toBe('▸ 15 older')
+  // The live part is still there above it.
+  expect(await texts(ui)).toContain('app · Working')
+
+  await ui.press({ key: 'doneolder:s-me' })
+  expect(await ui.find({ type: 'Text', text: /^✓ Task 1 / })).toBeTruthy()
+  expect((await ui.find({ type: 'Button', key: 'doneolder:s-me' }))?.text).toBe('▾ 15 older')
+  await ui.unmount()
+})
+
+test('finished agents under Done list their newest 5; the older rest folds behind "N older"', async ($, on) => {
+  const disk = makeDisk()
+  const iso = (ms: number) => new Date(ms).toISOString()
+  const file = other('s-me', 'app', T0, { now: 'Busy', tasks: [{ title: 'Work', status: 'doing' }] })
+  file.agents = Array.from({ length: 7 }, (_, i) => ({
+    id: `a${i + 1}`,
+    label: `Lane ${i + 1}`,
+    now: null,
+    tasks: [],
+    seq: 0,
+    startedAt: iso(T0),
+    updatedAt: iso(T0 + i * 60_000),
+    endedAt: iso(T0 + i * 60_000),
+  }))
+  put(disk, `${DIR}/s-me.json`, file)
+  engine(on, disk)
+  await start($)
+
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-me' })
+  await ui.press({ key: 'doneagents:s-me' })
+  const all = await texts(ui)
+  expect(all.some(x => x.startsWith('✓ Lane 7 '))).toBe(true)
+  expect(all.some(x => x.startsWith('✓ Lane 3 '))).toBe(true)
+  expect(all.some(x => x.startsWith('✓ Lane 2 '))).toBe(false)
+  expect((await ui.find({ type: 'Button', key: 'agentsolder:s-me' }))?.text).toBe('▸ 2 older')
+  await ui.press({ key: 'agentsolder:s-me' })
+  expect((await texts(ui)).some(x => x.startsWith('✓ Lane 1 '))).toBe(true)
+  await ui.unmount()
+})
+
 test("✕ on another session's task never writes that session's file", async ($, on) => {
   const disk = makeDisk()
   put(

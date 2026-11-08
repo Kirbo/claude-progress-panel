@@ -9,10 +9,13 @@ import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
 import { t, tn } from './i18n'
 import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
 import {
+  AGENTS_SHOWN,
   addDismissals,
   applyAgentUpdate,
   applyUpdate,
   cancelTasks,
+  capNewest,
+  DONE_SHOWN,
   endAgent,
   formatClock,
   formatTime,
@@ -20,6 +23,7 @@ import {
   isBlank,
   isClosed,
   matchesTask,
+  mergeScan,
   mergeSidecar,
   newSession,
   parseSessionFile,
@@ -492,6 +496,19 @@ async function announce($: EngineInterface, all: Loaded, me: string): Promise<vo
   seenNeeds = new Set(needs.map(n => n.key))
 }
 
+// The 2 s refresh is single-flight: a tick that finds the previous scan still running skips, so
+// slow disks never stack scans that then land out of order.
+let scanning = false
+async function tick($: EngineInterface, options: PluginOptions): Promise<void> {
+  if (scanning) return
+  scanning = true
+  try {
+    await scan($, options)
+  } finally {
+    scanning = false
+  }
+}
+
 // One refresh: list the folder, read what changed, apply retention, update the status line.
 async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
@@ -542,7 +559,7 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
     const known = next[id]
     if (known) next[id] = { ...known, sidecar }
   }
-  await update($, sessions, () => next)
+  await update($, sessions, current => mergeScan(before, current, next))
 
   const nowMs = await $.clock.now()
   const me = await $.session.id()
@@ -1104,7 +1121,7 @@ export const register: Register = (on, options) => {
         if (!isBlank(own)) await save($, dir, own)
       })
     await scan($, options)
-    $.clock.every(REFRESH_MS, () => detached(scan($, options)))
+    $.clock.every(REFRESH_MS, () => detached(tick($, options)))
     $.clock.every(PIPELINE_POLL_MS, () => detached(pollAll($, options)))
     detached(ownManifest($))
     detached(checkRelease($))
@@ -1631,6 +1648,10 @@ export const register: Register = (on, options) => {
       if (finished.length === 0) return null
       const key = `doneagents:${id}`
       const isOpen = folded[key] ?? false
+      const olderKey = `agentsolder:${id}`
+      const isOlderOpen = folded[olderKey] ?? false
+      const capped = capNewest(finished, AGENTS_SHOWN, a => a.endedAt ?? a.updatedAt)
+      const listed = isOlderOpen ? finished : capped.shown
       return (
         <Box flexDirection="column">
           <Button
@@ -1642,7 +1663,7 @@ export const register: Register = (on, options) => {
           />
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT}>
-              {finished.map(a => (
+              {listed.map(a => (
                 <Text dimColor>
                   {t('pane.agentFinished', {
                     label: a.label,
@@ -1650,6 +1671,15 @@ export const register: Register = (on, options) => {
                   })}
                 </Text>
               ))}
+              {capped.older > 0 ? (
+                <Button
+                  key={olderKey}
+                  label={t('pane.olderDone', { fold: isOlderOpen ? '▾' : '▸', count: capped.older })}
+                  plain
+                  dimColor
+                  onPress={() => void toggle($, olderKey, isOlderOpen)}
+                />
+              ) : null}
             </Box>
           ) : null}
         </Box>
@@ -1682,7 +1712,12 @@ export const register: Register = (on, options) => {
         ),
         file.session.project,
       )
-      const doneRepos = groupByRepo(done, file.session.project)
+      // An open Done lists the newest DONE_SHOWN; the rest fold behind "N older" (capNewest).
+      const doneOlderKey = `doneolder:${id}`
+      const isDoneOlderOpen = folded[doneOlderKey] ?? false
+      const doneCapped = capNewest(done, DONE_SHOWN, x => x.doneAt ?? x.updatedAt)
+      const doneListed = isDoneOlderOpen ? done : doneCapped.shown
+      const doneRepos = groupByRepo(doneListed, file.session.project)
       const finishedCount = (file.agents ?? []).filter(a => a.endedAt !== null).length
       const groupKey = `group:${id}`
       const doneKey = `done:${id}`
@@ -1800,7 +1835,19 @@ export const register: Register = (on, options) => {
                           </Box>
                         )
                       })
-                    : done.map(task => doneRow(id, task))}
+                    : doneListed.map(task => doneRow(id, task))}
+                  {doneCapped.older > 0 ? (
+                    <Button
+                      key={doneOlderKey}
+                      label={t('pane.olderDone', {
+                        fold: isDoneOlderOpen ? '▾' : '▸',
+                        count: doneCapped.older,
+                      })}
+                      plain
+                      dimColor
+                      onPress={() => void toggle($, doneOlderKey, isDoneOlderOpen)}
+                    />
+                  ) : null}
                   {finishedAgentsBlock(file)}
                 </Box>
               ) : null}

@@ -81,6 +81,7 @@ export const en = {
   'pane.groupLive': '{fold} {name} · {when} · {open} open · {done} done',
   'pane.groupEnded': '{fold} {name} · ended {when} · {open} open · {done} done',
   'pane.doneSection': '{fold} Done ({count})',
+  'pane.olderDone': '{fold} {count} older',
   'pane.clearAll': 'Clear all',
   'pane.doneItem': '✓ {title}  {when}',
   'pane.skippedItem': '– {title}  {when}',

@@ -3,6 +3,7 @@
 import type {
   AgentEntry,
   Dismissal,
+  Loaded,
   Pipeline,
   SessionFile,
   SessionInfo,
@@ -576,4 +577,47 @@ export function formatTime(iso: string, nowMs: number): string {
   const sameDay =
     d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
   return sameDay ? hm : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`
+}
+
+/**
+ * A scan's result folded into the store as it is NOW, not as it was when the scan began: the scan
+ * read `before`, then listed and read files across several awaits, and a session's own save (a
+ * progress_update answer, a SubagentStop) may have landed in between. Writing the scan's map
+ * wholesale put that session's older copy back over its newer one — the pane showed the past
+ * until the next tick read the file again, and overlapping ticks could land out of order. An entry
+ * the store changed during the scan keeps the store's copy (with the scan's fresher sidecar).
+ */
+export function mergeScan(before: Loaded, current: Loaded, scanned: Loaded): Loaded {
+  const merged: Loaded = { ...scanned }
+  for (const [id, now] of Object.entries(current)) {
+    if (now === before[id]) continue
+    const seen = scanned[id]
+    if (seen && seen.mtimeMs > now.mtimeMs) continue
+    merged[id] = seen?.sidecar ? { ...now, sidecar: seen.sidecar } : now
+  }
+  return merged
+}
+
+/** How many finished tasks / agents an open Done lists before folding the rest behind "N older". */
+export const DONE_SHOWN = 10
+export const AGENTS_SHOWN = 5
+
+/**
+ * The `limit` newest items of `list` (by `stamp`, an ISO time), kept in the list's own order, and
+ * how many older ones fold away. A session's history grows all day — 70 finished tasks and 59
+ * finished agents by one evening — and an open Done that long pushed the Now line and the open
+ * tasks out of a 20-row pane, which then looked frozen. Bounded, the live part always fits.
+ */
+export function capNewest<T>(
+  list: readonly T[],
+  limit: number,
+  stamp: (item: T) => string | null | undefined,
+): { shown: T[]; older: number } {
+  if (list.length <= limit) return { shown: [...list], older: 0 }
+  const keep = new Set(
+    [...list]
+      .sort((a, b) => (Date.parse(stamp(b) ?? '') || 0) - (Date.parse(stamp(a) ?? '') || 0))
+      .slice(0, limit),
+  )
+  return { shown: list.filter(item => keep.has(item)), older: list.length - limit }
 }

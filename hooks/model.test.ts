@@ -5,11 +5,13 @@ import {
   applyAgentUpdate,
   applyUpdate,
   cancelTasks,
+  capNewest,
   dismissTasks,
   formatClock,
   formatTime,
   isBlank,
   matchesTask,
+  mergeScan,
   mergeSidecar,
   newSession,
   parseSessionFile,
@@ -439,4 +441,59 @@ test('syncAgents lists a running subagent that never reports, and finishes one t
   expect(syncAgents(fresh(), [{ id: 'x', description: '', status: 'pending' }], at).agents?.[0]?.label).toBe(
     'x',
   )
+})
+
+test("mergeScan: a save that landed during a scan keeps its newer copy over the scan's older read", () => {
+  const at = iso(T0)
+  const old = newSession({ id: 's', project: 'p', cwd: '/w/p' }, at)
+  const saved = applyUpdate(old, { now: 'newer' }, iso(T0 + 1000)).file
+  const before = { s: { mtimeMs: 1, file: old } }
+  const current = { s: { mtimeMs: 2, file: saved } }
+  // The scan listed the folder before the save: it read mtime 1 and the old file.
+  const scanned = {
+    s: { mtimeMs: 1, file: old, sidecar: { mtimeMs: 5, entries: [], pipelines: [], cancelled: ['t9'] } },
+  }
+  const merged = mergeScan(before, current, scanned)
+  expect(merged.s?.file.now).toBe('newer')
+  expect(merged.s?.mtimeMs).toBe(2)
+  // The scan's sidecar is fresher than anything the save knew: it rides along.
+  expect(merged.s?.sidecar?.cancelled).toEqual(['t9'])
+})
+
+test('mergeScan: unchanged entries take the scan; a newer file on disk beats a stale store copy', () => {
+  const a = newSession({ id: 'a', project: 'p', cwd: '/w/p' }, iso(T0))
+  const b = newSession({ id: 'b', project: 'q', cwd: '/w/q' }, iso(T0))
+  const bNew = applyUpdate(b, { now: 'from disk' }, iso(T0 + 2000)).file
+  const bSaved = applyUpdate(b, { now: 'saved' }, iso(T0 + 1000)).file
+  const before = { a: { mtimeMs: 1, file: a }, b: { mtimeMs: 1, file: b } }
+  const current = { a: before.a, b: { mtimeMs: 2, file: bSaved } }
+  const scanned = { a: { mtimeMs: 3, file: a }, b: { mtimeMs: 4, file: bNew } }
+  const merged = mergeScan(before, current, scanned)
+  expect(merged.a?.mtimeMs).toBe(3)
+  expect(merged.b?.file.now).toBe('from disk')
+})
+
+test('mergeScan: a session first saved during the scan is kept; one the scan no longer lists goes', () => {
+  const fresh = newSession({ id: 'n', project: 'p', cwd: '/w/p' }, iso(T0))
+  const gone = newSession({ id: 'g', project: 'p', cwd: '/w/p' }, iso(T0))
+  const before = { g: { mtimeMs: 1, file: gone } }
+  const current = { g: before.g, n: { mtimeMs: 7, file: fresh } }
+  const merged = mergeScan(before, current, {})
+  expect(Object.keys(merged)).toEqual(['n'])
+})
+
+test('capNewest keeps the newest few in the list order and counts the older rest', () => {
+  const items = [
+    { id: 'a', at: iso(T0 + 1000) },
+    { id: 'b', at: iso(T0 + 5000) },
+    { id: 'c', at: iso(T0) },
+    { id: 'd', at: iso(T0 + 3000) },
+  ]
+  const r = capNewest(items, 2, x => x.at)
+  expect(r.shown.map(x => x.id)).toEqual(['b', 'd'])
+  expect(r.older).toBe(2)
+  // At or under the limit: everything, nothing folded.
+  expect(capNewest(items, 4, x => x.at)).toEqual({ shown: items, older: 0 })
+  // A missing stamp counts as oldest.
+  expect(capNewest([{ id: 'x', at: null }, ...items], 1, x => x.at).shown.map(x => x.id)).toEqual(['b'])
 })

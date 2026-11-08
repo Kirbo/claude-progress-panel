@@ -71,7 +71,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   (`██░░ 3/7`), how long it has run and `~N min left`, and unfolds to what it is on and every step
   with its status and note (a step's own estimate, e.g. `~10 min`). A finished agent moves under the
   session's **Done**, in its own folded **Agents** heading, and stays — nothing is cleaned up
-  automatically. A subagent that cannot report (one without the tool, such as a read-only
+  automatically. An open Done lists the newest 10 finished tasks (and 5 finished agents); older
+  ones fold behind **N older**, so a long day's history never pushes the live work out of view. A subagent that cannot report (one without the tool, such as a read-only
   reviewer) still shows there by its task description while it runs. The coordinator sees its
   running subagents in every `progress_update` answer.
 - **Remove a task** with the `✕` on its row: every pane hides it at once, its session marks it
