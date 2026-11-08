@@ -1,6 +1,6 @@
 # Multi-session progress panel (v0.2)
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0 · task removal, per-list repo groups in 0.16.0 · subagent progress (Agents) in 0.17.0 · pane size settings in 0.18.0 · silent subagents listed in 0.18.1
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0 · task removal, per-list repo groups in 0.16.0 · subagent progress (Agents) in 0.17.0 · pane size settings in 0.18.0 · silent subagents listed in 0.18.1 · agent steps + finished agents under Done in 0.19.0
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -344,3 +344,13 @@ the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when i
 
 - Other machines: the store is local. Mirroring to a shared place stays the agent's job.
 - v0.1's single `progress.json` is not read any more (breaking; noted in the README).
+
+## Agents: their steps, and finished ones under Done (0.19.0)
+
+User, 2026-11-08: "I don't know what it's doing and how it's progressing, nor how long each step is
+expected to last" and "a separate section for the finished agents … under the Done". A running agent
+is a fold (default open) showing its `now` and each of its steps with status and note — the reporting
+rule asks subagents to put each open step's own estimate in its `note` — beside `n/m`, its run time
+(`startedAt` → now) and `~N min left`. The **Agents** section lists only running agents; a finished one
+moves under the session's **Done** into a folded **Agents** heading (Done's count includes them; *Clear
+all* still clears tasks only — agents are never cleaned up automatically).

@@ -537,7 +537,7 @@ test("a subagent's progress lands under its coordinator's session, never among t
       { title: 'read', status: 'done' },
       { title: 'table', status: 'done' },
       { title: 'authz', status: 'done' },
-      { title: 'tests' },
+      { title: 'tests', note: '~5 min' },
     ],
     eta: 5,
   } as never)
@@ -554,13 +554,20 @@ test("a subagent's progress lands under its coordinator's session, never among t
   expect(file.agents?.[0]?.tasks.map(t => t.status)).toEqual(['done', 'done', 'done', 'todo'])
 
   const ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe(
-    '▾ Agents  1 running · 0 finished',
-  )
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe('▾ Agents  1 running')
+  // A running agent opens to its steps — each with its status and note (a per-step estimate) — and
+  // shows how long it has run beside its steps and estimate.
+  expect((await ui.find({ type: 'Button', key: 'agent:s-me:sub-1' }))?.text).toBe('▾ Lane A: scopes')
   const lines = await texts(ui)
-  expect(lines).toContain('● Lane A: scopes')
-  expect(lines).toContain('██████░░ 3/4 · ~5 min left')
+  expect(lines).toContain('██████░░ 3/4 · 0s · ~5 min left')
   expect(lines).toContain('Writing the section table')
+  expect(lines).toContain('✓ read')
+  expect(lines).toContain('○ tests')
+  expect(lines).toContain('~5 min')
+  // Folded, the agent keeps its one line and its steps go.
+  await ui.press({ key: 'agent:s-me:sub-1' })
+  expect((await ui.find({ type: 'Button', key: 'agent:s-me:sub-1' }))?.text).toBe('▸ Lane A: scopes')
+  expect(await texts(ui)).not.toContain('✓ read')
   await ui.unmount()
 
   // The coordinator's own next answer lists its running subagents.
@@ -579,10 +586,8 @@ test('a subagent that never reports (no progress tool) still shows under Agents 
     ['Audit: authz', null],
   ])
   const ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe(
-    '▾ Agents  1 running · 0 finished',
-  )
-  expect(await texts(ui)).toContain('● Audit: authz')
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe('▾ Agents  1 running')
+  expect((await ui.find({ type: 'Button', key: 'agent:s-me:rev-1' }))?.text).toBe('▾ Audit: authz')
   await ui.unmount()
   // The list says it ended: finished on the next scan, even without a SubagentStop.
   world.agents[0] = { ...world.agents[0], status: 'completed' } as (typeof world.agents)[number]
@@ -615,10 +620,12 @@ test('a subagent that stops is marked finished and folded under Agents — and s
   } as never)
   expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.endedAt).toBe(new Date(T0).toISOString())
   const ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe(
-    '▸ Agents  0 running · 1 finished',
-  )
-  await ui.press({ key: 'agents:s-me' })
+  // A finished agent leaves the running section and moves under Done, in its own folded "Agents".
+  expect(await ui.find({ type: 'Button', key: 'agents:s-me' })).toBeUndefined()
+  expect((await ui.find({ type: 'Button', key: 'done:s-me' }))?.text).toBe('▸ Done (1)')
+  await ui.press({ key: 'done:s-me' })
+  expect((await ui.find({ type: 'Button', key: 'doneagents:s-me' }))?.text).toBe('▸ Agents  1')
+  await ui.press({ key: 'doneagents:s-me' })
   expect((await texts(ui)).some(l => l.startsWith('✓ Lane B: the rest'))).toBe(true)
   await ui.unmount()
   const mine = await update($, { now: 'still here' })

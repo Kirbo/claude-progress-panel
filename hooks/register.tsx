@@ -1544,56 +1544,105 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
-    // The session's subagents: running ones with their steps and estimate, finished ones folded.
+    // The session's subagents: the running ones in their own section, each folding open to its steps
+    // (status + note — a step's own estimate) beside its progress, run time and estimate; the finished
+    // ones in a second section, folded by default.
     const agentsBlock = (file: SessionFile) => {
       const agents = file.agents ?? []
-      if (agents.length === 0) return null
       const id = file.session.id
       const running = agents.filter(a => a.endedAt === null)
-      const finishedList = agents.filter(a => a.endedAt !== null)
-      const key = `agents:${id}`
-      const isOpen = folded[key] ?? running.length > 0
+      if (running.length === 0) return null
+      const runKey = `agents:${id}`
+      const runOpen = folded[runKey] ?? true
+      const agentRow = (a: (typeof agents)[number]) => {
+        const key = `agent:${id}:${a.id}`
+        const isOpen = folded[key] ?? true
+        const closed = a.tasks.filter(x => isClosed(x.status)).length
+        const steps =
+          a.tasks.length > 0
+            ? t('pane.agentSteps', {
+                bar: progressBar(closed, a.tasks.length),
+                done: closed,
+                total: a.tasks.length,
+              })
+            : ''
+        const ranS = Math.max(0, (nowMs - Date.parse(a.startedAt)) / 1000)
+        const elapsed = Number.isFinite(ranS) ? t('pane.agentElapsed', { d: formatDuration(ranS) }) : ''
+        const eta = typeof a.etaMin === 'number' ? t('pane.agentEta', { min: a.etaMin }) : ''
+        return (
+          <Box flexDirection="column">
+            <Box
+              key={`row:${key}`}
+              flexDirection="row"
+              justifyContent="space-between"
+              gap={2}
+              hover={ROW_HOVER}
+            >
+              <Button
+                key={key}
+                label={t('pane.agentFold', { fold: isOpen ? '▾' : '▸', label: a.label })}
+                plain
+                onPress={() => void toggle($, key, isOpen)}
+              />
+              <Text dimColor>{`${steps}${elapsed}${eta}`.replace(/^ · /, '')}</Text>
+            </Box>
+            {isOpen ? (
+              <Box flexDirection="column" paddingLeft={INDENT}>
+                {a.now ? <Text dimColor>{a.now}</Text> : null}
+                {a.tasks.map(step => {
+                  const m = MARK[step.status] ?? { sign: '?' }
+                  return (
+                    <Box flexDirection="column">
+                      <Text color={m.color}>{`${m.sign} ${step.title}`}</Text>
+                      {step.note ? (
+                        <Box paddingLeft={INDENT}>
+                          <Text dimColor>{step.note}</Text>
+                        </Box>
+                      ) : null}
+                    </Box>
+                  )
+                })}
+              </Box>
+            ) : null}
+          </Box>
+        )
+      }
+      return (
+        <Box flexDirection="column">
+          <Button
+            key={runKey}
+            label={t('pane.agents', { fold: runOpen ? '▾' : '▸', running: running.length })}
+            plain
+            onPress={() => void toggle($, runKey, runOpen)}
+          />
+          {runOpen ? (
+            <Box flexDirection="column" paddingLeft={INDENT}>
+              {running.map(agentRow)}
+            </Box>
+          ) : null}
+        </Box>
+      )
+    }
+
+    // A session's finished subagents, under its Done: one folded "Agents" heading after the done tasks.
+    const finishedAgentsBlock = (file: SessionFile) => {
+      const id = file.session.id
+      const finished = (file.agents ?? []).filter(a => a.endedAt !== null)
+      if (finished.length === 0) return null
+      const key = `doneagents:${id}`
+      const isOpen = folded[key] ?? false
       return (
         <Box flexDirection="column">
           <Button
             key={key}
-            label={t('pane.agents', {
-              fold: isOpen ? '▾' : '▸',
-              running: running.length,
-              finished: finishedList.length,
-            })}
+            label={t('pane.agentsFinished', { fold: isOpen ? '▾' : '▸', count: finished.length })}
             plain
-            dimColor={running.length === 0}
+            dimColor
             onPress={() => void toggle($, key, isOpen)}
           />
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT}>
-              {running.map(a => {
-                const closed = a.tasks.filter(x => isClosed(x.status)).length
-                const steps =
-                  a.tasks.length > 0
-                    ? t('pane.agentSteps', {
-                        bar: progressBar(closed, a.tasks.length),
-                        done: closed,
-                        total: a.tasks.length,
-                      })
-                    : ''
-                const eta = typeof a.etaMin === 'number' ? t('pane.agentEta', { min: a.etaMin }) : ''
-                return (
-                  <Box flexDirection="column">
-                    <Box flexDirection="row" justifyContent="space-between" gap={2}>
-                      <Text color="yellow">{t('pane.agentRow', { label: a.label })}</Text>
-                      {steps || eta ? <Text dimColor>{`${steps}${eta}`}</Text> : null}
-                    </Box>
-                    {a.now ? (
-                      <Box paddingLeft={INDENT}>
-                        <Text dimColor>{a.now}</Text>
-                      </Box>
-                    ) : null}
-                  </Box>
-                )
-              })}
-              {finishedList.map(a => (
+              {finished.map(a => (
                 <Text dimColor>
                   {t('pane.agentFinished', {
                     label: a.label,
@@ -1634,6 +1683,7 @@ export const register: Register = (on, options) => {
         file.session.project,
       )
       const doneRepos = groupByRepo(done, file.session.project)
+      const finishedCount = (file.agents ?? []).filter(a => a.endedAt !== null).length
       const groupKey = `group:${id}`
       const doneKey = `done:${id}`
       const isOpen = folded[groupKey] ?? ended === null
@@ -1699,17 +1749,20 @@ export const register: Register = (on, options) => {
                   })
                 : open.map(task => taskRow(id, task))}
               {agentsBlock(file)}
-              {done.length > 0 ? (
+              {done.length + finishedCount > 0 ? (
                 <Box flexDirection="row" justifyContent="space-between" gap={2}>
                   <Button
                     key={doneKey}
-                    label={t('pane.doneSection', { fold: isDoneOpen ? '▾' : '▸', count: done.length })}
+                    label={t('pane.doneSection', {
+                      fold: isDoneOpen ? '▾' : '▸',
+                      count: done.length + finishedCount,
+                    })}
                     plain
                     dimColor
                     onPress={() => void toggle($, doneKey, isDoneOpen)}
                   />
                   {/* Only while Done is open: nothing is cleared that the person cannot see. */}
-                  {isDoneOpen ? (
+                  {isDoneOpen && done.length > 0 ? (
                     <Button
                       key={`clear:${id}`}
                       label={t('pane.clearAll')}
@@ -1748,6 +1801,7 @@ export const register: Register = (on, options) => {
                         )
                       })
                     : done.map(task => doneRow(id, task))}
+                  {finishedAgentsBlock(file)}
                 </Box>
               ) : null}
             </Box>
