@@ -284,7 +284,9 @@ authorization.
   titles) puts the named ones first, the rest after in their order.
 - **Details and steps:** `detail` (text) and `steps` (`{ title, status }`, replaced whole) make a
   task a fold — mark, title Button, `██░░ n/m` closed steps on the right; unfolded: detail, then
-  each step with its mark.
+  each step with its mark. A `doing` task with steps starts unfolded (0.21.0, asked 2026-11-08:
+  "they should automatically be opened so that I can see what's going on"); the person's own fold
+  wins, and a task no longer `doing` folds back by default.
 - **Repos:** `repo` on a task; when a session's tasks span several repos, open tasks group under
   `▾ <repo>  N open` (plan order, each repo where its first task stands; untagged = the session's
   `project`) and Done rows read `<repo> · <title>`.

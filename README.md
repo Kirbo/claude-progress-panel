@@ -63,7 +63,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   (else the repo or folder name).
 - **Tasks:** listed in plan order by default — the order the agent will do them (it reshuffles
   with `order`). A task with subtasks or a detail is a fold: its title shows `██░░ n/m` of its steps
-  done, and a press opens the detail and each step. Once a session's open tasks span several repos
+  done, and a press opens the detail and each step — a task in progress with steps starts open, so
+  you see what it is on without a click (fold it and it stays folded). Once a session's open tasks span several repos
   they group under one foldable heading per repo (one repo: no heading); its Done list does the
   same on its own.
 - **Subagents report too:** a subagent's `progress_update` lands under its coordinator's session,

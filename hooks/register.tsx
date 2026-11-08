@@ -1510,7 +1510,10 @@ export const register: Register = (on, options) => {
       const key = `task:${sessionId}:${task.id}`
       // While filtering, a hit inside the detail or the steps unfolds the task, so it shows.
       const hitInside = filteringNow && matchesTask({ ...task, title: '', note: undefined }, query)
-      const isOpen = folded[key] ?? hitInside
+      // A task in progress with steps starts open, so what it is on shows without a click; the
+      // person's own fold wins, and once it is no longer `doing` it folds back by default.
+      const inProgress = task.status === 'doing' && (task.steps?.length ?? 0) > 0
+      const isOpen = folded[key] ?? (hitInside || inProgress)
       const steps = stepCounts(task)
       return (
         <Box flexDirection="column">

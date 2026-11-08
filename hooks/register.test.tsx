@@ -1067,6 +1067,38 @@ test(
   },
 )
 
+test('a task in progress with steps starts open; the person can fold it; done, it folds back', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  const steps = [
+    { title: 'push', status: 'done' as const },
+    { title: 'CI', status: 'doing' as const },
+  ]
+  await update($, {
+    tasks: [
+      { id: 'run', title: 'Running', status: 'doing', steps },
+      { id: 'plan', title: 'Planned', status: 'todo', steps },
+    ],
+  })
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'task:s-me:run' }))?.text).toBe('▾ Running')
+  expect(await texts(ui)).toContain('● CI')
+  // Not started yet: folded, as before.
+  expect((await ui.find({ type: 'Button', key: 'task:s-me:plan' }))?.text).toBe('▸ Planned')
+
+  await ui.press({ key: 'task:s-me:run' })
+  expect((await ui.find({ type: 'Button', key: 'task:s-me:run' }))?.text).toBe('▸ Running')
+  await ui.unmount()
+
+  // A task that moves on to done folds back by default (in a pane where nobody folded it).
+  await update($, { tasks: [{ id: 'run', title: 'Running', status: 'done', steps }] })
+  const fresh = await pane($)
+  await fresh.press({ key: 'done:s-me' })
+  expect(await fresh.find({ type: 'Text', text: /^● CI/ })).toBeUndefined()
+  await fresh.unmount()
+})
+
 test('a task with details or subtasks folds open beneath its title, which shows n/m of its steps', async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
@@ -1075,7 +1107,7 @@ test('a task with details or subtasks folds open beneath its title, which shows 
     tasks: [
       {
         title: 'Ship it',
-        status: 'doing',
+        status: 'todo',
         detail: 'Push, then watch CI.',
         steps: [
           { title: 'push', status: 'done' },
@@ -1089,7 +1121,7 @@ test('a task with details or subtasks folds open beneath its title, which shows 
   const key = 'task:s-me:t1'
   expect((await ui.find({ type: 'Button', key }))?.text).toBe('▸ Ship it')
   let lines = await texts(ui)
-  expect(lines).toContain('●')
+  expect(lines).toContain('○')
   expect(lines).toContain('████░░░░ 1/2')
   expect(lines).not.toContain('Push, then watch CI.')
   // A task with nothing more to show stays one plain line.
