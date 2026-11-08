@@ -162,6 +162,21 @@ const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> =
 const INDENT = 2
 const COUNT_ORDER: JobState[] = ['running', 'queued', 'skipped', 'success', 'failed', 'canceled', 'manual']
 const COUNT_COLOR: Partial<Record<JobState, string>> = { running: 'yellow', success: 'green', failed: 'red' }
+// A pipeline's own state on its row: a live one in the running / queued colour behind its mark and
+// in bold, a finished one dimmed but for the outcome's colour (2026-11-08: "it's too easy now not to
+// notice a new running pipeline").
+const PIPE_STATE_COLOR: Partial<Record<JobState | 'unknown', string>> = {
+  running: 'yellow',
+  queued: 'cyan',
+  success: 'green',
+  failed: 'red',
+  manual: 'magenta',
+}
+const PIPE_LIVE_MARK: Partial<Record<JobState | 'unknown', string>> = {
+  running: '● ',
+  queued: '○ ',
+  unknown: '○ ',
+}
 // Always shown, even at 0 (the rest only when present): the line reads the same way every time.
 const ALWAYS_COUNTED = new Set<JobState>(['running', 'queued', 'skipped', 'success', 'failed'])
 
@@ -1314,13 +1329,14 @@ export const register: Register = (on, options) => {
       .join('|')}`
     const isSectionOpen = folded[sectionKey] ?? !allSucceeded
     const stoppedOther = states.filter(st => st === 'canceled' || st === 'skipped').length
-    const sectionLabel = t('pane.pipelines', {
+    const sectionParts = {
       fold: isSectionOpen ? '▾' : '▸',
       watching: states.filter(st => !isFinished(st)).length,
       succeeded: states.filter(st => st === 'success').length,
       failed: states.filter(st => st === 'failed').length,
       rest: stoppedOther > 0 ? t('pane.pipelinesCanceled', { n: stoppedOther }) : '',
-    })
+    }
+    const sectionLabel = t('pane.pipelines', sectionParts)
 
     // A ↗ that opens a GitLab page in the browser: the surface's own hyperlink (OSC 8 on the
     // terminal), so the click is the terminal's — nothing opens unless the person clicks it.
@@ -1378,14 +1394,29 @@ export const register: Register = (on, options) => {
             gap={2}
             hover={ROW_HOVER}
           >
-            <Button key={key} label={label} plain onPress={() => void toggle($, foldKey, isOpen)} />
+            <Button key={key} label={label} plain onPress={() => void toggle($, foldKey, isOpen)}>
+              {finished ? null : (
+                <Text color={PIPE_STATE_COLOR[p.state] ?? 'cyan'}>{PIPE_LIVE_MARK[p.state] ?? '● '}</Text>
+              )}
+              <Text bold={!finished} dimColor={finished}>
+                {label}
+              </Text>
+            </Button>
             <Box flexDirection="row">
               <Button
                 key={`pipestate:${key}`}
                 label={status}
                 plain
                 onPress={() => void toggle($, foldKey, isOpen)}
-              />
+              >
+                <Text
+                  color={PIPE_STATE_COLOR[p.state]}
+                  bold={!finished || p.state === 'failed'}
+                  dimColor={p.state === 'canceled' || p.state === 'skipped'}
+                >
+                  {status}
+                </Text>
+              </Button>
               {openLink(p.url)}
               {finished && p.finishedAt ? (
                 <Button
@@ -1947,7 +1978,14 @@ export const register: Register = (on, options) => {
               label={sectionLabel}
               plain
               onPress={() => void toggleSection($, sectionKey, isSectionOpen)}
-            />
+            >
+              <Text>{t('pane.pipelinesTitle', sectionParts)}</Text>
+              {/* What is running now stands out, even with the section folded. */}
+              <Text color={sectionParts.watching > 0 ? 'yellow' : undefined} bold={sectionParts.watching > 0}>
+                {t('pane.pipelinesWatching', sectionParts)}
+              </Text>
+              <Text>{t('pane.pipelinesTally', sectionParts)}</Text>
+            </Button>
             {isSectionOpen ? (
               <Box flexDirection="column" paddingLeft={INDENT}>
                 {currentRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}

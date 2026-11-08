@@ -100,7 +100,9 @@ and the pane follows it
 live: state, a progress bar of finished / all jobs while it runs, how long it has run (beside an
 estimate from up to 5 earlier successful runs of the same branch and trigger, GitLab and GitHub),
 and once finished the counts, the duration and the time it finished — all on the right of the
-row, beside `↗` (open it in the browser) and `✕` (dismiss a finished one). A press unfolds every
+row, beside `↗` (open it in the browser) and `✕` (dismiss a finished one). A running pipeline
+stands out — a yellow `●` (cyan `○` while queued), its name and state in bold, the section's
+"N watching" lit — while a finished one dims to its outcome's colour. A press unfolds every
 job, grouped by stage. The row under the pointer is highlighted. The section header sums up
 every pipeline and folds itself once all succeeded; successes older than an hour move into a
 folded "Finished" row.

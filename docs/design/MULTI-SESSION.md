@@ -212,6 +212,11 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   is its own hover scope (a keyed Box) — the pointer lights the whole row (`backgroundColor:
   'subtle'`, a theme key, so dim on dark and light themes) and underlines the job's text; the
   surface applies it, no hook runs.
+- Live vs finished (0.21.0, asked 2026-11-08: "it's too easy now not to notice a new running
+  pipeline"): a running row starts with a yellow `●` (queued / not found yet: cyan `○`), its name
+  and state bold, its state in the running / queued colour; a finished row's name dims, its state
+  keeps the outcome colour (success green, failed bold red, canceled / skipped dim). The section's
+  `N watching` is yellow and bold while anything runs, so it shows even folded.
 - Duration (0.5.1): running → now − GitLab's `started_at` (ticks with the pane's 2 s redraw);
   finished → GitLab's `duration` (as its UI shows), else `finished_at − started_at`; omitted
   before the pipeline has started.

@@ -1465,12 +1465,43 @@ test("a pipeline's status sits on the right, beside ↗ / ✕, and folds the pip
   const ui = await pane($)
   const row = (await ui.findAll({ type: 'Box' })).find(b => b.props.key === 'row:pipe:s-me:g/app#42')
   expect(row?.props.justifyContent).toBe('space-between')
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('▸ app #42 · main')
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('● ▸ app #42 · main')
   expect((await ui.find({ type: 'Button', key: 'pipestate:pipe:s-me:g/app#42' }))?.text).toBe(
     'running  ░░░░░░░░ 0/1',
   )
   await ui.press({ key: 'pipestate:pipe:s-me:g/app#42' })
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('▾ app #42 · main')
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('● ▾ app #42 · main')
+  await ui.unmount()
+})
+
+test('a running pipeline stands out — yellow mark, bold — and a finished one dims to its outcome colour', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['test', 'running']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+
+  let ui = await pane($)
+  expect((await ui.find({ type: 'Text', text: '● ' }))?.props.color).toBe('yellow')
+  // The section's "watching" count lights up while anything runs.
+  expect((await ui.find({ type: 'Text', text: '1 watching' }))?.props.color).toBe('yellow')
+  expect((await ui.find({ type: 'Text', text: /^▸ app #42/ }))?.props.bold).toBe(true)
+  const running = await ui.find({ type: 'Text', text: /^running/ })
+  expect(running?.props.color).toBe('yellow')
+  expect(running?.props.bold).toBe(true)
+  await ui.unmount()
+
+  world.gitlab.set(PIPE, { id: 42, status: 'failed', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['test', 'failed']))
+  await world.clock.advance(15_000)
+  ui = await pane($)
+  expect(await ui.find({ type: 'Text', text: '● ' })).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: '0 watching' }))?.props.color).toBeUndefined()
+  expect((await ui.find({ type: 'Text', text: /^▸ app #42/ }))?.props.dimColor).toBe(true)
+  const failed = await ui.find({ type: 'Text', text: /^failed/ })
+  expect(failed?.props.color).toBe('red')
+  expect(failed?.props.bold).toBe(true)
   await ui.unmount()
 })
 
@@ -1498,13 +1529,13 @@ test('a watched pipeline shows live: progress bar, counts and every job', async 
   expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
     '▾ Pipelines  1 watching · 0 succeeded · 0 failed',
   )
-  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('▸ app #42 · main · running  ████░░░░ 2/4')
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('● ▸ app #42 · main · running  ████░░░░ 2/4')
   expect(lines).toContain('1 running · 1 queued · 1 skipped · 1 passed · 0 failed')
   expect(lines).not.toContain('✓ lint   10s')
 
   // Unfolded: the jobs under their stage, names padded so the times line up.
   await ui.press({ key: 'pipe:s-me:g/app#42' })
-  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('▾ app #42 · main · running  ████░░░░ 2/4')
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('● ▾ app #42 · main · running  ████░░░░ 2/4')
   lines = await texts(ui)
   expect(lines).toContain('1 running · 1 queued · 1 skipped · 1 passed · 0 failed')
   expect(lines).toContain('build')
@@ -1524,7 +1555,7 @@ test('a pipeline unfolded while it ran folds again once it finishes; a press ope
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
   let ui = await pane($)
   await ui.press({ key: 'pipe:s-me:g/app#42' })
-  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('▾ app #42 · main')
+  expect((await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' }))?.text).toBe('● ▾ app #42 · main')
   await ui.unmount()
 
   world.gitlab.set(PIPE, { id: 42, status: 'success', ref: 'main' })
@@ -1954,7 +1985,7 @@ test("a finished pipeline's line ends with when it finished: GitLab's time, else
   expect(formatTime(isoAt(T0 - 30 * HOUR), T0)).toMatch(/^\d{4}-\d\d-\d\d \d\d:\d\d$/)
   expect(await line(8)).toMatch(new RegExp(` · ${formatTime(isoAt(T0 - 30 * HOUR), T0)}$`))
   // Still running: the live elapsed time ends the line, no finish time.
-  expect(await line(9)).toBe('▸ site #9 · main · running  ░░░░░░░░ 0/1 · 1h00m')
+  expect(await line(9)).toBe('● ▸ site #9 · main · running  ░░░░░░░░ 0/1 · 1h00m')
   await ui.unmount()
 })
 
@@ -2029,7 +2060,7 @@ test("the pipeline line ends with its duration: live while running, GitLab's onc
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
 
   let ui = await pane($)
-  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s')
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('● ▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s')
   await ui.unmount()
 
   world.gitlab.set(PIPE, {
@@ -2147,7 +2178,7 @@ test('a running pipeline shows elapsed / estimate, the estimate fetched once and
 
   const ui = await pane($)
   expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe(
-    '▸ app #42 · main · running  ░░░░░░░░ 0/1 · 4m53s / ~33m',
+    '● ▸ app #42 · main · running  ░░░░░░░░ 0/1 · 4m53s / ~33m',
   )
   await ui.unmount()
   const listCalls = () =>
@@ -2197,7 +2228,7 @@ test('with no similar history the line shows the elapsed time only', async ($, o
   await start($)
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
   const ui = await pane($)
-  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s')
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('● ▸ app #42 · main · running  ░░░░░░░░ 0/1 · 1m05s')
   await ui.unmount()
 })
 
@@ -2407,7 +2438,7 @@ test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, �
 
   const ui = await pane($)
   expect(await pipeLine(ui, 'pipe:s-me:gh:Kirbo/ha@abc123')).toBe(
-    '▸ ha #900 · main · running  ████░░░░ 1/2 · 30s / ~2m',
+    '● ▸ ha #900 · main · running  ████░░░░ 1/2 · 30s / ~2m',
   )
   await ui.press({ key: 'pipe:s-me:gh:Kirbo/ha@abc123' })
   const hrefs = (await ui.findAll({ type: 'Link' })).map(l => l.props.href)
