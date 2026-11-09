@@ -194,6 +194,9 @@ or test folder) without moving everyone else's.
   **checked** — when this pane last looked. A check older than 10 s turns yellow with "(stale)".
 - A session marks its entry ended when it closes; ended entries are dimmed and folded, and are
   removed after `keepEndedSessionsDays`. A session that never reported anything leaves nothing.
+  One that died without closing (a terminal closed, a process killed) is noticed by any pane on the
+  same machine once it has been quiet for 10 minutes and its process is gone, and ends as of its
+  last update; `/progress doctor` says whether this session's process could be recorded.
 
 ### Releases
 

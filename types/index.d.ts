@@ -46,6 +46,10 @@ export type SessionInfo = {
   cwd: string
   startedAt: string
   endedAt: string | null
+  /** The Claude Code process that writes this file, and its machine (0.22.1): a session whose
+   *  process is gone without `session.end` (a closed terminal, a kill) is marked ended. */
+  pid?: number
+  host?: string
 }
 
 /** A CI job's state, GitLab's statuses folded into what the pane shows. */

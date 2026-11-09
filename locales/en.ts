@@ -11,6 +11,10 @@ export const en = {
   'doctor.rule.sent': 'handed over with a prompt (the panel joined this session mid-way)',
   'doctor.rule.missing': 'not delivered yet',
   'doctor.rule.fix': 'send any prompt: it rides the next one',
+  'doctor.process': 'Session process',
+  'doctor.process.ok': 'pid {pid} on {host} — a session that dies without ending is noticed',
+  'doctor.process.none':
+    "not recorded (Claude Code's process could not be told for sure) — a session that dies without ending stays live until it is removed",
   'doctor.folder': 'Progress folder',
   'doctor.folder.none': 'no folder resolves (no home directory)',
   'doctor.folder.noneFix': 'set the progressDir option (claude plugin configure progress-panel)',

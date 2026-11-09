@@ -18,6 +18,7 @@ import {
   capNewest,
   DONE_SHOWN,
   endAgent,
+  endDeadSession,
   formatClock,
   formatTime,
   groupByRepo,
@@ -26,6 +27,7 @@ import {
   matchesTask,
   mergeScan,
   mergeSidecar,
+  needsLivenessCheck,
   newSession,
   parseSessionFile,
   parseSidecar,
@@ -393,11 +395,63 @@ async function ownFile($: EngineInterface, dir: string): Promise<SessionFile> {
       t('task.removedNote'),
     )
     for (const task of folded.removed) pendingRemovals.set(task.id, task.title)
-    return folded.file
+    return withProcess(folded.file)
   }
   const cwd = await $.session.cwd()
   const repo = await $.session.repo().catch(() => null)
-  return withTitle(newSession({ id, project: baseName(repo?.root ?? cwd), cwd }, await nowIso($)))
+  return withProcess(
+    withTitle(newSession({ id, project: baseName(repo?.root ?? cwd), cwd }, await nowIso($))),
+  )
+}
+
+// This session's own process and machine (`whoAmI`, at start): written into its file so another
+// session can tell when it died without `session.end`. Undefined where it cannot be told for sure.
+let ownProcess: { pid: number; host: string } | undefined
+
+// The engine's process — a spawned child's parent — and the machine's name. Recorded only when that
+// parent is Claude Code itself (`claude` / `node`): a helper in between would die at once and make
+// every idle session look dead.
+async function whoAmI($: EngineInterface): Promise<{ pid: number; host: string } | undefined> {
+  const windows = (await $.env.get('OS')) === 'Windows_NT'
+  const ran = await $.process
+    .run(
+      windows
+        ? [
+            'powershell',
+            '-NoProfile',
+            '-Command',
+            '$p = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID").ParentProcessId; $p; (Get-Process -Id $p).ProcessName; hostname',
+          ]
+        : ['sh', '-c', 'echo $PPID; ps -o comm= -p $PPID; hostname'],
+    )
+    .catch(() => undefined)
+  if (ran?.exitCode !== 0) return undefined
+  const [pidText, name, host] = ran.stdout.split(/\r?\n/).map(l => l.trim())
+  const pid = Number(pidText)
+  if (!Number.isInteger(pid) || pid <= 1 || !host || !/claude|node/i.test(name ?? '')) return undefined
+  return { pid, host: host.toLowerCase() }
+}
+
+// Whether a process on this machine is still running (`kill -0`; `tasklist` on Windows).
+async function processAlive($: EngineInterface, pid: number): Promise<boolean | undefined> {
+  const windows = (await $.env.get('OS')) === 'Windows_NT'
+  const ran = await $.process
+    .run(
+      windows
+        ? ['tasklist', '/FI', `PID eq ${pid}`, '/NH', '/FO', 'CSV']
+        : ['sh', '-c', 'kill -0 "$1" 2>/dev/null', 'sh', String(pid)],
+    )
+    .catch(() => undefined)
+  if (!ran) return undefined // cannot tell: never end a session on a guess
+  return windows ? ran.stdout.includes(`"${pid}"`) : ran.exitCode === 0
+}
+
+function withProcess(file: SessionFile): SessionFile {
+  if (!ownProcess) return file
+  const s = file.session
+  // A session another pane marked dead that is writing again was not dead: it is live once more.
+  if (s.pid === ownProcess.pid && s.host === ownProcess.host && s.endedAt === null) return file
+  return { ...file, session: { ...s, ...ownProcess, endedAt: null } }
 }
 
 function withTitle(file: SessionFile): SessionFile {
@@ -540,6 +594,10 @@ async function tick($: EngineInterface, options: PluginOptions): Promise<void> {
   }
 }
 
+// When each other session's process was last asked after (one ask a minute, at most).
+const livenessAskedAt = new Map<string, number>()
+const LIVENESS_EVERY_MS = 60_000
+
 // One refresh: list the folder, read what changed, apply retention, update the status line.
 async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
@@ -615,7 +673,17 @@ async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
       })
       continue
     }
-    if (ended === null) continue
+    if (ended === null) {
+      // A session on this machine whose process is gone without `session.end` (a closed terminal,
+      // a kill): ended as of its last write. Asked at most once a minute per session.
+      if (!needsLivenessCheck(file, me, ownProcess?.host, nowMs)) continue
+      const id = file.session.id
+      if (nowMs - (livenessAskedAt.get(id) ?? 0) < LIVENESS_EVERY_MS) continue
+      livenessAskedAt.set(id, nowMs)
+      if ((await processAlive($, file.session.pid as number)) === false)
+        await save($, dir, endDeadSession(file))
+      continue
+    }
     const pruned = pruneDone(file, doneHours, nowMs)
     if (pruned !== file) await save($, dir, pruned)
   }
@@ -1225,6 +1293,11 @@ async function doctor($: EngineInterface, options: PluginOptions): Promise<strin
             fix: t('doctor.rule.fix'),
           },
   )
+  checks.push(
+    ownProcess
+      ? { state: 'ok', label: t('doctor.process'), detail: t('doctor.process.ok', ownProcess) }
+      : { state: 'skip', label: t('doctor.process'), detail: t('doctor.process.none') },
+  )
   const dir = await progressDir($, options)
   if (!dir) {
     checks.push({
@@ -1505,6 +1578,7 @@ function orderSessions(all: Loaded, me: string): SessionFile[] {
 
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
+    ownProcess = await whoAmI($)
     await $.command.register({ name: 'progress', description: t('command.description') })
     await $.tool.register({
       name: TOOL,

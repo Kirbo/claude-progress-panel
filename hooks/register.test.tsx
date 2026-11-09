@@ -2683,6 +2683,7 @@ test('/progress doctor names what is wrong with the setup, with its fix — and 
   const before = await doctor()
   expect(before).toContain('✓ Version: 0.14.0')
   expect(before).toContain('✗ Reporting rule: not delivered yet')
+  expect(before).toContain('– Session process: not recorded')
   expect(before).toContain('✓ Progress folder:')
   expect(before).toContain('✓ CI: gitlab in app')
   expect(before).toContain('✗ Forge CLI: glab is logged in but cannot read group/app on gitlab.com')
@@ -2721,6 +2722,50 @@ test('/progress doctor outside a repository checks only what applies; a missing 
   expect(text).toContain('✓ CI: github in app')
   expect(text).toContain('✗ Forge CLI: gh is not installed or not on PATH')
   expect(text).toContain('→ install gh')
+})
+
+test('a session whose process died without ending is marked ended; a live one, another machine and this one are not', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.programs.set('sh -c echo $PPID; ps -o comm= -p $PPID; hostname', '4000\nclaude\nMini.local\n')
+  // 4343 answers kill -0 (alive); 4242 does not (gone).
+  world.programs.set('sh -c kill -0 "$1" 2>/dev/null sh 4343', '')
+  const idle = new Date(T0 - 11 * 60_000).toISOString()
+  const other = (id: string, pid: number, host: string) => ({
+    version: 2,
+    session: { id, project: 'p', cwd: '/w', startedAt: idle, endedAt: null, pid, host },
+    needsYou: [],
+    updatedAt: idle,
+    tasks: [{ id: 't1', title: 'x', status: 'doing', createdAt: idle, updatedAt: idle }],
+    dismissed: [],
+    seq: 1,
+  })
+  put(disk, `${DIR}/s-dead.json`, other('s-dead', 4242, 'mini.local'))
+  put(disk, `${DIR}/s-live.json`, other('s-live', 4343, 'mini.local'))
+  put(disk, `${DIR}/s-away.json`, other('s-away', 4242, 'laptop.local'))
+  await start($)
+  await update($, { now: 'here' })
+  // This session's file names its own process and machine.
+  expect(read(disk, `${DIR}/s-me.json`).session).toMatchObject({ pid: 4000, host: 'mini.local' })
+  await world.clock.advance(2100)
+  expect(read(disk, `${DIR}/s-dead.json`).session.endedAt).toBe(idle)
+  expect(read(disk, `${DIR}/s-live.json`).session.endedAt).toBeNull()
+  expect(read(disk, `${DIR}/s-away.json`).session.endedAt).toBeNull()
+
+  // A session another pane wrongly marked ended is live again with its next write.
+  const mine = read(disk, `${DIR}/s-me.json`)
+  put(disk, `${DIR}/s-me.json`, { ...mine, session: { ...mine.session, endedAt: idle } })
+  await update($, { now: 'still here' })
+  expect(read(disk, `${DIR}/s-me.json`).session.endedAt).toBeNull()
+})
+
+test('a parent process that is not Claude Code records no pid — nothing is ever ended on a guess', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.programs.set('sh -c echo $PPID; ps -o comm= -p $PPID; hostname', '4000\nsandbox-helper\nmini\n')
+  await start($)
+  await update($, { now: 'here' })
+  expect(read(disk, `${DIR}/s-me.json`).session.pid).toBeUndefined()
 })
 
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {

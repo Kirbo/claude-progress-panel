@@ -85,6 +85,15 @@ per session, `<session-id>.json`, written only whole:
   session's file is created by its first `progress_update`, not at start; a session still blank
   at `session.end` deletes its file and sidecar instead of stamping `endedAt`; any pane deletes an
   ended blank file it finds (older versions wrote one at start), and the pane skips a live blank one.
+- **A session that died without `session.end` is ended (0.22.1).** At start a session records its
+  process and machine in its file (`session.pid`, `session.host`, from `whoAmI`: a spawned child's
+  parent and `hostname` — `sh -c 'echo $PPID; ps -o comm= -p $PPID; hostname'`, PowerShell's
+  `ParentProcessId` on Windows), but only when that parent is `claude`/`node`: a helper in between
+  would die at once and end every idle session. Any pane on the SAME host asks, at most once a
+  minute per session, whether a live session idle for `DEAD_AFTER_MS` (10 min) still has its process
+  (`kill -0`, `tasklist`); gone → `endedAt` = its last `updatedAt` (its owner is gone, so the
+  one-writer rule holds). A false "dead" heals itself: the owner's next write clears `endedAt`
+  (`withProcess`). Can't tell → nothing changes. `/progress doctor` shows the recorded pid.
 
 ## Writing: the `progress_update` tool
 

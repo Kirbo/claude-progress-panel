@@ -6,13 +6,16 @@ import {
   applyUpdate,
   cancelTasks,
   capNewest,
+  DEAD_AFTER_MS,
   dismissTasks,
+  endDeadSession,
   formatClock,
   formatTime,
   isBlank,
   matchesTask,
   mergeScan,
   mergeSidecar,
+  needsLivenessCheck,
   newSession,
   parseSessionFile,
   parseSidecar,
@@ -496,4 +499,20 @@ test('capNewest keeps the newest few in the list order and counts the older rest
   expect(capNewest(items, 4, x => x.at)).toEqual({ shown: items, older: 0 })
   // A missing stamp counts as oldest.
   expect(capNewest([{ id: 'x', at: null }, ...items], 1, x => x.at).shown.map(x => x.id)).toEqual(['b'])
+})
+
+test('a live session on this machine, idle long enough, gets a liveness check — nothing else does', () => {
+  const at = '2026-11-09T10:00:00.000Z'
+  const base = newSession({ id: 's-other', project: 'p', cwd: '/w' }, at)
+  const mine = { ...base, session: { ...base.session, pid: 4242, host: 'mini' } }
+  const idle = Date.parse(at) + DEAD_AFTER_MS
+  expect(needsLivenessCheck(mine, 's-me', 'mini', idle)).toBe(true)
+  // Not idle long enough, this session itself, another machine, no pid, already ended: no check.
+  expect(needsLivenessCheck(mine, 's-me', 'mini', idle - 1)).toBe(false)
+  expect(needsLivenessCheck(mine, 's-other', 'mini', idle)).toBe(false)
+  expect(needsLivenessCheck(mine, 's-me', 'laptop', idle)).toBe(false)
+  expect(needsLivenessCheck(base, 's-me', 'mini', idle)).toBe(false)
+  expect(needsLivenessCheck(endDeadSession(mine), 's-me', 'mini', idle)).toBe(false)
+  // A dead one ends as of its last write.
+  expect(endDeadSession(mine).session.endedAt).toBe(mine.updatedAt)
 })

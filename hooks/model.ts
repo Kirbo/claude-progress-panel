@@ -621,3 +621,26 @@ export function capNewest<T>(
   )
   return { shown: list.filter(item => keep.has(item)), older: list.length - limit }
 }
+
+/** A live session idle this long, whose process is gone, is one that died without `session.end`. */
+export const DEAD_AFTER_MS = 10 * 60_000
+
+/**
+ * Whether another session's file is worth a liveness check: live, written by a process on THIS
+ * machine (a pid means nothing elsewhere), not this session, and idle for DEAD_AFTER_MS.
+ */
+export function needsLivenessCheck(
+  file: SessionFile,
+  me: string,
+  host: string | undefined,
+  nowMs: number,
+): boolean {
+  const s = file.session
+  if (s.endedAt !== null || s.id === me || typeof s.pid !== 'number' || !host || s.host !== host) return false
+  return nowMs - (Date.parse(file.updatedAt) || 0) >= DEAD_AFTER_MS
+}
+
+/** A session whose process died: ended as of its last write (when it last did anything). */
+export function endDeadSession(file: SessionFile): SessionFile {
+  return { ...file, session: { ...file.session, endedAt: file.updatedAt } }
+}
