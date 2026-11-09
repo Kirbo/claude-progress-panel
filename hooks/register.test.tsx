@@ -420,7 +420,10 @@ test('a fresh shared check is reused; a failed one keeps the last answer', async
   await start($)
   expect(world.fetched).toEqual([])
   world.store.set('latest-release', { version: '0.15.0', url: 'u15', checkedAtMs: T0 - 7 * HOUR })
-  await world.clock.advance(HOUR)
+  // The shared answer went stale: the next check asks the web (a new session's start runs one —
+  // no hour of 2 s ticks, which cost real seconds and timed out on a loaded machine).
+  await start($)
+  await world.clock.advance(0)
   // The web answers 404: the old answer stays, so the pane still offers 0.15.0.
   expect(world.fetched).toEqual([LATEST])
   await update($, { now: 'x' })
@@ -434,7 +437,6 @@ test('no update check when nonessential traffic is off; the version still shows'
   const world = engine(on, disk, { env: { HOME: '/home/me', CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1' } })
   await start($)
   await update($, { now: 'x' })
-  await world.clock.advance(HOUR)
   expect(world.fetched).toEqual([])
   const ui = await pane($)
   expect(await ui.find({ type: 'Text', text: 'v0.14.0' })).toBeTruthy()
@@ -679,7 +681,14 @@ test('a subagent that stops is marked finished and folded under Agents — and s
   await ui.unmount()
   const mine = await update($, { now: 'still here' })
   expect(JSON.stringify(mine)).not.toContain('Lane B')
-  await world.clock.advance(HOUR + 2000)
+  // An hour later — the file aged by hand, then ONE scan (an hour of 2 s ticks cost real seconds
+  // and timed out on a loaded machine): still there.
+  const aged = read(disk, `${DIR}/s-me.json`)
+  put(disk, `${DIR}/s-me.json`, {
+    ...aged,
+    agents: aged.agents?.map(a => ({ ...a, endedAt: new Date(T0 - HOUR - 2000).toISOString() })),
+  })
+  await world.clock.advance(2100)
   expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.label)).toEqual(['Lane B: the rest'])
 })
 
@@ -935,13 +944,25 @@ test('Done folds, shows done times; ✕ / Clear all go to the sidecar and stay g
 
 test('an open Done lists its newest 10; the older rest folds behind "N older"', async ($, on) => {
   const disk = makeDisk()
-  const world = engine(on, disk)
-  await start($)
-  // 25 tasks finished a minute apart: Task 1 first, Task 25 last.
-  for (let i = 1; i <= 25; i++) {
-    await update($, { tasks: [{ id: `d${i}`, title: `Task ${i}`, status: 'done' }] })
-    await world.clock.advance(60_000)
+  engine(on, disk)
+  // 25 tasks finished a minute apart: Task 1 first, Task 25 last — seeded with those times (25
+  // minutes of 2 s ticks cost real time and are a slow machine's timeout).
+  const at = (i: number) => new Date(T0 - (26 - i) * 60_000).toISOString()
+  let seeded = other('s-me', 'app', T0 - HOUR, {})
+  seeded = {
+    ...seeded,
+    tasks: Array.from({ length: 25 }, (_, k) => ({
+      id: `d${k + 1}`,
+      title: `Task ${k + 1}`,
+      status: 'done' as const,
+      createdAt: at(k + 1),
+      updatedAt: at(k + 1),
+      doneAt: at(k + 1),
+    })),
+    seq: 25,
   }
+  put(disk, `${DIR}/s-me.json`, seeded)
+  await start($)
   await update($, { now: 'Working', tasks: [{ id: 'live', title: 'Live work', status: 'doing' }] })
 
   const ui = await pane($)
@@ -1111,7 +1132,14 @@ test(
     expect(disk.removed).toEqual([`${DIR}/s-gone.json`, `${DIR}/s-gone.dismissed.json`])
     expect(read(disk, `${DIR}/s-me.json`).tasks).toHaveLength(2)
 
-    await world.clock.advance(HOUR)
+    // An hour later — the file aged by hand, then ONE scan (not an hour of 2 s ticks).
+    const aged = read(disk, `${DIR}/s-me.json`)
+    const old = new Date(T0 - HOUR - 2000).toISOString()
+    put(disk, `${DIR}/s-me.json`, {
+      ...aged,
+      tasks: aged.tasks.map(x => (x.status === 'done' ? { ...x, doneAt: old, updatedAt: old } : x)),
+    })
+    await world.clock.advance(2100)
     expect(read(disk, `${DIR}/s-me.json`).tasks.map(t => t.title)).toEqual(['Long'])
   },
 )
