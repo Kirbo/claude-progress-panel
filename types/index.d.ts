@@ -1,7 +1,9 @@
 // The plugin's type contract: the session file every session writes, and the pane's state.
 // Self-contained on purpose — `claude plugin validate` refuses imports here.
 
-export type Status = 'todo' | 'doing' | 'blocked' | 'done' | 'skipped'
+/** `failed` (0.23.0): tried and could not be done — the reason in `note`. `unfinished` (0.23.0) is
+ *  never sent: the plugin sets it on an agent's open step when the agent stops for good. */
+export type Status = 'todo' | 'doing' | 'blocked' | 'done' | 'skipped' | 'failed' | 'unfinished'
 
 /** A subagent's progress under its coordinator's session: its steps, what it is on, its estimate. */
 export type AgentEntry = {
@@ -31,7 +33,14 @@ export type AgentEntry = {
 
 /** One subtask of a task: a title, its own status and, once closed, when (0.23.0: the pace a
  *  time-left estimate is calibrated on). */
-export type Step = { title: string; status: Status; doneAt?: string; removedByUser?: true }
+export type Step = {
+  title: string
+  status: Status
+  /** Why (0.23.0): shown beneath the step — the reason a step is blocked, skipped or failed. */
+  note?: string
+  doneAt?: string
+  removedByUser?: true
+}
 
 export type Task = {
   id: string

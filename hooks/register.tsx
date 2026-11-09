@@ -1,7 +1,7 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 
-import type { Folds, Loaded, PipelineProvider, SortChoice } from '../types'
+import type { AgentEntry, Folds, Loaded, PipelineProvider, SortChoice } from '../types'
 import {
   CI_MEMORY_FILE,
   type CiMemory,
@@ -18,7 +18,7 @@ import { apiHost, forgeMatches, parseRemote } from './forges'
 import { parseGiteaJobs, parseGiteaRun, teaLoginFor } from './gitea'
 import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
 import { t, tn } from './i18n'
-import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
+import type { Dismissal, SessionFile, SidecarFile, SortBy, Status, Task, UpdateInput } from './model'
 import {
   addDismissals,
   agentHasTask,
@@ -51,6 +51,7 @@ import {
   removalKey,
   reopenAgent,
   SORTS,
+  STATUSES,
   sortTasks,
   splitMatches,
   stepCounts,
@@ -287,13 +288,24 @@ const PIPE_LIVE_MARK: Partial<Record<JobState | 'unknown', string>> = {
 // Always shown, even at 0 (the rest only when present): the line reads the same way every time.
 const ALWAYS_COUNTED = new Set<JobState>(['running', 'queued', 'skipped', 'success', 'failed'])
 
-const MARK: Record<string, { sign: string; color?: string }> = {
+// `dim`: closed without being done — the row reads as set aside, its reason beneath it.
+const MARK: Record<string, { sign: string; color?: string; dim?: true }> = {
   // Blocked = waiting (usually on the person): the Needs-you mark and colour, never a failure's ✗.
   blocked: { sign: '⚠', color: 'magenta' },
   doing: { sign: '●', color: 'yellow' },
   todo: { sign: '○' },
   done: { sign: '✓', color: 'green' },
-  skipped: { sign: '–' },
+  // Failed = tried and could not be done: the pipelines' red ✗.
+  failed: { sign: '✗', color: 'red' },
+  skipped: { sign: '–', dim: true },
+  // An agent stopped with the step still open (set by the plugin, never reported).
+  unfinished: { sign: '–', dim: true },
+}
+
+/** The line beneath a task / step: its note — for an `unfinished` one without its own, why it is. */
+function reasonOf(item: { status: Status; note?: string }): string | undefined {
+  if (item.note) return item.note
+  return item.status === 'unfinished' ? t('pane.unfinishedReason') : undefined
 }
 
 const INPUT_SCHEMA = {
@@ -314,8 +326,12 @@ const INPUT_SCHEMA = {
         properties: {
           id: { type: 'string' },
           title: { type: 'string' },
-          status: { type: 'string', enum: ['todo', 'doing', 'blocked', 'done', 'skipped'] },
-          note: { type: 'string' },
+          status: { type: 'string', enum: [...STATUSES] },
+          note: {
+            type: 'string',
+            description:
+              'One line, shown beneath the task: the outcome once done — and WHY when it is blocked, skipped (will not be done) or failed (tried and could not be done).',
+          },
           repo: {
             type: 'string',
             description:
@@ -339,7 +355,11 @@ const INPUT_SCHEMA = {
               additionalProperties: false,
               properties: {
                 title: { type: 'string' },
-                status: { type: 'string', enum: ['todo', 'doing', 'blocked', 'done', 'skipped'] },
+                status: { type: 'string', enum: [...STATUSES] },
+                note: {
+                  type: 'string',
+                  description: 'Why, shown beneath the step: blocked, skipped or failed.',
+                },
               },
               required: ['title'],
             },
@@ -2737,9 +2757,10 @@ export const register: Register = (on, options) => {
           </Text>
         </Box>
       ) : null
-      const note = task.note ? (
+      const reason = reasonOf(task)
+      const note = reason ? (
         <Box paddingLeft={INDENT}>
-          <Text dimColor>{hl(task.note)}</Text>
+          <Text dimColor>{hl(reason)}</Text>
         </Box>
       ) : null
       // A linked task shows the agent's own steps (never a copy in the task).
@@ -2760,7 +2781,7 @@ export const register: Register = (on, options) => {
         return (
           <Box flexDirection="column">
             <Box flexDirection="row" justifyContent="space-between" gap={2}>
-              <Text color={tint(settings.palette, mark.color)} bold>
+              <Text color={tint(settings.palette, mark.color)} bold={!mark.dim} dimColor={mark.dim}>
                 {`${mark.sign} `}
                 {hl(task.title)}
               </Text>
@@ -2789,7 +2810,7 @@ export const register: Register = (on, options) => {
             hover={ROW_HOVER}
           >
             <Box flexDirection="row" gap={1}>
-              <Text color={tint(settings.palette, mark.color)} bold>
+              <Text color={tint(settings.palette, mark.color)} bold={!mark.dim} dimColor={mark.dim}>
                 {mark.sign}
               </Text>
               {/* A Button label cannot be styled: while filtering, the title moves beside the fold
@@ -2833,26 +2854,34 @@ export const register: Register = (on, options) => {
                 .map(step => {
                   const m = MARK[step.status] ?? { sign: '?' }
                   const stepKey = removalKey({ kind: 'step', taskId: task.id, step: step.title })
+                  const why = reasonOf(step)
                   return (
-                    <Box
-                      key={`steprow:${sessionId}:${stepKey}`}
-                      flexDirection="row"
-                      justifyContent="space-between"
-                      gap={2}
-                      hover={ROW_HOVER}
-                    >
-                      <Text color={tint(settings.palette, m.color)}>
-                        {`${m.sign} `}
-                        {hl(step.title)}
-                      </Text>
-                      {live && !isClosed(step.status) ? (
-                        <Button
-                          key={`cancel:${sessionId}:${stepKey}`}
-                          label={t('pane.cancel')}
-                          plain
-                          dimColor
-                          onPress={() => void cancelTask($, options, sessionId, stepKey)}
-                        />
+                    <Box key={`stepbox:${sessionId}:${stepKey}`} flexDirection="column">
+                      <Box
+                        key={`steprow:${sessionId}:${stepKey}`}
+                        flexDirection="row"
+                        justifyContent="space-between"
+                        gap={2}
+                        hover={ROW_HOVER}
+                      >
+                        <Text color={tint(settings.palette, m.color)} dimColor={m.dim}>
+                          {`${m.sign} `}
+                          {hl(step.title)}
+                        </Text>
+                        {live && !isClosed(step.status) ? (
+                          <Button
+                            key={`cancel:${sessionId}:${stepKey}`}
+                            label={t('pane.cancel')}
+                            plain
+                            dimColor
+                            onPress={() => void cancelTask($, options, sessionId, stepKey)}
+                          />
+                        ) : null}
+                      </Box>
+                      {why ? (
+                        <Box paddingLeft={INDENT}>
+                          <Text dimColor>{hl(why)}</Text>
+                        </Box>
                       ) : null}
                     </Box>
                   )
@@ -2863,30 +2892,92 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const doneRow = (sessionId: string, task: Task) => (
-      <Box flexDirection="row" justifyContent="space-between" gap={2}>
-        <Text dimColor>
-          {hlTitle(
-            t(task.status === 'done' ? 'pane.doneItem' : 'pane.skippedItem', {
-              title: task.title,
-              when: formatTime(task.doneAt ?? task.updatedAt, nowMs, settings.clock),
-            }),
-            task.title,
-          )}
-        </Text>
-        <Button
-          key={`dismiss:${sessionId}:${task.id}`}
-          label={t('pane.dismiss')}
-          plain
-          dimColor
-          onPress={() => void dismiss($, options, sessionId, [task])}
-        />
-      </Box>
-    )
+    // A finished task: ✓ done, – skipped / unfinished, ✗ failed (red) — and why, beneath, for the
+    // ones not done.
+    const doneRow = (sessionId: string, task: Task) => {
+      const why = task.status === 'done' ? undefined : reasonOf(task)
+      return (
+        <Box flexDirection="column">
+          <Box flexDirection="row" justifyContent="space-between" gap={2}>
+            <Text
+              dimColor={task.status !== 'failed'}
+              color={task.status === 'failed' ? tint(settings.palette, 'red') : undefined}
+            >
+              {hlTitle(
+                t(
+                  task.status === 'done'
+                    ? 'pane.doneItem'
+                    : task.status === 'failed'
+                      ? 'pane.failedItem'
+                      : 'pane.skippedItem',
+                  {
+                    title: task.title,
+                    when: formatTime(task.doneAt ?? task.updatedAt, nowMs, settings.clock),
+                  },
+                ),
+                task.title,
+              )}
+            </Text>
+            <Button
+              key={`dismiss:${sessionId}:${task.id}`}
+              label={t('pane.dismiss')}
+              plain
+              dimColor
+              onPress={() => void dismiss($, options, sessionId, [task])}
+            />
+          </Box>
+          {why ? (
+            <Box paddingLeft={INDENT}>
+              <Text dimColor>{hl(why)}</Text>
+            </Box>
+          ) : null}
+        </Box>
+      )
+    }
 
     // The session's subagents: the running ones in their own section, each folding open to its steps
     // (status + note — a step's own estimate) beside its progress, run time and estimate; the finished
     // ones in a second section, folded by default.
+    // A subagent's own steps, each with its mark and — when it is not done — why, beneath it. `live`:
+    // its open steps take a ✕ (a finished agent's list is a record, nothing left to stop).
+    const agentStepRows = (id: string, a: AgentEntry, live: boolean) =>
+      a.tasks
+        .filter(step => !removedHere(id, removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })))
+        .map(step => {
+          const m = MARK[step.status] ?? { sign: '?' }
+          const stepKey = removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })
+          const why = reasonOf(step)
+          return (
+            <Box key={`agentstepbox:${id}:${stepKey}`} flexDirection="column">
+              <Box
+                key={`agentstep:${id}:${stepKey}`}
+                flexDirection="row"
+                justifyContent="space-between"
+                gap={2}
+                hover={ROW_HOVER}
+              >
+                <Text color={tint(settings.palette, m.color)} dimColor={m.dim}>
+                  {`${m.sign} ${step.title}`}
+                </Text>
+                {live && !isClosed(step.status) ? (
+                  <Button
+                    key={`cancel:${id}:${stepKey}`}
+                    label={t('pane.cancel')}
+                    plain
+                    dimColor
+                    onPress={() => void cancelTask($, options, id, stepKey)}
+                  />
+                ) : null}
+              </Box>
+              {why ? (
+                <Box paddingLeft={INDENT}>
+                  <Text dimColor>{why}</Text>
+                </Box>
+              ) : null}
+            </Box>
+          )
+        })
+
     const agentsBlock = (file: SessionFile) => {
       // A session that switched agent reporting off shows no Agents section.
       if (!effective(defaults, file.toggles).agents) return null
@@ -2951,42 +3042,7 @@ export const register: Register = (on, options) => {
                 {(a.queued ?? []).map(q => (
                   <Text dimColor>{t('pane.agentQueued', { text: q })}</Text>
                 ))}
-                {a.tasks
-                  .filter(
-                    step =>
-                      !removedHere(id, removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })),
-                  )
-                  .map(step => {
-                    const m = MARK[step.status] ?? { sign: '?' }
-                    const stepKey = removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })
-                    return (
-                      <Box flexDirection="column">
-                        <Box
-                          key={`agentstep:${id}:${stepKey}`}
-                          flexDirection="row"
-                          justifyContent="space-between"
-                          gap={2}
-                          hover={ROW_HOVER}
-                        >
-                          <Text color={tint(settings.palette, m.color)}>{`${m.sign} ${step.title}`}</Text>
-                          {isClosed(step.status) ? null : (
-                            <Button
-                              key={`cancel:${id}:${stepKey}`}
-                              label={t('pane.cancel')}
-                              plain
-                              dimColor
-                              onPress={() => void cancelTask($, options, id, stepKey)}
-                            />
-                          )}
-                        </Box>
-                        {step.note ? (
-                          <Box paddingLeft={INDENT}>
-                            <Text dimColor>{step.note}</Text>
-                          </Box>
-                        ) : null}
-                      </Box>
-                    )
-                  })}
+                {agentStepRows(id, a, true)}
               </Box>
             ) : null}
           </Box>
@@ -3031,14 +3087,32 @@ export const register: Register = (on, options) => {
           />
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT}>
-              {listed.map(a => (
-                <Text dimColor>
-                  {t('pane.agentFinished', {
-                    label: a.label,
-                    when: formatTime(a.endedAt ?? a.updatedAt, nowMs, settings.clock),
-                  })}
-                </Text>
-              ))}
+              {listed.map(a => {
+                const label = t('pane.agentFinished', {
+                  label: a.label,
+                  when: formatTime(a.endedAt ?? a.updatedAt, nowMs, settings.clock),
+                })
+                // A finished agent with steps folds open to them — each one's reason beneath it.
+                if (a.tasks.length === 0) return <Text dimColor>{label}</Text>
+                const agentKey = `doneagent:${id}:${a.id}`
+                const agentOpen = folded[agentKey] ?? false
+                return (
+                  <Box key={`doneagentbox:${id}:${a.id}`} flexDirection="column">
+                    <Button
+                      key={agentKey}
+                      label={t('pane.agentFinishedFold', { fold: agentOpen ? '▾' : '▸', label })}
+                      plain
+                      dimColor
+                      onPress={() => void toggle($, agentKey, agentOpen)}
+                    />
+                    {agentOpen ? (
+                      <Box flexDirection="column" paddingLeft={INDENT}>
+                        {agentStepRows(id, a, false)}
+                      </Box>
+                    ) : null}
+                  </Box>
+                )
+              })}
               {capped.older > 0 ? (
                 <Button
                   key={olderKey}

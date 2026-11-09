@@ -108,6 +108,7 @@ export const en = {
   'pane.agentWaiting': ' · waiting on background work',
   'pane.agentQueued': '⧗ queued: {text}',
   'pane.agentSteps': '{bar} {done}/{total}',
+  'pane.agentFinishedFold': '{fold} {label}',
   'pane.agentFinished': '✓ {label}  finished {when}',
   'agent.eta': ', ~{min} min left',
   'agent.etaGuess': ', ~{min} min left (est.)',
@@ -136,6 +137,8 @@ export const en = {
   'pane.clearAll': 'Clear all',
   'pane.doneItem': '✓ {title}  {when}',
   'pane.skippedItem': '– {title}  {when}',
+  'pane.failedItem': '✗ {title}  {when}',
+  'pane.unfinishedReason': 'agent stopped before finishing',
   'pane.dismiss': '  ✕  ',
   'pane.forget': '  ✕  ',
   'status.needsYou': '⚠ {count} need you',
@@ -155,7 +158,7 @@ export const en = {
   'rule.steps':
     '- A task with parts gets `steps` (its subtasks, each with a status; send the whole list each time) and, when a line is not enough, a `detail`: the person unfolds it in the pane and sees n/m of its steps done.',
   'rule.move':
-    '- Move each task as it changes: `doing` when you start it, `done` with a one-line outcome (commit, pipeline) once verified, `blocked` with the reason. Keep `now` true.',
+    '- Move each task as it changes: `doing` when you start it, `done` with a one-line outcome (commit, pipeline) once verified, `blocked` with the reason, `skipped` (it will not be done) or `failed` (tried and could not be done) with WHY in its `note` — the pane shows that reason beneath it. Steps take a `note` the same way. Keep `now` true.',
   'rule.needs':
     '- Everything only the user can do or decide (an approval, a push OK, a login, a choice) goes in `needsYou` the moment it comes up; send `[]` once it is answered.',
   'rule.push':
@@ -166,7 +169,7 @@ export const en = {
   'rule.subagent':
     "- A subagent reports too, under its coordinator's session (never as the session's tasks): every few steps — and when its plan changes — call progress_update with `now`, its steps as `tasks` (statuses moving; each open step's `note` its own estimate, e.g. ~10 min) and `eta` (minutes it expects the rest to take). Its coordinator sees them in its own progress_update answers and in the pane. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
   'rule.milestones':
-    '- Report at the milestones only, to keep your calls few: your plan when multi-step work starts (`now` + the task list, in order), each task as it is done (with a one-line outcome) or blocked (with why), and `now` when what you are on changes. No step-by-step updates.',
+    '- Report at the milestones only, to keep your calls few: your plan when multi-step work starts (`now` + the task list, in order), each task as it is done (with a one-line outcome), blocked, skipped or failed (with why), and `now` when what you are on changes. No step-by-step updates.',
   'rule.nowOnly':
     '- Keep no task list in the pane (tasks are off, or the reporting effort is minimal): report only `now` (what you are doing, kept true) and `needsYou`; send no `tasks`, `order` or `remove`.',
   'toggle.feature.reporting': 'reporting',
@@ -251,7 +254,7 @@ export const en = {
   'prompt.nudge':
     'Progress pane: this session has not reported yet. If this request takes more than one step, your first tool call is mcp__progress-panel__progress_update with `now` and the task list (progress-panel skill); a question answered in one reply needs none.',
   'tool.description':
-    'Update this session\'s entry in the Progress pane that every Claude Code session on this machine shows. A patch: send only what changed. `now` replaces the one-line summary of what you are doing; `needsYou` replaces the list of things only the user can do or decide (send [] once answered); `tasks` upserts by `id` (or by exact `title` when no id; new tasks need a title) with status todo | doing | blocked | done | skipped and an optional short `note`; `remove` deletes task ids. Timestamps are stamped for you. `watch` adds CI pipelines to the pane — GitLab ({ project: "group/name", pipeline: <id> } or { project, sha }) or GitHub Actions ({ provider: "github", project: "owner/repo", run: <id> } or { provider: "github", project, sha }); optional label — the plugin then follows them live through the user\'s glab / gh every 15 s until they finish; `unwatch` removes them by key ("group/name#<id>", "gh:owner/repo#<id>"). A `git push` run through Bash is watched automatically (its result says so); watch what that cannot see — a run by id, another repo\'s pipeline, a push made elsewhere. Call it first on any task that takes more than one step (`now` + the task list), then on every status change, without waiting to be asked. A subagent calls it too, every few steps: `now`, its own steps as `tasks` (each open step\'s `note` its estimate, e.g. "~10 min"), `eta` (minutes left) — that lands under its coordinator\'s session, not as the session\'s tasks. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.',
+    'Update this session\'s entry in the Progress pane that every Claude Code session on this machine shows. A patch: send only what changed. `now` replaces the one-line summary of what you are doing; `needsYou` replaces the list of things only the user can do or decide (send [] once answered); `tasks` upserts by `id` (or by exact `title` when no id; new tasks need a title) with status todo | doing | blocked | done | skipped | failed (tried and could not be done) and an optional short `note` — for blocked / skipped / failed, WHY (shown beneath it); `remove` deletes task ids. Timestamps are stamped for you. `watch` adds CI pipelines to the pane — GitLab ({ project: "group/name", pipeline: <id> } or { project, sha }) or GitHub Actions ({ provider: "github", project: "owner/repo", run: <id> } or { provider: "github", project, sha }); optional label — the plugin then follows them live through the user\'s glab / gh every 15 s until they finish; `unwatch` removes them by key ("group/name#<id>", "gh:owner/repo#<id>"). A `git push` run through Bash is watched automatically (its result says so); watch what that cannot see — a run by id, another repo\'s pipeline, a push made elsewhere. Call it first on any task that takes more than one step (`now` + the task list), then on every status change, without waiting to be asked. A subagent calls it too, every few steps: `now`, its own steps as `tasks` (each open step\'s `note` its estimate, e.g. "~10 min"), `eta` (minutes left) — that lands under its coordinator\'s session, not as the session\'s tasks. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.',
   'tool.saved': 'Saved. {count} task(s):',
   'tool.watching': 'Pipelines: watching {keys} (refreshed every 15 s until they finish).',
   'push.watched':

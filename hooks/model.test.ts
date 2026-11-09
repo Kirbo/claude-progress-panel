@@ -8,10 +8,12 @@ import {
   capNewest,
   DEAD_AFTER_MS,
   dismissTasks,
+  endAgent,
   endDeadSession,
   formatClock,
   formatTime,
   isBlank,
+  isClosed,
   matchesTask,
   mergeScan,
   mergeSidecar,
@@ -20,6 +22,7 @@ import {
   parseSessionFile,
   parseSidecar,
   pruneDone,
+  reopenAgent,
   sortTasks,
   splitMatches,
   syncAgents,
@@ -99,7 +102,7 @@ test('applyUpdate: remove, unknown ids and bad input are reported, not fatal', (
     'remove: no task nope',
     'tasks[0]: no task t9 (give a title to create one)',
     'tasks[1]: a new task needs a title',
-    'tasks[2]: status must be one of todo, doing, blocked, done, skipped',
+    'tasks[2]: status must be one of todo, doing, blocked, done, skipped, failed',
   ])
 })
 
@@ -305,7 +308,7 @@ test('applyUpdate: a task takes a longer detail and subtasks (steps), each patch
   expect(r.file.tasks[0]?.steps).toEqual([{ title: 'CI', status: 'doing' }])
   expect(r.errors).toEqual([
     'tasks[0].steps[1]: a step needs a title',
-    'tasks[0].steps[2]: status must be one of todo, doing, blocked, done, skipped',
+    'tasks[0].steps[2]: status must be one of todo, doing, blocked, done, skipped, failed',
   ])
   r = applyUpdate(r.file, { tasks: [{ id: 't1', detail: '', steps: [] }] }, at)
   expect(r.file.tasks[0]?.detail).toBeUndefined()
@@ -561,4 +564,90 @@ test('a closed step keeps the time it closed; a step closing now is stamped now'
     t1,
   ).file
   expect(second.tasks[0]?.steps?.map(s => s.doneAt)).toEqual([t0, t1])
+})
+
+test('failed is a status a report may set — closed, with its reason; unfinished is never accepted from a report', () => {
+  const at = iso(T0)
+  const r = applyUpdate(
+    fresh(),
+    {
+      tasks: [
+        { title: 'Full-width pane', status: 'failed', note: 'the API cannot place a pane' },
+        {
+          title: 'Steps',
+          steps: [
+            { title: 'tried', status: 'failed', note: ' no runner ' },
+            { title: 'left', status: 'skipped' },
+          ],
+        },
+        { title: 'Sneaky', status: 'unfinished' },
+      ],
+    },
+    at,
+  )
+  expect(r.errors).toEqual(['tasks[2]: status must be one of todo, doing, blocked, done, skipped, failed'])
+  const [failed, withSteps] = r.file.tasks
+  expect(failed?.status).toBe('failed')
+  expect(failed?.note).toBe('the API cannot place a pane')
+  expect(failed?.doneAt).toBe(at)
+  // A step keeps its own reason, trimmed; a step without one has none.
+  expect(withSteps?.steps).toEqual([
+    { title: 'tried', status: 'failed', note: 'no runner', doneAt: at },
+    { title: 'left', status: 'skipped', doneAt: at },
+  ])
+  for (const s of ['done', 'skipped', 'failed', 'unfinished'] as const) expect(isClosed(s)).toBe(true)
+  for (const s of ['todo', 'doing', 'blocked'] as const) expect(isClosed(s)).toBe(false)
+})
+
+test('a session file keeps the plugin-set unfinished status; sorting by status puts failed before done', () => {
+  const file = {
+    ...fresh(),
+    tasks: (['unfinished', 'done', 'failed', 'blocked'] as const).map(status =>
+      task({ id: status[0], status }),
+    ),
+  }
+  expect(parseSessionFile(JSON.stringify(file))?.tasks.map(t => t.status)).toEqual([
+    'unfinished',
+    'done',
+    'failed',
+    'blocked',
+  ])
+  expect(sortTasks(file.tasks, 'status').map(t => t.id)).toEqual(['b', 'f', 'd', 'u'])
+})
+
+test('an agent that stops for good leaves its open steps unfinished; a pause or a resume does not', () => {
+  const at = iso(T0)
+  let file = applyAgentUpdate(
+    fresh(),
+    { id: 'a1', label: 'Lane' },
+    {
+      tasks: [
+        { title: 'one', status: 'done' },
+        { title: 'two', status: 'doing' },
+        { title: 'three', status: 'todo' },
+      ],
+    },
+    at,
+  ).file
+  const statuses = (f: SessionFile) => f.agents?.[0]?.tasks.map(t => t.status)
+  // Waiting on its own background work: nothing changes but the waiting mark.
+  const paused = endAgent(file, 'a1', iso(T0 + 1000), true)
+  expect(statuses(paused)).toEqual(['done', 'doing', 'todo'])
+  expect(paused.agents?.[0]?.endedAt).toBeNull()
+  // Stopped for good: ended, its `doing` step unfinished (a todo stays todo — it never started).
+  file = endAgent(file, 'a1', iso(T0 + 2000))
+  expect(file.agents?.[0]?.endedAt).toBe(iso(T0 + 2000))
+  expect(statuses(file)).toEqual(['done', 'unfinished', 'todo'])
+  // Resumed: running again, the unfinished step back to doing.
+  file = reopenAgent(file, 'a1', iso(T0 + 3000))
+  expect(file.agents?.[0]?.endedAt).toBeNull()
+  expect(statuses(file)).toEqual(['done', 'doing', 'todo'])
+  // The list sync ending a never-resumed agent does the same.
+  const synced = syncAgents(
+    applyAgentUpdate(fresh(), { id: 'a2', label: 'L2' }, { tasks: [{ title: 'x', status: 'doing' }] }, at)
+      .file,
+    [{ id: 'a2', description: 'L2', status: 'completed' }],
+    iso(T0 + 4000),
+  )
+  expect(synced.agents?.[0]?.tasks[0]?.status).toBe('unfinished')
 })

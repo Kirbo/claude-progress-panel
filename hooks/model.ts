@@ -15,13 +15,23 @@ import type {
 
 export type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task }
 
-export const STATUSES = ['todo', 'doing', 'blocked', 'done', 'skipped'] as const satisfies readonly Status[]
+/** The statuses a report may set. `unfinished` is the plugin's own (an agent stopped with the step
+ *  open), so it is read back from a file but never accepted from a report. */
+export const STATUSES = [
+  'todo',
+  'doing',
+  'blocked',
+  'done',
+  'skipped',
+  'failed',
+] as const satisfies readonly Status[]
+const STORED_STATUSES: readonly Status[] = [...STATUSES, 'unfinished']
 
 // `plan` first: the default, the order the session lists its tasks in — the order it will do them.
 export const SORTS = ['plan', 'status', 'title', 'created', 'done'] as const
 export type SortBy = (typeof SORTS)[number]
 
-export type StepInput = { title?: string; status?: string }
+export type StepInput = { title?: string; status?: string; note?: string }
 export type TaskInput = {
   id?: string
   title?: string
@@ -47,12 +57,17 @@ export type UpdateInput = {
   eta?: number
 }
 
+/** Closed = no more work will happen on it: done, skipped, failed or left unfinished. */
 export function isClosed(status: Status): boolean {
-  return status === 'done' || status === 'skipped'
+  return status === 'done' || status === 'skipped' || status === 'failed' || status === 'unfinished'
 }
 
 function isStatus(value: unknown): value is Status {
   return typeof value === 'string' && (STATUSES as readonly string[]).includes(value)
+}
+
+function isStoredStatus(value: unknown): value is Status {
+  return typeof value === 'string' && (STORED_STATUSES as readonly string[]).includes(value)
 }
 
 export function newSession(info: Omit<SessionInfo, 'startedAt' | 'endedAt'>, nowIso: string): SessionFile {
@@ -310,7 +325,15 @@ export function pruneDone(file: SessionFile, hours: number, nowMs: number): Sess
       )
 }
 
-const STATUS_ORDER: Record<Status, number> = { blocked: 0, doing: 1, todo: 2, done: 3, skipped: 4 }
+const STATUS_ORDER: Record<Status, number> = {
+  blocked: 0,
+  doing: 1,
+  todo: 2,
+  failed: 3,
+  done: 4,
+  skipped: 5,
+  unfinished: 6,
+}
 const time = (iso: string | null) => (iso ? Date.parse(iso) || 0 : 0)
 
 /**
@@ -368,7 +391,8 @@ function extras(
             ? before.doneAt
             : nowIso
           : undefined
-        steps.push({ title, status, ...(doneAt ? { doneAt } : {}) })
+        const note = typeof step.note === 'string' ? step.note.trim() : ''
+        steps.push({ title, status, ...(note ? { note } : {}), ...(doneAt ? { doneAt } : {}) })
       }
     }
   }
@@ -505,7 +529,7 @@ export function syncAgents(file: SessionFile, listed: readonly ListedAgent[], no
     } else if (ended && known.endedAt === null && !known.resumedAt) {
       // A resumed agent keeps its first run's "completed" in the list: only its own SubagentStop
       // ends it again, never this sync.
-      agents = agents.map(x => (x.id === a.id ? { ...x, endedAt: nowIso, updatedAt: nowIso } : x))
+      agents = agents.map(x => (x.id === a.id ? stopped(x, nowIso) : x))
       changed = true
     } else if (!ended && known.endedAt !== null) {
       // The list says it runs again (resumed): back among the running.
@@ -526,7 +550,7 @@ export function endAgent(file: SessionFile, id: string, nowIso: string, waiting 
   if (waiting && agent.waiting) return file
   const next = waiting
     ? { ...agent, waiting: true as const, updatedAt: nowIso }
-    : { ...withoutWaiting(agent), endedAt: nowIso, updatedAt: nowIso }
+    : stopped(withoutWaiting(agent), nowIso)
   return { ...file, agents: (file.agents ?? []).map(a => (a.id === id ? next : a)), updatedAt: nowIso }
 }
 
@@ -535,8 +559,30 @@ function withoutWaiting(a: AgentEntry): AgentEntry {
   return rest
 }
 
+/** The agent stopped for good: ended, and the steps it left `doing` are `unfinished` — a finished
+ *  agent never looks busy. */
+function stopped(a: AgentEntry, nowIso: string): AgentEntry {
+  return {
+    ...a,
+    endedAt: nowIso,
+    updatedAt: nowIso,
+    tasks: a.tasks.map(t =>
+      t.status === 'doing' ? { ...t, status: 'unfinished' as const, updatedAt: nowIso } : t,
+    ),
+  }
+}
+
+/** Back among the running: the steps its stop left `unfinished` are `doing` again. */
 function reopened(a: AgentEntry, nowIso: string): AgentEntry {
-  return { ...withoutWaiting(a), endedAt: null, resumedAt: nowIso, updatedAt: nowIso }
+  return {
+    ...withoutWaiting(a),
+    endedAt: null,
+    resumedAt: nowIso,
+    updatedAt: nowIso,
+    tasks: a.tasks.map(t =>
+      t.status === 'unfinished' ? { ...t, status: 'doing' as const, updatedAt: nowIso } : t,
+    ),
+  }
 }
 
 /**
@@ -607,7 +653,7 @@ export function parseSessionFile(text: string): SessionFile | undefined {
       t !== null &&
       typeof (t as Task).id === 'string' &&
       typeof (t as Task).title === 'string' &&
-      isStatus((t as Task).status),
+      isStoredStatus((t as Task).status),
   )
   const seq = typeof f.seq === 'number' && Number.isFinite(f.seq) ? f.seq : 0
   const pipelines = asPipelines(f.pipelines)

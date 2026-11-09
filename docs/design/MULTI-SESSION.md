@@ -149,8 +149,15 @@ session's own compaction fires `classic.SessionStart` with `source: "compact"` (
 when this module composed no prompt, its `additionalContext` carries `prompt.reporting` again. A
 composed session gets nothing — its section survives.
 
-Status values: `todo`, `doing`, `blocked`, `done`, `skipped`. The plugin stamps `createdAt`,
-`updatedAt` and `doneAt` (set on entering done/skipped, cleared on re-opening). The tool answers
+Status values: `todo`, `doing`, `blocked`, `done`, `skipped`, `failed` (0.23.0), and the plugin's
+own `unfinished` (0.23.0: never accepted from a report). Closed = done / skipped / failed /
+unfinished. Each row's `note` shows beneath it (a step's too, since 0.23.0 — `Step.note`): the
+outcome of a done one, WHY for blocked (⚠ magenta), skipped (– dim), failed (✗ red) — the reason
+is never folded away. A subagent that stops for good (SubagentStop or the list sync, not a
+background-work pause) turns its `doing` steps `unfinished` (– dim, "agent stopped before
+finishing" unless noted); a resume turns them back to `doing`. A finished subagent folds open
+under Done → Agents to the same step list, without ✕. The plugin stamps `createdAt`,
+`updatedAt` and `doneAt` (set on entering a closed status, cleared on re-opening). The tool answers
 with the session's task list (ids, statuses) so the agent can address tasks by id.
 
 ## Reading: refresh

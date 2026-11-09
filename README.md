@@ -67,6 +67,11 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   Settings `autoNeedsPermission` / `autoNeedsIdle` (both on).
 - **Sessions** are named as Claude Code names them: a `/rename` shows from your next prompt on
   (else the repo or folder name).
+- **What each mark means:** ○ to do, ● in progress, ⚠ blocked (magenta), ✓ done, – skipped
+  (dim — it will not be done), ✗ failed (red — tried and could not be done). A blocked, skipped or
+  failed task or step shows its reason on the line beneath it. When a subagent stops for good, a step
+  it left in progress turns – "agent stopped before finishing", so a finished agent never looks busy;
+  a finished agent under Done → Agents folds open to its steps.
 - **Tasks:** listed in plan order by default — the order the agent will do them (it reshuffles
   with `order`). A task with subtasks or a detail is a fold: its title shows `██░░ n/m` of its steps
   done, and a press opens the detail and each step — a task in progress with steps starts open, so

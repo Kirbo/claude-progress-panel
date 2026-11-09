@@ -697,6 +697,84 @@ test('a subagent that stops is marked finished and folded under Agents — and s
   expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.label)).toEqual(['Lane B: the rest'])
 })
 
+test('skipped, failed and unfinished read differently — each with its reason beneath, also under a finished agent', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-9', description: 'Lane Z', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, {
+    tasks: [
+      {
+        title: 'Ship it',
+        status: 'doing',
+        steps: [
+          { title: 'push', status: 'done' },
+          { title: 'Windows runner', status: 'failed', note: 'no runner for that platform' },
+          { title: 'mirror', status: 'skipped', note: 'not needed any more' },
+          { title: 'review', status: 'blocked', note: 'waiting for the user' },
+        ],
+      },
+      { title: 'Full-width pane', status: 'failed', note: 'the API cannot place a pane' },
+    ],
+  })
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-9',
+    now: 'items',
+    tasks: [
+      { title: '16. Reopen', status: 'done' },
+      { title: '17. Full-width pane toggle', status: 'skipped', note: 'API: placement is read-only' },
+      { title: '4. Dead sessions', status: 'doing' },
+    ],
+  } as never)
+  await $.classic.SubagentStop({
+    agent_id: 'sub-9',
+    agent_type: 'general-purpose',
+    stop_hook_active: false,
+    agent_transcript_path: '/t',
+  } as never)
+  // The step it left `doing` is unfinished now: a finished agent never looks busy.
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.tasks.map(x => x.status)).toEqual([
+    'done',
+    'skipped',
+    'unfinished',
+  ])
+  const ui = await pane($)
+  let lines = await texts(ui)
+  // The open task's steps: ✗ red failed, – dim skipped, ⚠ magenta blocked — each reason beneath.
+  expect(lines).toContain('✗ Windows runner')
+  expect(lines).toContain('no runner for that platform')
+  expect(lines).toContain('– mirror')
+  expect(lines).toContain('not needed any more')
+  expect(lines).toContain('waiting for the user')
+  expect((await ui.find({ type: 'Text', text: '✗ Windows runner' }))?.props.color).toBe('red')
+  expect((await ui.find({ type: 'Text', text: '– mirror' }))?.props.dimColor).toBe(true)
+  // The failed task sits under Done, red, its reason beneath.
+  await ui.press({ key: 'done:s-me' })
+  lines = await texts(ui)
+  expect(lines.some(l => l.startsWith('✗ Full-width pane'))).toBe(true)
+  expect(lines).toContain('the API cannot place a pane')
+  const failedRow = (await ui.findAll({ type: 'Text' })).find(x =>
+    (x.text ?? '').startsWith('✗ Full-width pane'),
+  )
+  expect(failedRow?.props.color).toBe('red')
+  // The finished agent folds open to its steps: skipped with its reason, unfinished with the default.
+  await ui.press({ key: 'doneagents:s-me' })
+  await ui.press({ key: 'doneagent:s-me:sub-9' })
+  lines = await texts(ui)
+  expect(lines).toContain('– 17. Full-width pane toggle')
+  expect(lines).toContain('API: placement is read-only')
+  expect(lines).toContain('– 4. Dead sessions')
+  expect(lines).toContain('agent stopped before finishing')
+  // A finished agent's list is a record: no ✕ on its steps.
+  expect(
+    (await ui.findAll({ type: 'Button' })).some(b =>
+      String(b.props.key ?? '').startsWith('cancel:s-me:agent:sub-9:'),
+    ),
+  ).toBe(false)
+  await ui.unmount()
+})
+
 test("an agent the session doesn't list still reports, under its id", async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
