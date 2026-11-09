@@ -98,6 +98,7 @@ function engine(
   on('classic.SessionStart', () => ({}) as never)
   on('classic.PostToolUse', () => ({}) as never)
   on('classic.SubagentStop', () => ({}) as never)
+  on('classic.SubagentStart', () => ({}) as never)
   // The session's subagents, as $.agent.list() answers (their Agent call's description).
   const agents: { id: string; description: string; type: string; status: string }[] = []
   on('agent.list', () => ({ value: agents }) as never)
@@ -2607,6 +2608,56 @@ test('a session the plugin joined mid-way gets the reporting rule with its next 
   // The first report ends it.
   await update($, { now: 'Fixing it', tasks: [{ title: 'Fix' }] })
   expect(await context()).toEqual([])
+})
+
+test('a compaction hands the rule again to a session that only had it from a prompt — never to a composed one', async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  const context = async (e: object) =>
+    ((await $.classic.SessionStart(e as never)) as { additionalContext?: string[] }).additionalContext ?? []
+  // The rule rode the first prompt (the plugin joined mid-way): a compaction may summarise it away.
+  await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)
+  const after = (await context({ source: 'compact' })).join('\n')
+  expect(after).toContain('# Progress pane')
+  // Any other start is not a compaction.
+  expect(await context({ source: 'resume' })).toEqual([])
+  // A subagent's own compaction is not the session's.
+  expect(await context({ source: 'compact', agent_id: 'sub-c' })).toEqual([])
+})
+
+test('a composed system prompt survives a compaction: no copy of the rule rides it', async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  await $.prompt.compose({
+    model: 'claude-opus-5-5',
+    promptModel: 'claude-opus-5-5',
+    surfaces: ['terminal'],
+    tools: ['Bash', TOOL],
+    outputStyle: null,
+    traits: ['skills'],
+  })
+  const after = (await $.classic.SessionStart({ source: 'compact' } as never)) as {
+    additionalContext?: string[]
+  }
+  expect(after.additionalContext ?? []).toEqual([])
+})
+
+test('a subagent is handed the reporting rule as it starts; its first tool call then carries no second copy', async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  const started = (await $.classic.SubagentStart({
+    agent_id: 'sub-start',
+    agent_type: 'general-purpose',
+  } as never)) as { additionalContext?: string[] }
+  expect((started.additionalContext ?? []).join(' ')).toContain('you are a subagent')
+  const first = (await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'z1',
+    agent_id: 'sub-start',
+  } as never)) as { additionalContext?: string[] }
+  expect((first.additionalContext ?? []).join(' ')).not.toContain('you are a subagent')
 })
 
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {

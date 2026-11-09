@@ -1122,8 +1122,9 @@ async function readOwnPlain(
 const subagentRuleSent = new Set<string>()
 
 // A subagent's system prompt never carries the reporting rule (`prompt.compose` builds only the
-// session's) and the engine has no SubagentStart: so its FIRST tool call's result carries the
-// subagent part of the rule — once per agent, and never to one that already reported.
+// session's): SubagentStart hands it the subagent part of the rule as it starts and, where that
+// event never fired (an engine without it), its FIRST tool call's result carries it — once per
+// agent, and never to one that already reported.
 async function withSubagentRule<R extends { additionalContext?: string[] }>(
   $: EngineInterface,
   options: PluginOptions,
@@ -1380,10 +1381,23 @@ export const register: Register = (on, options) => {
 
   // The session's name (the plugin API has none): SessionStart carries a resumed session's title,
   // UserPromptSubmit the current one, so a `/rename` shows from the next prompt on.
+  // A compaction keeps the system prompt but summarises the conversation: a rule that only rode a
+  // prompt (`ruleSent`, the plugin joined mid-way) can be summarised away, so the session's own
+  // compaction (SessionStart `compact`, never a subagent's) hands it over again.
   on('classic.SessionStart', async ($, e, next) => {
-    await noteTitle($, options, (e as { session_title?: unknown }).session_title)
-    return next(e)
+    const start = e as { session_title?: unknown; source?: unknown; agent_id?: unknown }
+    await noteTitle($, options, start.session_title)
+    const result = await next(e)
+    if (start.source !== 'compact' || start.agent_id || ruleComposed) return result
+    ruleSent = true
+    return { ...result, additionalContext: [...(result.additionalContext ?? []), t('prompt.reporting')] }
   })
+  // A subagent starts: the subagent part of the rule, once (its tool calls then carry none).
+  on('classic.SubagentStart', async ($, e, next) => {
+    const result = await next(e)
+    const id = (e as { agent_id?: unknown }).agent_id
+    return typeof id === 'string' && id ? withSubagentRule($, options, id, result) : result
+  }).catch(() => undefined) // a failure here never holds a subagent up: the hook counts as absent
   on('classic.UserPromptSubmit', async ($, e, next) => {
     await noteTitle($, options, (e as { session_title?: unknown }).session_title)
     return withReportingNudge($, options, withRemovalNotice(await next(e)))

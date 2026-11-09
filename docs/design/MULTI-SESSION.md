@@ -116,12 +116,19 @@ user asked why the pane was empty (2026-11-09). `UserPromptSubmit` now closes th
 then — while the session's own file is still blank — a one-line `prompt.nudge`. The first report
 ends both.
 
-**…and in every subagent (0.21.5).** A subagent's system prompt is not composed through this hook
-either, and the engine has no `SubagentStart`: a fresh general-purpose subagent had the tool but
-never the rule, and never reported (2026-11-09). So a subagent's FIRST tool call (`PostToolUse`
-with an `agent_id`) carries `prompt.subagent` in its `additionalContext` — once per agent id
-(process-wide set), and not at all to one whose entry already holds a `now` or tasks. The main
-loop's `PostToolUse` keeps only the removal notice.
+**…and in every subagent (0.21.5; 0.22.1 as it starts).** A subagent's system prompt is not
+composed through this hook either: a fresh general-purpose subagent had the tool but never the
+rule, and never reported (2026-11-09). `classic.SubagentStart` (its `additionalContext`) hands it
+`prompt.subagent` as it starts; where that event does not fire, its FIRST tool call (`PostToolUse`
+with an `agent_id`) carries it instead — once per agent id either way (process-wide set), and not
+at all to one whose entry already holds a `now` or tasks. The main loop's `PostToolUse` keeps only
+the removal notice.
+
+**…and after a compaction (0.22.1).** A compaction keeps the system prompt but summarises the
+conversation, so a rule that only rode a prompt (the mid-way case) can be summarised away. The
+session's own compaction fires `classic.SessionStart` with `source: "compact"` (no `agent_id`):
+when this module composed no prompt, its `additionalContext` carries `prompt.reporting` again. A
+composed session gets nothing — its section survives.
 
 Status values: `todo`, `doing`, `blocked`, `done`, `skipped`. The plugin stamps `createdAt`,
 `updatedAt` and `doneAt` (set on entering done/skipped, cleared on re-opening). The tool answers
@@ -382,8 +389,8 @@ a local plugin.)
   reviewer type with `tools: Read, Grep, …`) never reports, so it used to be invisible. Each 2 s
   scan folds `$.agent.list()` into the session's own file (`syncAgents`): a running agent not yet
   known gets an entry labelled by its description (no steps), one the list says `completed` /
-  `failed` / `killed` is finished; written only when something changed. The engine has no
-  `classic.SubagentStart` event to hang this on.
+  `failed` / `killed` is finished; written only when something changed. (`classic.SubagentStart` delivers the
+  reporting rule since 0.22.1; the listing stays the scan's, which also sees agents without the tool.)
 - Every background step nobody awaits (timer ticks, the startup lookups) is `detached`: a failure
   or a step outliving its session is dropped, never an unhandled rejection.
 

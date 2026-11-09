@@ -66,8 +66,8 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
   (`todo`), listed in the order you will do them — on your own, never waiting to be asked. The
   pane's default sort is that plan order: when it changes, send `order`. The plugin adds this rule to every session's
   system prompt (section `progress-panel:reporting`) — or, in a session it joined mid-way, to the next
-  prompt, with a short reminder until the first report; a subagent gets its part with its first
-  tool call's result — so it holds without loading this skill.
+  prompt (and again after a compaction), with a short reminder until the first report; a subagent
+  gets its part as it starts — so it holds without loading this skill.
 - **Each change:** mark the task `doing` when you start it, `done` (with a one-line outcome in
   `note`: commit hash, pipeline id) when verified, `blocked` with the reason when stuck.
 - **Asks:** put a blocker in `needsYou` the moment you need the user, and clear it (`[]` or the
