@@ -1,9 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 import type { SessionFile, Task } from './model'
 import {
+  AGENT_IDLE_MS,
   addDismissals,
   applyAgentUpdate,
   applyUpdate,
+  cancelDeeper,
   cancelTasks,
   capNewest,
   DEAD_AFTER_MS,
@@ -23,12 +25,15 @@ import {
   parseSessionFile,
   parseSidecar,
   pruneDone,
+  removalKey,
   reopenAgent,
+  sameTitle,
   sortTasks,
   splitMatches,
   syncAgents,
   timeLeft,
   visibleTasks,
+  waitingOnFrom,
 } from './model'
 
 const T0 = Date.UTC(2026, 10, 6, 20, 0, 0)
@@ -635,10 +640,10 @@ test('an agent that stops for good leaves its open steps unfinished; a pause or 
   const paused = endAgent(file, 'a1', iso(T0 + 1000), true)
   expect(statuses(paused)).toEqual(['done', 'doing', 'todo'])
   expect(paused.agents?.[0]?.endedAt).toBeNull()
-  // Stopped for good: ended, its `doing` step unfinished (a todo stays todo — it never started).
+  // Stopped for good: ended, every open step unfinished — a finished agent keeps no stale steps.
   file = endAgent(file, 'a1', iso(T0 + 2000))
   expect(file.agents?.[0]?.endedAt).toBe(iso(T0 + 2000))
-  expect(statuses(file)).toEqual(['done', 'unfinished', 'todo'])
+  expect(statuses(file)).toEqual(['done', 'unfinished', 'unfinished'])
   // Resumed: running again, the unfinished step back to doing.
   file = reopenAgent(file, 'a1', iso(T0 + 3000))
   expect(file.agents?.[0]?.endedAt).toBeNull()
@@ -660,4 +665,88 @@ test('displayWidth counts terminal cells: wide CJK and emoji 2, marks and joiner
   expect(displayWidth('é')).toBe(1) // e + combining acute
   expect(displayWidth('👩‍💻')).toBe(4) // two pictographs, the joiner counts 0
   expect(displayWidth('')).toBe(0)
+})
+
+// --- 0.23.0 G–J: no agent looks busy after it stopped; ✕ on a stopped one dismisses it; a wait
+// names its work; a step is never added twice. ---
+
+const lane = (status: 'doing' | 'todo' = 'doing') =>
+  applyAgentUpdate(
+    fresh(),
+    { id: 'a1', label: 'Lane' },
+    { tasks: [{ title: 'one', status: 'done' }, { title: 'two', status }, { title: 'three' }] },
+    iso(T0),
+  ).file
+
+test('a resumed or waiting agent the list calls completed ends once it shows no activity; leftovers unfinished', () => {
+  // Resumed (it reported after a stop): the list keeps its first run's "completed".
+  const resumed = reopenAgent(endAgent(lane(), 'a1', iso(T0 + 1000)), 'a1', iso(T0 + 2000))
+  const listed = [{ id: 'a1', description: 'Lane', status: 'completed' }]
+  // Still active lately: left running.
+  expect(syncAgents(resumed, listed, iso(T0 + 2000 + AGENT_IDLE_MS - 1)).agents?.[0]?.endedAt).toBeNull()
+  // Quiet for the idle window: ended, every open step unfinished (none looks busy or stale).
+  const ended = syncAgents(resumed, listed, iso(T0 + 2000 + AGENT_IDLE_MS))
+  expect(ended.agents?.[0]?.endedAt).not.toBeNull()
+  expect(ended.agents?.[0]?.tasks.map(t => t.status)).toEqual(['done', 'unfinished', 'unfinished'])
+  // A later report reopens it with its steps as they were.
+  const back = reopenAgent(ended, 'a1', iso(T0 + 2000 + AGENT_IDLE_MS + 5))
+  expect(back.agents?.[0]?.tasks.map(t => t.status)).toEqual(['done', 'doing', 'todo'])
+  // Waiting on background work and never stopped again: the same, and `waiting` is cleared.
+  const waiting = endAgent(lane(), 'a1', iso(T0 + 1000), true, 'cargo nextest')
+  expect(waiting.agents?.[0]?.waiting).toBe(true)
+  const done = syncAgents(waiting, listed, iso(T0 + 1000 + AGENT_IDLE_MS))
+  expect(done.agents?.[0]?.waiting).toBeUndefined()
+  expect(done.agents?.[0]?.waitingOn).toBeUndefined()
+  expect(done.agents?.[0]?.endedAt).not.toBeNull()
+  // The list saying "running" keeps a waiting agent waiting.
+  const stillRunning = syncAgents(waiting, [{ ...listed[0], status: 'running' }], iso(T0 + AGENT_IDLE_MS * 9))
+  expect(stillRunning.agents?.[0]?.waiting).toBe(true)
+})
+
+test('✕ on a finished or waiting agent dismisses it; on a running one it is told to stop; an old ✕ is honoured', () => {
+  const key = removalKey({ kind: 'agent', agentId: 'a1' })
+  const finished = endAgent(lane(), 'a1', iso(T0 + 1000))
+  expect(cancelDeeper(finished, [key], iso(T0 + 2000), 'x').file.agents ?? []).toEqual([])
+  const waiting = endAgent(lane(), 'a1', iso(T0 + 1000), true)
+  const w = cancelDeeper(waiting, [key], iso(T0 + 2000), 'x')
+  expect(w.file.agents ?? []).toEqual([])
+  expect(w.notices).toEqual([])
+  const running = cancelDeeper(lane(), [key], iso(T0 + 2000), 'x')
+  expect(running.file.agents?.[0]?.cancelledAt).toBe(iso(T0 + 2000))
+  expect(running.notices).toEqual([{ what: 'agent', agentId: 'a1' }])
+  // A ✕ recorded before (cancelledAt) on an agent that turned out to be only waiting: gone on the
+  // next fold, even with no new key.
+  const old = { ...running.file, agents: running.file.agents?.map(a => ({ ...a, waiting: true as const })) }
+  expect(cancelDeeper(old, [key], iso(T0 + 3000), 'x').file.agents ?? []).toEqual([])
+})
+
+test('a wait names its background work; nothing named says so', () => {
+  expect(waitingOnFrom([{ description: 'cargo nextest', command: 'x' }, { command: 'pnpm test' }])).toBe(
+    'cargo nextest, pnpm test',
+  )
+  expect(waitingOnFrom(['sleep 5'])).toBe('sleep 5')
+  expect(waitingOnFrom([{}])).toBeUndefined()
+  expect(waitingOnFrom(undefined)).toBeUndefined()
+  expect(endAgent(lane(), 'a1', iso(T0 + 1), true, 'cargo nextest').agents?.[0]?.waitingOn).toBe(
+    'cargo nextest',
+  )
+})
+
+test('a step re-added under a reworded title is refused and pointed at its id; updating by id works', () => {
+  expect(sameTitle('B1/B2: live dead-session proof', 'B: Live dead session proof.')).toBe(true)
+  expect(sameTitle('11. Agent-time estimates', 'agent time estimates')).toBe(true)
+  expect(sameTitle('a long title', 'a long title (no steps)')).toBe(false)
+  const base = applyUpdate(fresh(), { tasks: [{ title: 'D: switches row under the header' }] }, iso(T0)).file
+  const dup = applyUpdate(base, { tasks: [{ title: 'd. Switches row, under the header!' }] }, iso(T0 + 1))
+  expect(dup.file.tasks).toHaveLength(1)
+  expect(dup.errors[0]).toMatch(/did you mean t1 \(D: switches row under the header\)\? update it by id/)
+  // A closed twin is no obstacle: a new step may share a done one's words.
+  const closed = applyUpdate(base, { tasks: [{ id: 't1', status: 'done' }] }, iso(T0 + 2)).file
+  expect(
+    applyUpdate(closed, { tasks: [{ title: 'd. Switches row, under the header!' }] }, iso(T0 + 3)).file.tasks,
+  ).toHaveLength(2)
+  // Renaming by id is the way.
+  const renamed = applyUpdate(base, { tasks: [{ id: 't1', title: 'D: switches row (final)' }] }, iso(T0 + 4))
+  expect(renamed.errors).toEqual([])
+  expect(renamed.file.tasks[0]?.title).toBe('D: switches row (final)')
 })

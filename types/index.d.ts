@@ -25,6 +25,8 @@ export type AgentEntry = {
   cancelledAt?: string
   /** It stopped with background work still running (0.23.0): it resumes on its own. */
   waiting?: true
+  /** What it waits on (0.23.0): the SubagentStop's background tasks, as the event named them. */
+  waitingOn?: string
   /** It was resumed after it had ended (0.23.0): only its own next stop ends it again. */
   resumedAt?: string
   /** Messages the coordinator sent it (SendMessage) that it has not picked up yet (0.23.0). */
@@ -43,6 +45,8 @@ export type Step = {
 }
 
 export type Task = {
+  /** The status an `unfinished` step had when its agent stopped (0.23.0): restored on a resume. */
+  before?: 'todo' | 'doing' | 'blocked'
   id: string
   title: string
   status: Status

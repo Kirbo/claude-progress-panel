@@ -59,6 +59,7 @@ import {
   syncAgents,
   timeLeft,
   visibleTasks,
+  waitingOnFrom,
   withAutoTask,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
@@ -2285,7 +2286,7 @@ export const register: Register = (on, options) => {
         // Still running background work: it waits (and resumes on its own) — not finished.
         const background = (e as { background_tasks?: unknown }).background_tasks
         const waiting = Array.isArray(background) && background.length > 0
-        const ended = endAgent(own, id, at, waiting)
+        const ended = endAgent(own, id, at, waiting, waiting ? waitingOnFrom(background) : undefined)
         if (ended !== own) await save($, dir, ended)
         if (waiting) return
         // A task linked to it: the coordinator is told to verify and update it — never done for it.
@@ -3171,6 +3172,11 @@ export const register: Register = (on, options) => {
               <Box flexDirection="column" paddingLeft={INDENT}>
                 {/* A label the row cut with "…": whole here, wrapped. */}
                 {wouldCut(a.label, INDENT * 3 + 2, AGENT_RIGHT_COLS) ? <Text>{a.label}</Text> : null}
+                {a.waiting ? (
+                  <Text dimColor>
+                    {a.waitingOn ? t('pane.waitingOn', { what: a.waitingOn }) : t('pane.waitingOnUnknown')}
+                  </Text>
+                ) : null}
                 {a.now ? <Text dimColor>{a.now}</Text> : null}
                 {(a.queued ?? []).map(q => (
                   <Text dimColor>{t('pane.agentQueued', { text: q })}</Text>

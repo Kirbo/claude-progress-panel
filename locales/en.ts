@@ -106,6 +106,8 @@ export const en = {
   'pane.agentFold': '{fold} {label}',
   'pane.agentElapsed': ' · {d}',
   'pane.agentWaiting': ' · waiting on background work',
+  'pane.waitingOn': 'waiting on: {what} (background)',
+  'pane.waitingOnUnknown': 'waiting on its background task',
   'pane.agentQueued': '⧗ queued: {text}',
   'pane.agentSteps': '{bar} {done}/{total}',
   'pane.agentFinishedFold': '{fold} {label}',
@@ -170,7 +172,7 @@ export const en = {
   'rule.steps':
     '- A task with parts gets `steps` (its subtasks, each with a status; send the whole list each time) and, when a line is not enough, a `detail`: the person unfolds it in the pane and sees n/m of its steps done.',
   'rule.move':
-    '- Move each task as it changes: `doing` when you start it, `done` with a one-line outcome (commit, pipeline) once verified, `blocked` with the reason, `skipped` (it will not be done) or `failed` (tried and could not be done) with WHY in its `note` — the pane shows that reason beneath it. Steps take a `note` the same way. Keep `now` true.',
+    '- Move each task as it changes: `doing` when you start it, `done` with a one-line outcome (commit, pipeline) once verified, `blocked` with the reason, `skipped` (it will not be done) or `failed` (tried and could not be done) with WHY in its `note` — the pane shows that reason beneath it. Steps take a `note` the same way. Update a task by its `id` (rename it by sending the new title with that id) — never re-add it under a new title. Keep `now` true.',
   'rule.needs':
     '- Everything only the user can do or decide (an approval, a push OK, a login, a choice) goes in `needsYou` the moment it comes up; send `[]` once it is answered.',
   'rule.push':
@@ -257,7 +259,7 @@ export const en = {
   'tool.tasksOff': 'Tasks are off for this session: `tasks`, `order` and `remove` were ignored.',
   'tool.pipelinesOff': 'Pipelines are off for this session: `watch` was ignored.',
   'prompt.subagent':
-    "Progress pane: you are a subagent, and your coordinator's session shows you in the Progress pane. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta` (minutes left); then again every few steps and when your plan changes. It lands under your coordinator's session, never as its tasks. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
+    "Progress pane: you are a subagent, and your coordinator's session shows you in the Progress pane. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta` (minutes left); then again every few steps and when your plan changes — updating each step by its `id`, never re-adding it under a new title. It lands under your coordinator's session, never as its tasks. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
   'prompt.subagentMilestones':
     "Progress pane: you are a subagent, shown under your coordinator's session. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` and `eta` (minutes left); then only when a step is done or blocked. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
   'prompt.subagentMinimal':

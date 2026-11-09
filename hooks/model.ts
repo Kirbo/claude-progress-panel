@@ -140,6 +140,17 @@ export function applyUpdate(
         errors.push(`tasks[${i}]: a new task needs a title`)
         return
       }
+      // An open task with nearly the same title is that task re-added under a new name: refused,
+      // pointed at the id to update — a list never carries the same step twice.
+      const twin = patch.id
+        ? undefined
+        : tasks.find(t => !isClosed(t.status) && sameTitle(t.title, patch.title ?? ''))
+      if (twin) {
+        errors.push(
+          `tasks[${i}]: did you mean ${twin.id} (${twin.title})? update it by id — rename it by sending a new title with that id`,
+        )
+        return
+      }
       const created = status ?? 'todo'
       const id = patch.id ?? `t${seq + 1}`
       seq = highestSeq(seq, [id])
@@ -497,6 +508,13 @@ export type ListedAgent = { id: string; description: string; status: string }
 
 const AGENT_ENDED = new Set(['completed', 'failed', 'killed'])
 
+/** A resumed or waiting agent the list calls ended is ended after this long without activity. */
+export const AGENT_IDLE_MS = 3 * 60_000
+
+function idle(a: AgentEntry, nowIso: string): boolean {
+  return Date.parse(nowIso) - Date.parse(a.updatedAt) >= AGENT_IDLE_MS
+}
+
 /**
  * The session's subagents folded into its entries, so one that never reports (an agent without the
  * progress tool, e.g. a read-only reviewer) still shows under Agents while it runs: a running one not
@@ -526,9 +544,15 @@ export function syncAgents(file: SessionFile, listed: readonly ListedAgent[], no
         },
       ]
       changed = true
-    } else if (ended && known.endedAt === null && !known.resumedAt) {
-      // A resumed agent keeps its first run's "completed" in the list: only its own SubagentStop
-      // ends it again, never this sync.
+    } else if (
+      ended &&
+      known.endedAt === null &&
+      (!(known.resumedAt || known.waiting) || idle(known, nowIso))
+    ) {
+      // The list is the truth for "still working". A resumed agent keeps its first run's
+      // "completed" there while it runs again, and a waiting one may never get another
+      // SubagentStop — so those end once they also showed no activity for AGENT_IDLE_MS (a later
+      // report or tool call reopens them: `reopenAgent`).
       agents = agents.map(x => (x.id === a.id ? stopped(x, nowIso) : x))
       changed = true
     } else if (!ended && known.endedAt !== null) {
@@ -544,30 +568,61 @@ export function syncAgents(file: SessionFile, listed: readonly ListedAgent[], no
  * The subagent that stopped: finished — or, when it still has background work running, `waiting`
  * (it resumes on its own). Unchanged when it is unknown or already finished.
  */
-export function endAgent(file: SessionFile, id: string, nowIso: string, waiting = false): SessionFile {
+export function endAgent(
+  file: SessionFile,
+  id: string,
+  nowIso: string,
+  waiting = false,
+  waitingOn?: string,
+): SessionFile {
   const agent = file.agents?.find(a => a.id === id)
   if (!agent || agent.endedAt !== null) return file
-  if (waiting && agent.waiting) return file
+  if (waiting && agent.waiting && agent.waitingOn === waitingOn) return file
   const next = waiting
-    ? { ...agent, waiting: true as const, updatedAt: nowIso }
-    : stopped(withoutWaiting(agent), nowIso)
+    ? { ...agent, waiting: true as const, ...(waitingOn ? { waitingOn } : {}), updatedAt: nowIso }
+    : stopped(agent, nowIso)
   return { ...file, agents: (file.agents ?? []).map(a => (a.id === id ? next : a)), updatedAt: nowIso }
 }
 
 function withoutWaiting(a: AgentEntry): AgentEntry {
-  const { waiting: _w, ...rest } = a
+  const { waiting: _w, waitingOn: _o, ...rest } = a
   return rest
 }
 
-/** The agent stopped for good: ended, and the steps it left `doing` are `unfinished` — a finished
- *  agent never looks busy. */
+/** What a SubagentStop's `background_tasks` says the agent waits on: their descriptions (or
+ *  commands), joined; undefined when the event names nothing. */
+export function waitingOnFrom(background: unknown): string | undefined {
+  if (!Array.isArray(background)) return undefined
+  const names = background
+    .map(b => {
+      if (typeof b === 'string') return b
+      if (b && typeof b === 'object') {
+        const o = b as Record<string, unknown>
+        for (const k of ['description', 'command', 'name', 'id'])
+          if (typeof o[k] === 'string' && (o[k] as string).trim()) return (o[k] as string).trim()
+      }
+      return ''
+    })
+    .filter(Boolean)
+  return names.length ? names.join(', ') : undefined
+}
+
+/** The agent stopped for good: ended, not waiting, and every step it left open (`todo`, `doing`,
+ *  `blocked`) is `unfinished` — a finished agent never looks busy or keeps stale steps. */
 function stopped(a: AgentEntry, nowIso: string): AgentEntry {
   return {
-    ...a,
+    ...withoutWaiting(a),
     endedAt: nowIso,
     updatedAt: nowIso,
     tasks: a.tasks.map(t =>
-      t.status === 'doing' ? { ...t, status: 'unfinished' as const, updatedAt: nowIso } : t,
+      isClosed(t.status) || t.status === 'unfinished'
+        ? t
+        : {
+            ...t,
+            status: 'unfinished' as const,
+            before: t.status as 'todo' | 'doing' | 'blocked',
+            updatedAt: nowIso,
+          },
     ),
   }
 }
@@ -579,9 +634,11 @@ function reopened(a: AgentEntry, nowIso: string): AgentEntry {
     endedAt: null,
     resumedAt: nowIso,
     updatedAt: nowIso,
-    tasks: a.tasks.map(t =>
-      t.status === 'unfinished' ? { ...t, status: 'doing' as const, updatedAt: nowIso } : t,
-    ),
+    tasks: a.tasks.map(t => {
+      if (t.status !== 'unfinished') return t
+      const { before, ...rest } = t
+      return { ...rest, status: before ?? ('doing' as const), updatedAt: nowIso }
+    }),
   }
 }
 
@@ -597,6 +654,21 @@ export function reopenAgent(file: SessionFile, id: string, nowIso: string): Sess
     agents: (file.agents ?? []).map(a => (a.id === id ? reopened(a, nowIso) : a)),
     updatedAt: nowIso,
   }
+}
+
+/** A title folded for the duplicate check: case, punctuation and a leading "N." / "A1:" / "B." label. */
+export function titleKey(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/^\s*(?:\d+|[a-z]\d*)(?:\/[a-z]?\d*)*\s*[.:)]\s*/, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+}
+
+/** Two titles name the same step: equal once folded ("B1/B2: live proof" = "B: Live proof."). */
+export function sameTitle(a: string, b: string): boolean {
+  const x = titleKey(a)
+  return x !== '' && x === titleKey(b)
 }
 
 /** The named tasks (id or exact title) first, in that order; every other keeps its place after them. */
@@ -920,7 +992,13 @@ export function cancelDeeper(
       notices.push({ what: 'agentTask', agentId: agent.id, task: task.title })
     } else {
       const agent = agents.find(a => a.id === r.agentId)
-      if (!agent || agent.endedAt !== null) continue
+      if (!agent) continue
+      // Not working (finished, or only waiting): ✕ dismisses it from every pane — nothing to stop.
+      if (agent.endedAt !== null || agent.waiting) {
+        agents = agents.filter(a => a.id !== agent.id)
+        done.push(key)
+        continue
+      }
       agents = agents.map(a =>
         a.id === agent.id
           ? {
@@ -935,6 +1013,13 @@ export function cancelDeeper(
       notices.push({ what: 'agent', agentId: agent.id })
     }
     done.push(key)
+  }
+  // A ✕ recorded on an agent that turned out not to be working (it waited, or stopped since):
+  // the person's intent was to get rid of it — dismissed.
+  const pruned = agents.filter(a => !(a.cancelledAt && (a.endedAt !== null || a.waiting)))
+  if (pruned.length !== agents.length) {
+    agents = pruned
+    if (done.length === 0) return { file: { ...file, agents, updatedAt: nowIso }, notices }
   }
   if (done.length === 0) return { file, notices }
   return {
