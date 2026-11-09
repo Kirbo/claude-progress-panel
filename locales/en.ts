@@ -105,6 +105,7 @@ export const en = {
   'pane.agentsFinished': '{fold} Agents  {count}',
   'pane.agentFold': '{fold} {label}',
   'pane.agentElapsed': ' · {d}',
+  'pane.agentWaiting': ' · waiting on background work',
   'pane.agentSteps': '{bar} {done}/{total}',
   'pane.agentFinished': '✓ {label}  finished {when}',
   'agent.eta': ', ~{min} min left',

@@ -444,6 +444,10 @@ export function applyAgentUpdate(
     seq: r.file.seq,
     ...(old?.cancelled?.length ? { cancelled: old.cancelled } : {}),
     ...(old?.cancelledAt ? { cancelledAt: old.cancelledAt } : {}),
+    // A report from an agent marked ended means it was resumed: the list sync must not end it again.
+    ...(old && (old.endedAt !== null || old.resumedAt)
+      ? { resumedAt: old.endedAt !== null ? nowIso : old.resumedAt }
+      : {}),
     ...(eta !== undefined ? { etaMin: eta } : {}),
     startedAt: old?.startedAt ?? nowIso,
     updatedAt: nowIso,
@@ -493,21 +497,53 @@ export function syncAgents(file: SessionFile, listed: readonly ListedAgent[], no
         },
       ]
       changed = true
-    } else if (ended && known.endedAt === null) {
+    } else if (ended && known.endedAt === null && !known.resumedAt) {
+      // A resumed agent keeps its first run's "completed" in the list: only its own SubagentStop
+      // ends it again, never this sync.
       agents = agents.map(x => (x.id === a.id ? { ...x, endedAt: nowIso, updatedAt: nowIso } : x))
+      changed = true
+    } else if (!ended && known.endedAt !== null) {
+      // The list says it runs again (resumed): back among the running.
+      agents = agents.map(x => (x.id === a.id ? reopened(x, nowIso) : x))
       changed = true
     }
   }
   return changed ? { ...file, agents, updatedAt: nowIso } : file
 }
 
-/** The subagent that stopped, marked finished (unchanged when it is unknown or already finished). */
-export function endAgent(file: SessionFile, id: string, nowIso: string): SessionFile {
+/**
+ * The subagent that stopped: finished — or, when it still has background work running, `waiting`
+ * (it resumes on its own). Unchanged when it is unknown or already finished.
+ */
+export function endAgent(file: SessionFile, id: string, nowIso: string, waiting = false): SessionFile {
   const agent = file.agents?.find(a => a.id === id)
   if (!agent || agent.endedAt !== null) return file
+  if (waiting && agent.waiting) return file
+  const next = waiting
+    ? { ...agent, waiting: true as const, updatedAt: nowIso }
+    : { ...withoutWaiting(agent), endedAt: nowIso, updatedAt: nowIso }
+  return { ...file, agents: (file.agents ?? []).map(a => (a.id === id ? next : a)), updatedAt: nowIso }
+}
+
+function withoutWaiting(a: AgentEntry): AgentEntry {
+  const { waiting: _w, ...rest } = a
+  return rest
+}
+
+function reopened(a: AgentEntry, nowIso: string): AgentEntry {
+  return { ...withoutWaiting(a), endedAt: null, resumedAt: nowIso, updatedAt: nowIso }
+}
+
+/**
+ * The agent is active again (its own report or tool call): an ended or waiting entry is back among
+ * the running, its steps kept. Same object when it already runs or is unknown.
+ */
+export function reopenAgent(file: SessionFile, id: string, nowIso: string): SessionFile {
+  const agent = file.agents?.find(a => a.id === id)
+  if (!agent || (agent.endedAt === null && !agent.waiting)) return file
   return {
     ...file,
-    agents: (file.agents ?? []).map(a => (a.id === id ? { ...a, endedAt: nowIso, updatedAt: nowIso } : a)),
+    agents: (file.agents ?? []).map(a => (a.id === id ? reopened(a, nowIso) : a)),
     updatedAt: nowIso,
   }
 }

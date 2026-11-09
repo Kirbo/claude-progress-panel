@@ -44,6 +44,7 @@ import {
   parseSidecar,
   pruneDone,
   removalKey,
+  reopenAgent,
   SORTS,
   sortTasks,
   splitMatches,
@@ -1329,6 +1330,23 @@ function feedAgentPrompt(
   return `${e.prompt}\n\n${rule}`
 }
 
+// A subagent's tool call: an entry that ended (or waits) is running again — a resumed agent. A plain
+// read first, so the common case (it runs) writes nothing.
+async function reopenIfActive($: EngineInterface, options: PluginOptions, agentId: string): Promise<void> {
+  const plain = await readOwnPlain($, options)
+  if (plain === 'nowhere') return
+  const entry = plain?.agents?.find(a => a.id === agentId)
+  if (!entry || (entry.endedAt === null && !entry.waiting)) return
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const at = await nowIso($)
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const next = reopenAgent(own, agentId, at)
+    if (next !== own) await save($, dir, next)
+  })
+}
+
 // An Agent call whose description names exactly one open `doing` task (none linked yet): that task
 // is linked to it, so the pane shows the agent's progress there. Ambiguous → nothing.
 async function autoLink($: EngineInterface, options: PluginOptions, description: unknown): Promise<void> {
@@ -2032,8 +2050,12 @@ export const register: Register = (on, options) => {
       const at = await nowIso($)
       await exclusive(async () => {
         const own = await ownFile($, dir)
-        const ended = endAgent(own, id, at)
+        // Still running background work: it waits (and resumes on its own) — not finished.
+        const background = (e as { background_tasks?: unknown }).background_tasks
+        const waiting = Array.isArray(background) && background.length > 0
+        const ended = endAgent(own, id, at, waiting)
         if (ended !== own) await save($, dir, ended)
+        if (waiting) return
         // A task linked to it: the coordinator is told to verify and update it — never done for it.
         for (const task of own.tasks)
           if (!isClosed(task.status) && linkedAgent(own, task)?.id === id)
@@ -2054,6 +2076,7 @@ export const register: Register = (on, options) => {
     const result = withPushNote(pushed, await next(e), pushNotes)
     const agentId = (e as { agent_id?: unknown }).agent_id
     if (typeof agentId === 'string' && agentId) {
+      await reopenIfActive($, options, agentId).catch(() => undefined)
       const own = pendingAgentNotices.get(agentId)
       pendingAgentNotices.delete(agentId)
       const told = own?.length
@@ -2716,7 +2739,9 @@ export const register: Register = (on, options) => {
                 onPress={() => void toggle($, key, isOpen)}
               />
               <Box flexDirection="row" gap={1}>
-                <Text dimColor>{`${steps}${elapsed}${eta}`.replace(/^ · /, '')}</Text>
+                <Text dimColor>
+                  {`${steps}${elapsed}${a.waiting ? t('pane.agentWaiting') : eta}`.replace(/^ · /, '')}
+                </Text>
                 {/* ✕ on a running subagent: its work is cancelled — it is told to stop and wrap up. */}
                 {a.cancelledAt ? null : (
                   <Button

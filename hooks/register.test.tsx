@@ -3338,6 +3338,67 @@ test('an Agent call auto-links the one doing task its description names — neve
   expect(tasks.filter(x => x.title.startsWith('Docs')).every(x => !x.agent)).toBe(true)
 })
 
+test('a subagent that stopped and was resumed is running again; one that only stopped stays finished', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-z', description: 'Lane Z', type: 'general-purpose', status: 'running' })
+  world.agents.push({ id: 'sub-y', description: 'Lane Y', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, { now: 'coordinating' })
+  const report = (agentId: string) =>
+    $.tool.call({
+      tool: TOOL,
+      agentId,
+      now: 'w',
+      tasks: [{ title: 'one', status: 'done' }, { title: 'two' }],
+    } as never)
+  await report('sub-z')
+  await report('sub-y')
+  const stop = (agent_id: string, extra: object = {}) =>
+    $.classic.SubagentStop({
+      agent_id,
+      agent_type: 'general-purpose',
+      stop_hook_active: false,
+      agent_transcript_path: '/t',
+      ...extra,
+    } as never)
+  await stop('sub-z')
+  await stop('sub-y')
+  // The list keeps saying "completed" for both (a resumed run's old status).
+  world.agents.splice(
+    0,
+    world.agents.length,
+    { id: 'sub-z', description: 'Lane Z', type: 'general-purpose', status: 'completed' },
+    { id: 'sub-y', description: 'Lane Y', type: 'general-purpose', status: 'completed' },
+  )
+  const entry = (id: string) => read(disk, `${DIR}/s-me.json`).agents?.find(a => a.id === id)
+  // Z is resumed: its next report (or tool call) reopens it, steps kept — and the 2 s sync leaves it.
+  await $.tool.call({ tool: TOOL, agentId: 'sub-z', now: 'resumed' } as never)
+  expect(entry('sub-z')?.endedAt).toBeNull()
+  expect(entry('sub-z')?.tasks).toHaveLength(2)
+  await world.clock.advance(2100)
+  expect(entry('sub-z')?.endedAt).toBeNull()
+  // Y did nothing more: still finished.
+  expect(entry('sub-y')?.endedAt).not.toBeNull()
+  // A tool call alone reopens too; its next stop ends it again.
+  await stop('sub-z')
+  expect(entry('sub-z')?.endedAt).not.toBeNull()
+  await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'z1',
+    agent_id: 'sub-z',
+  } as never)
+  expect(entry('sub-z')?.endedAt).toBeNull()
+  // A stop with background work still running: waiting, not finished.
+  await stop('sub-z', { background_tasks: [{ id: 'b1', status: 'running' }] })
+  expect(entry('sub-z')).toMatchObject({ endedAt: null, waiting: true })
+  const ui = await pane($)
+  expect((await texts(ui)).some(x => x.includes('waiting on background work'))).toBe(true)
+  await ui.unmount()
+})
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)

@@ -21,6 +21,10 @@ export type AgentEntry = {
   cancelled?: string[]
   /** When the person cancelled the whole subagent's work in a pane (0.23.0). */
   cancelledAt?: string
+  /** It stopped with background work still running (0.23.0): it resumes on its own. */
+  waiting?: true
+  /** It was resumed after it had ended (0.23.0): only its own next stop ends it again. */
+  resumedAt?: string
 }
 
 /** One subtask of a task: a title, its own status and, once closed, when (0.23.0: the pace a

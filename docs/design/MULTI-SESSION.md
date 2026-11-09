@@ -428,6 +428,18 @@ prompt) from the settings `paneColumns` (default 84 — the content's natural wi
 the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when it opens unasked
 (from 144 columns) are Claude Code's — a plugin cannot open itself narrower.
 
+## A resumed subagent runs again (0.23.0)
+
+Bug 2026-11-09 (item 16): a subagent that stopped (its turn limit, or waiting on its own
+background work) and was then resumed stayed under Done → Agents — its own reports cleared
+`endedAt`, but the 2 s `syncAgents` closed it again at once, since `$.agent.list()` still said its
+first run "completed". Now: its own activity — a report, or a tool call carrying its `agent_id`
+(`reopenIfActive`, a plain read first) — reopens an ended or waiting entry (`reopenAgent`, steps
+kept) and stamps `resumedAt`; `syncAgents` no longer ends a resumed agent (only its own next
+`SubagentStop` does) and reopens one the list shows running again. A `SubagentStop` whose
+`background_tasks` is not empty marks it `waiting` (shown "waiting on background work"), not
+finished.
+
 ## Tasks linked to subagents (0.23.0)
 
 Asked 2026-11-09 (item 14): the coordinator keeps owning its task list (one writer; it verifies
