@@ -30,6 +30,9 @@ export type AgentEntry = {
   /** It was resumed after it had ended (0.23.0): only its own next stop ends it again. */
   resumedAt?: string
   /** Messages the coordinator sent it (SendMessage) that it has not picked up yet (0.23.0). */
+  /** The repo it works in (0.23.2): from its tool calls' cwd (`git --git-common-dir`, so a worktree
+   *  counts as its repo); the pane groups it under that repo when a session spans several. */
+  repo?: string
   queued?: string[]
 }
 

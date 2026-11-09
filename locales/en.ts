@@ -271,6 +271,7 @@ export const en = {
   'notice.taskUnassigned':
     'Progress pane: agent "{agent}" was stopped in the Progress pane — task "{task}" is unassigned: re-plan or skip it.',
   'pane.linkedAgentStopped': '■ {agent} stopped in the Progress pane — re-plan or skip this task',
+  'pane.otherRepo': 'other',
   'pane.linkedPipeline': '⧗ waits on {label}: {state} — closes by itself when it finishes',
   'pane.unconfirmed': '? not updated since {min} min — unconfirmed at the end of a turn',
   'push.linkedTask':

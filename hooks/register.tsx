@@ -36,7 +36,7 @@ import {
   endDeadSession,
   formatClock,
   formatTime,
-  groupByRepo,
+  groupWorkByRepo,
   isBlank,
   isClosed,
   linkedAgent,
@@ -48,6 +48,7 @@ import {
   mergeSidecar,
   needsLivenessCheck,
   newSession,
+  OTHER_REPO,
   ownBackground,
   parseSessionFile,
   parseSidecar,
@@ -56,6 +57,7 @@ import {
   queueForAgent,
   removalKey,
   reopenAgent,
+  repoFromCommonDir,
   SORTS,
   STATUSES,
   settleLinkedTasks,
@@ -1599,6 +1601,33 @@ async function reopenIfActive($: EngineInterface, options: PluginOptions, agentI
   })
 }
 
+// The repo a subagent works in, from the cwd of its tool calls — asked of git once per agent (the
+// answer is kept on its entry), so a worktree counts as the repo it belongs to.
+const agentRepoAsked = new Set<string>()
+async function noteAgentRepo($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
+  const call = e as { agent_id?: unknown; cwd?: unknown }
+  const id = call.agent_id
+  if (typeof id !== 'string' || !id || typeof call.cwd !== 'string' || !call.cwd) return
+  if (agentRepoAsked.has(id)) return
+  agentRepoAsked.add(id)
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const common = (
+    await runCli($, ['git', '-C', call.cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
+  ).text
+  const repo = common ? repoFromCommonDir(common) : undefined
+  if (!repo) return
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const agent = own.agents?.find(a => a.id === id)
+    if (!agent || agent.repo === repo) return
+    await save($, dir, {
+      ...own,
+      agents: (own.agents ?? []).map(a => (a.id === id ? { ...a, repo } : a)),
+    })
+  })
+}
+
 // A main-loop SendMessage to one of this session's agents: its summary (or the message's first line)
 // queued on the agent's entry. Another session or a teammate is not this pane's to show.
 async function queueMessage($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
@@ -2529,6 +2558,7 @@ export const register: Register = (on, options) => {
     const agentId = (e as { agent_id?: unknown }).agent_id
     if (typeof agentId === 'string' && agentId) {
       await reopenIfActive($, options, agentId).catch(() => undefined)
+      await noteAgentRepo($, options, e).catch(() => undefined)
       const own = pendingAgentNotices.get(agentId)
       pendingAgentNotices.delete(agentId)
       const told = own?.length
@@ -3438,14 +3468,16 @@ export const register: Register = (on, options) => {
           )
         })
 
-    const agentsBlock = (file: SessionFile) => {
+    // The session's running agents — or, when its work is grouped by repo, one repo's (`only`, with
+    // `scope` keeping that branch's fold key its own).
+    const agentsBlock = (file: SessionFile, only?: readonly AgentEntry[], scope = '') => {
       // A session that switched agent reporting off shows no Agents section.
       if (!effective(defaults, file.toggles).agents) return null
       const agents = file.agents ?? []
       const id = file.session.id
-      const running = agents.filter(a => a.endedAt === null)
+      const running = (only ?? agents).filter(a => a.endedAt === null)
       if (running.length === 0) return null
-      const runKey = `agents:${id}`
+      const runKey = `agents:${id}${scope}`
       const runOpen = folded[runKey] ?? true
       const agentRow = (a: (typeof agents)[number]) => {
         const key = `agent:${id}:${a.id}`
@@ -3542,13 +3574,13 @@ export const register: Register = (on, options) => {
     }
 
     // A session's finished subagents, under its Done: one folded "Agents" heading after the done tasks.
-    const finishedAgentsBlock = (file: SessionFile) => {
+    const finishedAgentsBlock = (file: SessionFile, only?: readonly AgentEntry[], scope = '') => {
       const id = file.session.id
-      const finished = (file.agents ?? []).filter(a => a.endedAt !== null)
+      const finished = (only ?? file.agents ?? []).filter(a => a.endedAt !== null)
       if (finished.length === 0) return null
-      const key = `doneagents:${id}`
+      const key = `doneagents:${id}${scope}`
       const isOpen = folded[key] ?? false
-      const olderKey = `agentsolder:${id}`
+      const olderKey = `agentsolder:${id}${scope}`
       const isOlderOpen = folded[olderKey] ?? false
       const capped = capNewest(finished, settings.agentsShown, a => a.endedAt ?? a.updatedAt)
       const listed = isOlderOpen ? finished : capped.shown
@@ -3624,19 +3656,24 @@ export const register: Register = (on, options) => {
       // Tasks of several repos group by repo (in plan order, open and done alike).
       // Each list groups by repo on its own, and only once its tasks span more than one repo: open
       // tasks in one repo stay flat even when Done holds another.
-      const repos = groupByRepo(
+      // Open tasks and running agents together, by repo: grouped once they span more than one repo
+      // (each repo: its tasks, then its agents); else the flat layout — tasks, then Agents.
+      const runningAgents = sw.agents ? (file.agents ?? []).filter(a => a.endedAt === null) : []
+      const work = groupWorkByRepo(
+        file,
         sortTasks(
           shown.filter(x => !isClosed(x.status)),
           by === 'status' ? 'plan' : by,
         ),
-        file.session.project,
+        runningAgents,
       )
       // An open Done lists the newest `doneShown` (a setting); the rest fold behind "N older" (capNewest).
       const doneOlderKey = `doneolder:${id}`
       const isDoneOlderOpen = folded[doneOlderKey] ?? false
       const doneCapped = capNewest(done, settings.doneShown, x => x.doneAt ?? x.updatedAt)
       const doneListed = isDoneOlderOpen ? done : doneCapped.shown
-      const doneRepos = groupByRepo(doneListed, file.session.project)
+      const finishedAgents = (file.agents ?? []).filter(a => a.endedAt !== null)
+      const doneWork = groupWorkByRepo(file, doneListed, finishedAgents)
       const finishedCount = (file.agents ?? []).filter(a => a.endedAt !== null).length
       const groupKey = `group:${id}`
       const doneKey = `done:${id}`
@@ -3681,22 +3718,24 @@ export const register: Register = (on, options) => {
           </Box>
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT}>
-              {repos.length > 1
-                ? repos.map(({ repo, tasks }) => {
+              {work.length > 1
+                ? work.map(({ repo, tasks, agents }) => {
                     const repoKey = `repo:${id}:${repo}`
                     const isRepoOpen = folded[repoKey] ?? true
                     const openHere = sortTasks(
                       tasks.filter(x => !isClosed(x.status)),
                       by,
                     )
-                    if (openHere.length === 0) return null
+                    const runningHere = agents.filter(a => a.endedAt === null)
+                    if (openHere.length === 0 && runningHere.length === 0) return null
+                    const repoName = repo === OTHER_REPO ? t('pane.otherRepo') : repo
                     return (
                       <Box flexDirection="column">
                         <Button
                           key={repoKey}
                           label={t('pane.repoGroup', {
                             fold: isRepoOpen ? '▾' : '▸',
-                            repo,
+                            repo: repoName,
                             open: openHere.length,
                           })}
                           plain
@@ -3705,13 +3744,14 @@ export const register: Register = (on, options) => {
                         {isRepoOpen ? (
                           <Box flexDirection="column" paddingLeft={INDENT}>
                             {openHere.map(task => taskRow(id, task))}
+                            {agentsBlock(file, agents, `:${repo}`)}
                           </Box>
                         ) : null}
                       </Box>
                     )
                   })
                 : open.map(task => taskRow(id, task))}
-              {agentsBlock(file)}
+              {work.length > 1 ? null : agentsBlock(file)}
               {done.length + finishedCount > 0 ? (
                 <Box flexDirection="row" justifyContent="space-between" gap={2}>
                   <Button
@@ -3738,17 +3778,18 @@ export const register: Register = (on, options) => {
               ) : null}
               {isDoneOpen ? (
                 <Box flexDirection="column" paddingLeft={INDENT}>
-                  {doneRepos.length > 1
-                    ? doneRepos.map(({ repo, tasks }) => {
+                  {doneWork.length > 1
+                    ? doneWork.map(({ repo, tasks, agents }) => {
                         const repoKey = `donerepo:${id}:${repo}`
                         const isRepoOpen = folded[repoKey] ?? true
+                        const repoName = repo === OTHER_REPO ? t('pane.otherRepo') : repo
                         return (
                           <Box flexDirection="column">
                             <Button
                               key={repoKey}
                               label={t('pane.repoDoneGroup', {
                                 fold: isRepoOpen ? '▾' : '▸',
-                                repo,
+                                repo: repoName,
                                 done: tasks.length,
                               })}
                               plain
@@ -3758,6 +3799,7 @@ export const register: Register = (on, options) => {
                             {isRepoOpen ? (
                               <Box flexDirection="column" paddingLeft={INDENT}>
                                 {tasks.map(task => doneRow(id, task))}
+                                {finishedAgentsBlock(file, agents, `:${repo}`)}
                               </Box>
                             ) : null}
                           </Box>
@@ -3776,7 +3818,7 @@ export const register: Register = (on, options) => {
                       onPress={() => void toggle($, doneOlderKey, isDoneOlderOpen)}
                     />
                   ) : null}
-                  {finishedAgentsBlock(file)}
+                  {doneWork.length > 1 ? null : finishedAgentsBlock(file)}
                 </Box>
               ) : null}
             </Box>

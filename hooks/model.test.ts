@@ -3,6 +3,7 @@ import type { SessionFile, Task } from './model'
 import {
   AGENT_IDLE_MS,
   addDismissals,
+  agentRepo,
   applyAgentUpdate,
   applyUpdate,
   cancelDeeper,
@@ -17,6 +18,7 @@ import {
   endDeadSession,
   formatClock,
   formatTime,
+  groupWorkByRepo,
   isBlank,
   isClosed,
   linkPushedPipeline,
@@ -27,12 +29,14 @@ import {
   mergeSidecar,
   needsLivenessCheck,
   newSession,
+  OTHER_REPO,
   ownBackground,
   parseSessionFile,
   parseSidecar,
   pruneDone,
   removalKey,
   reopenAgent,
+  repoFromCommonDir,
   sameTitle,
   settleLinkedTasks,
   sortTasks,
@@ -948,4 +952,45 @@ test("what an agent waits on is one short name: the description's first line, el
   expect(commandHead('P=KirboDev%2Fx; for i in $(seq 1 3); do\n glab api x\ndone')).toBe('for i')
   expect(waitingOnFrom([{ description: 'line one\nline two' }])).toBe('line one')
   expect(waitingOnFrom([{ description: '', command: 'export X=1; pnpm test --run' }])).toBe('pnpm test')
+})
+
+test('an agent belongs to the repo of the task linked to it, else the repo its calls ran in, else "other"', () => {
+  const base = withTasks([
+    { id: 'a', title: 'Fix the panel', status: 'doing', repo: 'panel', agent: 'Lane A' },
+    { id: 'b', title: 'Ship the app', status: 'doing' },
+  ])
+  const agent = (id: string, label: string, repo?: string) => ({
+    id,
+    label,
+    now: null,
+    tasks: [],
+    seq: 0,
+    startedAt: at(0),
+    updatedAt: at(0),
+    endedAt: null,
+    ...(repo ? { repo } : {}),
+  })
+  const lanes = [agent('ag-a', 'Lane A'), agent('ag-c', 'Lane C', 'site'), agent('ag-x', 'Lane X')]
+  const file = { ...base, agents: lanes }
+  expect(agentRepo(file, lanes[0] as never)).toBe('panel')
+  expect(agentRepo(file, lanes[1] as never)).toBe('site')
+  expect(agentRepo(file, lanes[2] as never)).toBeUndefined()
+  const groups = groupWorkByRepo(file, file.tasks, lanes as never)
+  expect(groups.map(g => [g.repo, g.tasks.map(t => t.id), g.agents.map(a => a.id)])).toEqual([
+    ['panel', ['a'], ['ag-a']],
+    ['app', ['b'], []],
+    ['site', [], ['ag-c']],
+    [OTHER_REPO, [], ['ag-x']],
+  ])
+  // One repo and agents of it: one group (the pane stays flat).
+  const single = withTasks([{ id: 'b', title: 'Ship', status: 'doing' }])
+  expect(groupWorkByRepo(single, single.tasks, [agent('ag', 'L', 'app')] as never)).toHaveLength(1)
+})
+
+test("a repo's name from git's common dir: a worktree counts as its repo", () => {
+  expect(repoFromCommonDir('/w/app/.git')).toBe('app')
+  expect(repoFromCommonDir('/w/app/.git/')).toBe('app')
+  expect(repoFromCommonDir('/srv/repos/app.git')).toBe('app')
+  expect(repoFromCommonDir('C:\\\\w\\\\app\\\\.git')).toBe('app')
+  expect(repoFromCommonDir('')).toBeUndefined()
 })

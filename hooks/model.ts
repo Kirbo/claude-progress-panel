@@ -349,21 +349,6 @@ const STATUS_ORDER: Record<Status, number> = {
 }
 const time = (iso: string | null) => (iso ? Date.parse(iso) || 0 : 0)
 
-/**
- * A session's tasks by repo, each repo where its first task stands (`repo` absent = `own`); one
- * group when they all share one repo.
- */
-export function groupByRepo(tasks: readonly Task[], own: string): { repo: string; tasks: Task[] }[] {
-  const groups: { repo: string; tasks: Task[] }[] = []
-  for (const task of tasks) {
-    const repo = task.repo || own
-    const group = groups.find(g => g.repo === repo)
-    if (group) group.tasks.push(task)
-    else groups.push({ repo, tasks: [task] })
-  }
-  return groups
-}
-
 /** A task's detail and steps after a patch: given ones replace, '' / [] clear, absent ones stay. */
 function extras(
   old: Pick<Task, 'detail' | 'steps' | 'repo' | 'agent' | 'pipeline'>,
@@ -1404,4 +1389,56 @@ export function listSignature(tasks: readonly Task[]): string {
     .map(t => `${t.id}@${t.updatedAt}`)
     .sort()
     .join('|')
+}
+
+// --- Agents under their repo (0.23.2) -------------------------------------------------------------
+
+/** The group an agent whose repo cannot be told lands in (never mixed into a real repo's). */
+export const OTHER_REPO = '\u0000other'
+
+/** The repo an agent works on: the repo of the session task linked to it, else the one its tool
+ *  calls ran in (`agent.repo`, recorded from their cwd — a worktree's is the repo it belongs to),
+ *  else none. */
+export function agentRepo(file: SessionFile, agent: AgentEntry): string | undefined {
+  const task = file.tasks.find(t => t.agent && linkedAgent(file, t)?.id === agent.id)
+  if (task) return task.repo || file.session.project
+  return agent.repo || undefined
+}
+
+/**
+ * Open tasks and running agents together, grouped by repo — the layout a session with work in more
+ * than one repo gets (each repo: its tasks, then its agents). An agent with no repo goes to
+ * `OTHER_REPO`. Groups in first-seen order: tasks' repos first, then agents' own.
+ */
+export function groupWorkByRepo(
+  file: SessionFile,
+  tasks: readonly Task[],
+  agents: readonly AgentEntry[],
+): { repo: string; tasks: Task[]; agents: AgentEntry[] }[] {
+  const groups: { repo: string; tasks: Task[]; agents: AgentEntry[] }[] = []
+  const at = (repo: string) => {
+    let g = groups.find(x => x.repo === repo)
+    if (!g) {
+      g = { repo, tasks: [], agents: [] }
+      groups.push(g)
+    }
+    return g
+  }
+  for (const task of tasks) at(task.repo || file.session.project).tasks.push(task)
+  for (const agent of agents) at(agentRepo(file, agent) ?? OTHER_REPO).agents.push(agent)
+  return groups
+}
+
+/** A repo's folder name from `git rev-parse --git-common-dir` (absolute): `/w/app/.git` → `app`; a
+ *  bare repo's own folder (`/srv/app.git` → `app`). A worktree's common dir is its repo's. */
+export function repoFromCommonDir(commonDir: string): string | undefined {
+  const parts = commonDir
+    .trim()
+    .replace(/[\\/]+$/, '')
+    .split(/[\\/]/)
+    .filter(Boolean)
+  const last = parts.at(-1)
+  if (!last) return undefined
+  if (last === '.git') return parts.at(-2)
+  return last.replace(/\.git$/, '') || undefined
 }

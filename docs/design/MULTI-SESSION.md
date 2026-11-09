@@ -555,6 +555,17 @@ session's is dismissed with `doneAt: null`, which `visiblePipelines` hides for g
 "⊘ stop" (two presses; setting "Pipeline ⊘ stop button", key `runningPipelineX`) cancels / deletes in
 CI — the two were one ✕ before, and a hide-meant press deleted a release pipeline.
 
+Agents under their repo (same release): when a session's open tasks and running agents span more
+than one repo (`groupWorkByRepo`), each repo branch holds its tasks, then its agents; there is no
+session-level Agents list then. An agent's repo (`agentRepo`): the repo of the task linked to it,
+else `AgentEntry.repo` — recorded once per agent from its first tool call's cwd through
+`git rev-parse --path-format=absolute --git-common-dir` (`repoFromCommonDir`, so a worktree is its
+repo) — else `OTHER_REPO` ("other"). One repo keeps the flat layout. Done → Agents groups the same.
+
+Background work (same release): a SubagentStop's `background_tasks` is the whole session's, with no
+owner; only ids the agent's own Bash results named (`backgroundTaskId`) count as its, so a stop with
+none of its own ends it. The "waiting on" line is one short name (`commandHead`).
+
 The Settings view (same release): rows grouped (`SETTING_GROUPS`), values in the right column,
 coloured by `valueTone`, bold when `isChangedSetting` against the manifest's own defaults.
 
