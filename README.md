@@ -96,8 +96,14 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 
 ### Pipelines
 
-The agent `watch`es a CI run by id, or by commit sha (whole or abbreviated) before the run exists,
-and the pane follows it
+**Every `git push` the agent runs is watched automatically** — no tool call: when the push lands,
+the plugin reads the repo's CI off its files (`.gitlab-ci.yml` → GitLab, `.github/workflows/` →
+GitHub Actions, `.gitea/` or `.forgejo/workflows/` → Gitea/Forgejo, else your **Custom CI command**),
+the forge's host and project off the pushed remote (ssh or https, self-hosted included) and the
+pushed commit's sha, and watches that run. A push that fails, is rejected, is a dry run or deletes a
+branch watches nothing; a repo without CI neither. The agent still `watch`es a CI run by id, or by
+commit sha (whole or abbreviated) before the run exists — another repo's, or a push made outside the
+session — and the pane follows it
 live: state, a progress bar of finished / all jobs while it runs, how long it has run (beside an
 estimate from up to 5 earlier successful runs of the same branch and trigger, GitLab and GitHub),
 and once finished the counts, the duration and the time it finished — all on the right of the

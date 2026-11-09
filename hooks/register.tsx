@@ -63,6 +63,7 @@ import {
   stillWaiting,
   visiblePipelines,
 } from './pipelines'
+import { ciProvider, parsePushes, pushedRef, resolvePath } from './push'
 import { isNewer, latestReleaseUrl, parseLatestRelease } from './update'
 
 const PANE = 'progress'
@@ -260,7 +261,7 @@ const INPUT_SCHEMA = {
     watch: {
       type: 'array',
       description:
-        'CI pipelines to follow live in the pane: GitLab CI pipelines (the default) or GitHub Actions workflow runs (provider "github"). After every git push to a repo with CI, watch that push by its commit sha.',
+        'CI pipelines to follow live in the pane: GitLab CI pipelines (the default) or GitHub Actions workflow runs (provider "github"). A git push run through Bash is watched automatically; watch a run by id, another repo\'s pipeline or a push made elsewhere.',
       items: {
         type: 'object',
         additionalProperties: false,
@@ -1138,6 +1139,117 @@ async function withSubagentRule<R extends { additionalContext?: string[] }>(
   return { ...result, additionalContext: [...(result.additionalContext ?? []), t('prompt.subagent')] }
 }
 
+// A `git push` the agent ran (main loop or subagent) watches the pipeline it starts, without the
+// agent asking: the repo's CI read off its files, the forge host and project off the pushed remote,
+// the sha off the pushed ref. Only a push that landed: a failed call, a dry run or a delete watches
+// nothing, and a branch whose remote-tracking ref is not the pushed sha (rejected) neither. The
+// watch goes through the same `applyWatch` as the tool's, so one the agent also sends is the same
+// key — never a second row.
+async function watchPushes($: EngineInterface, options: PluginOptions, e: unknown): Promise<string[]> {
+  const call = e as {
+    tool_name?: unknown
+    tool_input?: { command?: unknown }
+    tool_response?: { interrupted?: unknown; exitCode?: unknown; returnCode?: unknown }
+    cwd?: unknown
+  }
+  if (call.tool_name !== 'Bash' || typeof call.tool_input?.command !== 'string') return []
+  const response = call.tool_response ?? {}
+  if (response.interrupted === true) return []
+  for (const code of [response.exitCode, response.returnCode])
+    if (typeof code === 'number' && code !== 0) return []
+  const pushes = parsePushes(call.tool_input.command)
+  if (pushes.length === 0) return []
+  const dir = await progressDir($, options)
+  if (!dir) return []
+  const base = typeof call.cwd === 'string' && call.cwd ? call.cwd : await $.session.cwd()
+  const home = (await $.env.get('HOME')) ?? undefined
+  const watches: WatchInput[] = []
+  for (const push of pushes)
+    watches.push(...(await pushWatches($, options, resolvePath(base, push.dir, home), push)))
+  if (watches.length === 0) return []
+  const at = await nowIso($)
+  const { added, file } = await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const before = own.pipelines ?? []
+    const watched = applyWatch(before, watches, [], at)
+    const added = watched.list.filter(p => !before.some(old => old.key === p.key))
+    const file = { ...own, pipelines: watched.list }
+    if (added.length > 0) await save($, dir, file)
+    return { added, file }
+  })
+  if (added.length === 0) return []
+  await announce($, await read($, sessions), file.session.id)
+  await pollPipelines($, options)
+  return added.map(p => p.key)
+}
+
+// The watches one push asks for: each pushed branch head (or tag) by sha, on the repo's CI.
+async function pushWatches(
+  $: EngineInterface,
+  options: PluginOptions,
+  where: string,
+  push: ReturnType<typeof parsePushes>[number],
+): Promise<WatchInput[]> {
+  const git = async (...args: string[]) =>
+    (await runCli($, ['git', '-C', where, ...args])).text?.trim() || undefined
+  const root = await git('rev-parse', '--show-toplevel')
+  if (!root) return []
+  const has = async (path: string) =>
+    (await $.fs.stat(`${root}/${path}`).catch(() => undefined)) !== undefined
+  const workflows = async (path: string) =>
+    ((await $.fs.list(`${root}/${path}`).catch(() => undefined)) ?? []).some(f => /\.ya?ml$/i.test(f.name))
+  const provider = ciProvider(
+    {
+      gitlab: await has('.gitlab-ci.yml'),
+      github: await workflows('.github/workflows'),
+      gitea: (await workflows('.gitea/workflows')) || (await workflows('.forgejo/workflows')),
+    },
+    optionString(options, 'ciCommand').trim() !== '',
+  )
+  if (!provider) return []
+  // The remote: the one the push named (a name or a URL), else the branch's upstream's, else origin.
+  const upstream = push.remote
+    ? undefined
+    : await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')
+  const remoteName = push.remote ?? upstream?.split('/')[0] ?? 'origin'
+  const isUrl = /[:/]/.test(remoteName)
+  const url = isUrl ? remoteName : await git('remote', 'get-url', remoteName)
+  const remote = parseRemote(url)
+  if (provider !== 'command' && !remote) return []
+  const repo = baseName(root)
+  const specs = push.refs.length > 0 ? push.refs : push.tags && !push.all ? [] : ['HEAD']
+  const out: WatchInput[] = []
+  for (const spec of specs) {
+    const ref = pushedRef(spec)
+    if (!ref) continue
+    const sha = await git('rev-parse', '--verify', '--quiet', `${ref.src}^{commit}`)
+    if (!sha) continue
+    const name =
+      ref.src === 'HEAD' && ref.name === 'HEAD' ? await git('rev-parse', '--abbrev-ref', 'HEAD') : ref.name
+    // A rejected branch push leaves the remote-tracking ref where it was: nothing landed to watch.
+    if (!ref.tag && !isUrl && name) {
+      const tracking = await git('rev-parse', '--verify', '--quiet', `refs/remotes/${remoteName}/${name}`)
+      if (tracking && tracking !== sha) continue
+    }
+    out.push({
+      provider,
+      project: remote?.path ?? repo,
+      sha,
+      ...(provider !== 'command' && remote ? { host: remote.host } : {}),
+      label: name ? `${repo} ${name}` : repo,
+    })
+  }
+  return out
+}
+
+function withPushNote<R extends { additionalContext?: string[] }>(keys: string[], result: R): R {
+  if (keys.length === 0) return result
+  return {
+    ...result,
+    additionalContext: [...(result.additionalContext ?? []), t('push.watched', { keys: keys.join(', ') })],
+  }
+}
+
 function withRemovalNotice<R extends { additionalContext?: string[] }>(result: R): R {
   const note = takeRemovalNotice()
   return note ? { ...result, additionalContext: [...(result.additionalContext ?? []), note] } : result
@@ -1295,7 +1407,8 @@ export const register: Register = (on, options) => {
   })
   // A subagent's first call instead carries the reporting rule it never got (`withSubagentRule`).
   on('classic.PostToolUse', async ($, e, next) => {
-    const result = await next(e)
+    const pushed = await watchPushes($, options, e).catch(() => [] as string[])
+    const result = withPushNote(pushed, await next(e))
     const agentId = (e as { agent_id?: unknown }).agent_id
     if (typeof agentId === 'string' && agentId) return withSubagentRule($, options, agentId, result)
     return agentId ? result : withRemovalNotice(result)

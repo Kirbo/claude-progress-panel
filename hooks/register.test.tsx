@@ -2629,3 +2629,145 @@ test('a session whose system prompt carried the rule gets no second copy, only t
   await update($, { now: 'Fixing it', tasks: [{ title: 'Fix' }] })
   expect(await context()).toEqual([])
 })
+
+// A repo the fake git answers for: `git -C <where> …` as the auto-watch asks it.
+function gitRepo(
+  world: ReturnType<typeof engine>,
+  where: string,
+  repo: {
+    root?: string
+    remote?: string
+    url: string
+    branch?: string
+    sha?: string
+    tracking?: string | null
+    upstream?: string | null
+  },
+) {
+  const sha = repo.sha ?? 'a'.repeat(40)
+  const branch = repo.branch ?? 'main'
+  const remote = repo.remote ?? 'origin'
+  const g = (...args: string[]) => ['git', '-C', where, ...args].join(' ')
+  world.programs.set(g('rev-parse', '--show-toplevel'), `${repo.root ?? where}\n`)
+  if (repo.upstream !== null)
+    world.programs.set(
+      g('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'),
+      `${repo.upstream ?? `${remote}/${branch}`}\n`,
+    )
+  world.programs.set(g('remote', 'get-url', remote), `${repo.url}\n`)
+  world.programs.set(g('rev-parse', '--verify', '--quiet', 'HEAD^{commit}'), `${sha}\n`)
+  world.programs.set(g('rev-parse', '--verify', '--quiet', `${branch}^{commit}`), `${sha}\n`)
+  world.programs.set(g('rev-parse', '--abbrev-ref', 'HEAD'), `${branch}\n`)
+  if (repo.tracking !== null)
+    world.programs.set(
+      g('rev-parse', '--verify', '--quiet', `refs/remotes/${remote}/${branch}`),
+      `${repo.tracking ?? sha}\n`,
+    )
+}
+
+function ciFile(disk: Disk, path: string) {
+  disk.tick += 1
+  disk.files.set(path, { text: 'ci', mtimeMs: disk.tick })
+}
+
+async function bash($: $Test, command: string, extra: Record<string, unknown> = {}) {
+  const result = (await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: { command },
+    tool_response: { stdout: '', stderr: '' },
+    tool_use_id: `b-${command.length}`,
+    cwd: '/w/app',
+    ...extra,
+  } as never)) as { additionalContext?: string[] }
+  return (result.additionalContext ?? []).join(' ')
+}
+
+const keys = (disk: Disk) => (read(disk, `${DIR}/s-me.json`).pipelines ?? []).map(p => p.key)
+
+test('a push to a GitLab repo is watched by its sha on its own — host and project off the ssh remote', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
+  const note = await bash($, 'pnpm lint && git push')
+  const sha = 'a'.repeat(40)
+  expect(keys(disk)).toEqual([`team/app@${sha}`])
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ label: 'app main', sha })
+  expect(note).toContain(`team/app@${sha}`)
+  expect(note).toMatch(/no `watch` call needed/)
+})
+
+test('GitHub Actions over https, a self-hosted GitLab and a Forgejo repo: each on its own forge and host', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  ciFile(disk, '/w/gh/.github/workflows/ci.yml')
+  gitRepo(world, '/w/gh', { url: 'https://github.com/Owner/Repo.git', sha: 'b'.repeat(40) })
+  ciFile(disk, '/w/gl/.gitlab-ci.yml')
+  gitRepo(world, '/w/gl', { url: 'https://git.example.com/team/app.git', sha: 'c'.repeat(40) })
+  ciFile(disk, '/w/fj/.forgejo/workflows/build.yaml')
+  gitRepo(world, '/w/fj', { url: 'ssh://git@forge.example.org:2222/team/svc.git', sha: 'd'.repeat(40) })
+  await bash($, 'git -C /w/gh push')
+  await bash($, 'cd /w/gl && git push')
+  await bash($, 'git push', { cwd: '/w/fj' })
+  expect(keys(disk)).toEqual([
+    `gh:Owner/Repo@${'b'.repeat(40)}`,
+    `git.example.com/team/app@${'c'.repeat(40)}`,
+    `gt:forge.example.org/team/svc@${'d'.repeat(40)}`,
+  ])
+})
+
+test('-C and cd are resolved against where the command ran; the named refspec is the pushed branch', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  ciFile(disk, '/w/other/.gitlab-ci.yml')
+  gitRepo(world, '/w/other', { url: 'git@gitlab.com:team/other.git', branch: 'next', upstream: null })
+  // HEAD:next lands on `next`; the tracking ref checked is origin/next.
+  await bash($, 'git -C ../other push origin HEAD:next')
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.map(p => [p.key, p.label])).toEqual([
+    [`team/other@${'a'.repeat(40)}`, 'other next'],
+  ])
+})
+
+test('a failed, rejected or dry-run push, a delete and a repo without CI watch nothing', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
+  expect(await bash($, 'git push', { tool_response: { exitCode: 1 } })).toBe('')
+  expect(await bash($, 'git push', { tool_response: { interrupted: true } })).toBe('')
+  await bash($, 'git push --dry-run')
+  await bash($, 'git push origin --delete old')
+  // Rejected: the remote-tracking ref is not the pushed sha.
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git', tracking: 'f'.repeat(40) })
+  await bash($, 'git push')
+  // No CI files and no custom command: nothing to watch.
+  gitRepo(world, '/w/plain', { url: 'git@gitlab.com:team/plain.git' })
+  await bash($, 'git push', { cwd: '/w/plain' })
+  // An unknown remote host (an ssh alias) names no forge either.
+  ciFile(disk, '/w/alias/.gitlab-ci.yml')
+  gitRepo(world, '/w/alias', { url: 'work:team/app.git' })
+  await bash($, 'git push', { cwd: '/w/alias' })
+  // Nothing watched, so nothing was ever written.
+  expect(disk.files.has(`${DIR}/s-me.json`)).toBe(false)
+})
+
+test("a push the agent also watches by hand is one row; a subagent's push is watched on its session", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk, { remote: 'git@gitlab.com:team/app.git' })
+  await start($)
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
+  const sha = 'a'.repeat(40)
+  await update($, { watch: [{ project: 'team/app', sha }] })
+  expect(await bash($, 'git push')).not.toContain('watched automatically')
+  expect(keys(disk)).toEqual([`team/app@${sha}`])
+
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git', sha: 'e'.repeat(40) })
+  const note = await bash($, 'git push', { agent_id: 'sub-push' })
+  expect(keys(disk)).toEqual([`team/app@${sha}`, `team/app@${'e'.repeat(40)}`])
+  expect(note).toContain('watched automatically')
+})

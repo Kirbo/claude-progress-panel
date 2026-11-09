@@ -168,6 +168,19 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   `unwatch` (keys) maintain the session file's `pipelines` list: key (`project#id`, or
   `project@sha` until found), state, ref, url, jobs (`name`, `stage`, `state`, `durationS`),
   `addedAt`, `checkedAt`, `finishedAt`, `error`.
+- **A push is watched on its own (0.22.0)** — asked 2026-11-09: "add the pipelines to the panel
+  automatically, if the repo at hand has pipeline … automatically detect where the CI/CD is
+  running". `classic.PostToolUse` reads every Bash call (main loop and subagents) for `git push`
+  (`hooks/push.ts`, pure: shell words and operators, a leading `cd`, git's `-C`/`-c`, env
+  assignments; `--dry-run`/`-n`, `--delete`/`-d`, `:ref` and `--mirror` skipped). Per push, through
+  `git -C <dir>`: the toplevel; the CI off its files (`ciProvider`: `.gitlab-ci.yml`,
+  `.github/workflows/*.y(a)ml`, `.gitea/` or `.forgejo/workflows/`, else the `ciCommand` setting,
+  else nothing); the remote the push named (a name or URL), else the upstream's, else `origin`,
+  parsed by `parseRemote`; each pushed ref's sha (`<src>^{commit}`, a bare push = HEAD and its
+  branch). Landed only: an interrupted or non-zero call watches nothing, and a branch whose
+  remote-tracking ref is not the pushed sha (rejected) neither. The watches go through `applyWatch`
+  under the same lock as the tool's, so the agent's own `watch` of that sha is the same key, one
+  row; the result's `additionalContext` tells the agent it is watched. Label `<repo> <branch>`.
 - **A retried pipeline is followed again** (0.21.1): a failed or canceled pipeline is still
   re-checked once a minute for 2 h after it ended (`shouldPoll`), since a Retry turns it back into
   a running one; then it shows running again (its old finish times cleared) and finally its new
@@ -248,7 +261,7 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
 ## GitHub Actions (0.10.0)
 
 Asked for 2026-11-07: "add support for GitHub pipelines, similarly to the current GitLab pipeline"
-— and every push to a repo with CI is watched (the bundled skill's rule).
+— and every push to a repo with CI is watched (the bundled skill's rule; automatic since 0.22.0).
 
 - **Watch input:** `{ provider: "github", project: "owner/repo", run: <id> }` (`pipeline` is
   accepted as the run id) or `{ provider: "github", project, sha }`. No `provider` = GitLab, so

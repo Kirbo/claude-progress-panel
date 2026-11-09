@@ -41,8 +41,11 @@ send only what changed:
 
 ## Pipelines
 
-**After EVERY `git push` to a repo that has CI, `watch` the push at once** — whether or not you
-will report on it. CI = a `.gitlab-ci.yml` (GitLab), any `.github/workflows/*.yml` (GitHub
+**A `git push` you run through Bash is watched automatically** — the plugin detects the repo's CI,
+forge, host and the pushed sha once the push lands, and the tool result tells you (`that push is
+watched automatically`); do not `watch` it again. `watch` yourself only what that cannot see: a
+pipeline or run by id, another repo's pipeline, a push made outside this session (then the rules
+below apply). CI = a `.gitlab-ci.yml` (GitLab), any `.github/workflows/*.yml` (GitHub
 Actions: `provider: "github"`, `project: "owner/repo"`), any `.gitea/workflows/` or
 `.forgejo/workflows/` (`provider: "gitea"`, `project: "owner/repo"`), or another CI the user set
 up a **Custom CI command** for (`provider: "command"`, `project` = the name that command knows).
