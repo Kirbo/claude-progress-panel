@@ -287,6 +287,12 @@ async function pipeLine(ui: Awaited<ReturnType<typeof pane>>, key: string): Prom
   return header === undefined ? undefined : `${header} · ${status}`
 }
 
+// The Text whose whole text is `text` (find() matches a prefix: the pipeline's "● " mark and the
+// switches' "● tasks on" would be one).
+async function exactText(ui: Awaited<ReturnType<typeof pane>>, text: string) {
+  return (await ui.findAll({ type: 'Text' })).find(x => x.text === text)
+}
+
 async function texts(ui: Awaited<ReturnType<typeof pane>>): Promise<string[]> {
   return (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 }
@@ -1651,7 +1657,7 @@ test('a running pipeline stands out — yellow mark, bold — and a finished one
   await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
 
   let ui = await pane($)
-  expect((await ui.find({ type: 'Text', text: '● ' }))?.props.color).toBe('yellow')
+  expect((await exactText(ui, '● '))?.props.color).toBe('yellow')
   // The section's "watching" count lights up while anything runs.
   expect((await ui.find({ type: 'Text', text: '1 watching' }))?.props.color).toBe('yellow')
   expect((await ui.find({ type: 'Text', text: /^▸ app #42/ }))?.props.bold).toBe(true)
@@ -1664,7 +1670,7 @@ test('a running pipeline stands out — yellow mark, bold — and a finished one
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['test', 'failed']))
   await world.clock.advance(15_000)
   ui = await pane($)
-  expect(await ui.find({ type: 'Text', text: '● ' })).toBeUndefined()
+  expect(await exactText(ui, '● ')).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: '0 watching' }))?.props.color).toBeUndefined()
   expect((await ui.find({ type: 'Text', text: /^▸ app #42/ }))?.props.dimColor).toBe(true)
   const failed = await ui.find({ type: 'Text', text: /^failed/ })
@@ -3997,4 +4003,51 @@ test('a Now line too long for the pane is cut and folds open to its whole text',
     (await wide.findAll({ type: 'Button' })).some(b => String(b.props.key ?? '').startsWith('full:now:')),
   ).toBe(false)
   await wide.unmount()
+})
+
+test('the switches sit under the header, say their state, and reporting off takes a second press', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'working', tasks: [{ title: 'one' }] })
+  let ui = await pane($)
+  let lines = await texts(ui)
+  // Right under the header line, before Now: labelled as switches, each with its state.
+  const header = lines.findIndex(l => l.startsWith('updated '))
+  const label = lines.indexOf('Switches:')
+  expect(label).toBeGreaterThan(header)
+  expect(label).toBeLessThan(lines.indexOf('Now'))
+  expect(lines).toContain('● tasks on')
+  // Tasks switch off at once: OFF in yellow, and the session header says what is off.
+  await ui.press({ key: 'switch:tasks' })
+  expect((await exactText(ui, '○ tasks OFF'))?.props.color).toBe('yellow')
+  expect((await texts(ui)).some(l => l.includes('off: tasks'))).toBe(true)
+  await ui.press({ key: 'switch:tasks' })
+  expect(await exactText(ui, '● tasks on')).toBeDefined()
+  // Reporting: the first press only asks…
+  await ui.press({ key: 'switch:reporting' })
+  expect(await exactText(ui, 'reporting: press again to turn OFF')).toBeDefined()
+  expect(await exactText(ui, '● reporting on')).toBeUndefined()
+  // …a second within the window turns it off, and the header shows the pause.
+  await ui.press({ key: 'switch:reporting' })
+  lines = await texts(ui)
+  expect(lines).toContain('○ reporting OFF')
+  expect(lines.some(l => l.includes('paused: reporting'))).toBe(true)
+  // Back on with one press.
+  await ui.press({ key: 'switch:reporting' })
+  expect(await exactText(ui, '● reporting on')).toBeDefined()
+  // A first press left alone expires: a later press only asks again.
+  await ui.press({ key: 'switch:reporting' })
+  await world.clock.advance(6000)
+  await ui.press({ key: 'switch:reporting' })
+  expect(await exactText(ui, 'reporting: press again to turn OFF')).toBeDefined()
+  // Each switch carries what turning it changes, shown on hover.
+  expect((await texts(ui)).some(l => l.startsWith('turns tasks off for this session'))).toBe(true)
+  await ui.unmount()
+  // Too narrow for the label: the switches stay, the prefix goes.
+  ui = await pane($, 40)
+  lines = await texts(ui)
+  expect(lines).not.toContain('Switches:')
+  expect(lines.some(l => l.startsWith('● agents'))).toBe(true)
+  await ui.unmount()
 })

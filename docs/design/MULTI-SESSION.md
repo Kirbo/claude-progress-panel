@@ -591,10 +591,14 @@ the automatic watch, `syncOwnAgents`, and `progress_update` (reporting off: noth
 agents off: a subagent's call refused; tasks off: `tasks`/`order`/`remove` dropped; pipelines off:
 `watch` dropped — each with a one-line note in the answer). A change queues ONE note for the agent
 (`changeNote`; reporting back on queues the whole rule), handed over with the next prompt or
-main-loop tool call. The pane: a "This session:" row of ● / ○ buttons (always drawn, so a dormant
-session can switch itself on); every session's group reads its file's switches over this pane's
-defaults — reporting off adds "· paused" and dims it, tasks off hides its tasks, agents off its
-Agents section. With `autoStart` off a session does not open the pane by itself. Commands:
+main-loop tool call. The pane: a "Switches:" row right under the header (0.23.0, always drawn, so
+a dormant session can switch itself on). They read as switches, not filters (people pressed the
+old "This session: ● tasks" row as a list filter): each names its state ("● tasks on" / "○ tasks
+OFF", OFF in yellow, bold), a hover explains what turning it changes, and turning REPORTING off —
+it silences the whole session — asks a second press within 5 s (the pipeline ✕'s `armed` pattern);
+whole switches wrap, the label goes where the pane is too narrow. Every session's group reads its
+file's switches over this pane's defaults — its header says "· paused: reporting" or "· off: tasks,
+agents", dims a paused one, tasks off hides its tasks, agents off its Agents section. With `autoStart` off a session does not open the pane by itself. Commands:
 `/progress on|off` (also enable/disable, resume/pause), `/progress <feature> on|off`,
 `/progress status`.
 

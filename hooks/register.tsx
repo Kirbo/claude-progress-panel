@@ -1802,6 +1802,36 @@ async function pressPipelineX(
   await update($, armed, () => ({ key: p.key, untilMs: nowMs + CONFIRM_MS }))
 }
 
+// A switch in the pane: turning REPORTING off silences the whole session, so it takes a second
+// press within CONFIRM_MS (the pipeline ✕'s pattern); everything else switches at once.
+async function pressSwitch(
+  $: EngineInterface,
+  options: PluginOptions,
+  f: Feature,
+  on: boolean,
+): Promise<void> {
+  if (f !== 'reporting' || on) {
+    await update($, armed, () => null)
+    await setToggle($, options, f, on)
+    return
+  }
+  const nowMs = await $.clock.now()
+  const current = await read($, armed)
+  if (current?.key === 'switch:reporting' && nowMs <= current.untilMs) {
+    await update($, armed, () => null)
+    await setToggle($, options, f, false)
+    return
+  }
+  await update($, armed, () => ({ key: 'switch:reporting', untilMs: nowMs + CONFIRM_MS }))
+}
+
+/** A session header's marker of what is off there (" · paused: reporting", " · off: tasks, agents"). */
+function offMarker(sw: Record<Feature, boolean>): string {
+  if (!sw.reporting) return t('pane.pausedReporting')
+  const off = FEATURES.filter(f => f !== 'reporting' && !sw[f]).map(f => t(`toggle.feature.${f}`))
+  return off.length > 0 ? t('pane.offFeatures', { list: off.join(', ') }) : ''
+}
+
 // `/progress status`: each switch for this session, and whether it is its own or the default.
 function toggleStatus(options: PluginOptions): string {
   const eff = switches(options)
@@ -3261,7 +3291,7 @@ export const register: Register = (on, options) => {
           when: formatTime(ended ?? file.updatedAt, nowMs, settings.clock),
           open: open.length,
           done: done.length,
-        }) + (ended === null && !sw.reporting ? t('pane.paused') : '')
+        }) + (ended === null ? offMarker(sw) : '')
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" gap={2}>
@@ -3396,6 +3426,13 @@ export const register: Register = (on, options) => {
       )
     }
 
+    // The switches row as one line, to tell whether its prefix still fits.
+    const switchesLine = [
+      t('pane.switchesLabel'),
+      ...FEATURES.map(f =>
+        t(mine[f] ? 'pane.switchOn' : 'pane.switchOff', { feature: t(`toggle.feature.${f}`) }),
+      ),
+    ].join(' ')
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" gap={2}>
@@ -3430,6 +3467,42 @@ export const register: Register = (on, options) => {
               onPress={() => void update($, viewing, () => 'settings')}
             />
           </Box>
+        </Box>
+        {/* This session's SWITCHES, right under the header — not filters (Filter / Sort sit with the
+            list below): each names its state ("tasks on" / "tasks OFF", OFF in yellow), a hover says
+            what turning it changes, and turning reporting off — it silences the whole session — takes
+            a second press within a few seconds. Whole switches wrap, never mid-label; the prefix goes
+            where the pane is too narrow for it. */}
+        <Box flexDirection="row" gap={1} flexWrap="wrap">
+          {wouldCut(switchesLine, 0, 0) ? null : <Text dimColor>{t('pane.switchesLabel')}</Text>}
+          {FEATURES.map(f => {
+            const isArmed = armedNow?.key === `switch:${f}` && nowMs <= armedNow.untilMs
+            const label = isArmed
+              ? t('pane.switchConfirmOff', { feature: t(`toggle.feature.${f}`) })
+              : t(mine[f] ? 'pane.switchOn' : 'pane.switchOff', { feature: t(`toggle.feature.${f}`) })
+            return (
+              <Box key={`switchbox:${f}`} flexDirection="column">
+                <Button
+                  key={`switch:${f}`}
+                  label={label}
+                  plain
+                  onPress={() => void pressSwitch($, options, f, !mine[f])}
+                >
+                  <Text
+                    color={tint(settings.palette, isArmed ? 'red' : mine[f] ? undefined : 'yellow')}
+                    bold={isArmed || !mine[f]}
+                    dimColor={mine[f] && !isArmed}
+                  >
+                    {label}
+                  </Text>
+                </Button>
+                {/* Shown while the pointer is on this switch: what turning it changes. */}
+                <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }}>
+                  <Text dimColor>{t(mine[f] ? `switch.hintOff.${f}` : `switch.hintOn.${f}`)}</Text>
+                </Box>
+              </Box>
+            )
+          })}
         </Box>
         {needs.length > 0 ? (
           <Box flexDirection="column" marginTop={1}>
@@ -3509,19 +3582,6 @@ export const register: Register = (on, options) => {
             ) : null}
           </Box>
         ) : null}
-        {/* This session's switches: always here, also while it is dormant or has reported nothing. */}
-        <Box flexDirection="row" gap={1} marginTop={1} flexWrap="wrap">
-          <Text dimColor>{t('pane.switches')}</Text>
-          {FEATURES.map(f => (
-            <Button
-              key={`switch:${f}`}
-              label={t('pane.switch', { mark: mine[f] ? '●' : '○', feature: t(`toggle.feature.${f}`) })}
-              plain
-              dimColor={!mine[f]}
-              onPress={() => void setToggle($, options, f, !mine[f])}
-            />
-          ))}
-        </Box>
         <Box flexDirection="row" gap={2} marginTop={1}>
           <Text bold>{t('pane.sessions')}</Text>
           <Input

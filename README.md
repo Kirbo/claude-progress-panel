@@ -261,7 +261,9 @@ own file, so a `/reload-plugins` or a resume keeps them; a new session starts fr
   session's Agents section is hidden.
 - **pipelines** — off = no automatic watches, and the agent's `watch` is ignored.
 
-Switch them with the pane's **This session:** row (● on, ○ off — press one), or
+Switch them with the pane's **Switches:** row under its header (`● tasks on` / `○ tasks OFF` — press
+one; turning reporting off asks for a second press, since it silences the whole session; a session
+with something off says so in its header in every pane), or
 `/progress on` / `/progress off` (reporting), `/progress <reporting|tasks|agents|pipelines> on|off`,
 and see them with `/progress status`. Each change reaches the agent once: a one-line note for what
 went off, the matching part of the rule when it comes back on. With `autoStart` off a new session
