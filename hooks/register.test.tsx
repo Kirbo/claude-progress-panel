@@ -1019,7 +1019,8 @@ test('every session shows: newest update, needs-you from all, one now line each,
   expect(lines).toContain('waits for approval')
   expect(lines).toContain('● Build')
   expect(lines[0]).toMatch(/^updated \d\d:\d\d · app · checked \d\d:\d\d:\d\d$/)
-  expect(world.status.at(-1)).toBe('⚠ 2 need you')
+  // The status line names the ask itself, never only a count.
+  expect(world.status.at(-1)).toBe('⚠ 2 need you — app: Push OK')
   expect(await ui.find({ type: 'Button', key: 'group:s-me' })).toBeTruthy()
   await ui.unmount()
 })
@@ -1614,7 +1615,7 @@ test('my own asks never toast; skipped tasks list under Done with a dash', async
   await update($, { needsYou: ['Mine'], tasks: [{ title: 'Dropped', status: 'skipped' }] })
   await world.clock.advance(2000)
   expect(world.toasts).toEqual([])
-  expect(world.status.at(-1)).toBe('⚠ 1 need you')
+  expect(world.status.at(-1)).toBe('⚠ app: Mine')
 
   await update($, { needsYou: [] })
   expect(world.status.at(-1)).toBeUndefined()
@@ -3173,14 +3174,14 @@ test("Claude Code's waits become Needs-you items — and go as the wait ends; th
     notification_type: 'permission_prompt',
     message: 'Claude needs your permission to use Bash',
   } as never)
-  expect(auto()).toEqual(['Permission: Claude needs your permission to use Bash'])
+  expect(auto()).toEqual(['Permission: Bash'])
   // A subagent's prompt names it.
   await $.classic.Notification({
     notification_type: 'permission_prompt',
     message: 'Claude needs your permission to use Write',
     agent_id: 'sub-p',
   } as never)
-  expect(auto()).toContain('Lane B needs permission: Claude needs your permission to use Write')
+  expect(auto()).toContain('Permission: Write (agent: Lane B)')
   // The main loop's tool ran: its item goes; the subagent's stays until its own call.
   await $.classic.PostToolUse({
     tool_name: 'Bash',
@@ -3188,7 +3189,7 @@ test("Claude Code's waits become Needs-you items — and go as the wait ends; th
     tool_response: {},
     tool_use_id: 'p1',
   } as never)
-  expect(auto()).toEqual(['Lane B needs permission: Claude needs your permission to use Write'])
+  expect(auto()).toEqual(['Permission: Write (agent: Lane B)'])
   await $.classic.PermissionDenied({
     tool_name: 'Write',
     tool_input: {},
@@ -3202,9 +3203,9 @@ test("Claude Code's waits become Needs-you items — and go as the wait ends; th
     notification_type: 'idle_prompt',
     message: 'Claude is waiting for your input',
   } as never)
-  expect(auto()).toEqual(['Waiting for your reply'])
+  expect(auto()).toEqual(['Waiting for your reply — answer in this session'])
   await $.classic.Stop({ stop_hook_active: false } as never)
-  expect(auto()).toEqual(['Waiting for your reply'])
+  expect(auto()).toEqual(['Waiting for your reply — answer in this session'])
   await $.classic.UserPromptSubmit({ prompt: 'yes' } as never)
   expect(auto()).toEqual([])
   // The agent's own ask was never touched.
@@ -4558,4 +4559,163 @@ test('one repo: tasks, then the session-level Agents — no repo headings', asyn
     (await ui.findAll({ type: 'Button' })).some(b => String(b.props.key ?? '').startsWith('repo:')),
   ).toBe(false)
   await ui.unmount()
+})
+
+test('a permission prompt says what it is for, and the task / agent / step it belongs to is marked; cleared with it', async ($, on) => {
+  const disk = makeDisk()
+  // The engine beneath (registered before the kit's catch-all): a Bash or Write call asks the person
+  // first — Claude Code's generic notice arrives while the call is in flight, before the tool runs.
+  const prompt = (agentId?: string) => async () => {
+    await $.classic.Notification({
+      notification_type: 'permission_prompt',
+      message: 'Claude needs your permission',
+      ...(agentId ? { agent_id: agentId } : {}),
+    } as never)
+    return { result: {} } as never
+  }
+  on('tool.call', { tool: 'Bash' }, prompt())
+  on('tool.call', { tool: 'Write' }, prompt('sub-q'))
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-q', description: 'Lane Q', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [
+      { id: 'main', title: 'Main work', status: 'doing' },
+      { id: 'lane', title: 'Lane work', status: 'todo', agent: 'Lane Q' },
+    ],
+  })
+  // The subagent reports a doing step.
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-q',
+    now: 'deploying',
+    tasks: [{ title: 'Deploy', status: 'doing' }],
+  } as never)
+  const autoNeeds = () => read(disk, `${DIR}/s-me.json`).autoNeeds ?? []
+  // The main loop's Bash call: the generic notice is enriched from that call.
+  await $.tool.call({ tool: 'Bash', tool_use_id: 'm1', command: 'git push origin next\nmore' } as never)
+  expect(autoNeeds()[0]).toMatchObject({
+    text: 'Permission: Bash — git push origin next',
+    what: 'Bash — git push origin next',
+    taskId: 'main',
+  })
+  // The subagent's prompt names it; its call's input says what.
+  await $.tool.call({ tool: 'Write', tool_use_id: 'q1', file_path: '/w/app/x.ts', agentId: 'sub-q' } as never)
+  expect(autoNeeds().map(a => a.text)).toContain('Permission: Write — /w/app/x.ts (agent: Lane Q)')
+  const ui = await pane($, 100)
+  const all = await texts(ui)
+  // The main task: the Needs-you mark, the reason beneath.
+  expect(all).toContain('⚠ Main work')
+  expect(all).toContain('waiting for your permission: Bash — git push origin next')
+  // The agent's row and its doing step, and the task linked to it.
+  expect(all).toContain('waiting for your permission: Write — /w/app/x.ts')
+  expect(all).toContain('⚠ Deploy')
+  // Beneath the agent's row, its doing step, and the task linked to that agent (a fold: its mark is
+  // the row's own Text): three times, each its own item.
+  expect(all.filter(x => x === 'waiting for your permission: Write — /w/app/x.ts')).toHaveLength(3)
+  expect(all).toContain('⚠ ▾ Lane Q')
+  await ui.unmount()
+  // The main loop's tool ran: its item and mark go; the subagent's stay until its own call.
+  await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'm1',
+  } as never)
+  expect(autoNeeds().map(a => a.agentId)).toEqual(['sub-q'])
+  const after = await pane($, 100)
+  expect(await texts(after)).toContain('● Main work')
+  await after.unmount()
+  await $.classic.PostToolUse({
+    tool_name: 'Write',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'q1',
+    agent_id: 'sub-q',
+  } as never)
+  expect(autoNeeds()).toEqual([])
+})
+
+test("a permission prompt with no recorded call names the notice's tool; several doing tasks mark none", async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [
+      { id: 'a', title: 'A', status: 'doing' },
+      { id: 'b', title: 'B', status: 'doing' },
+    ],
+  })
+  await $.classic.Notification({
+    notification_type: 'permission_prompt',
+    message: 'Claude needs your permission to use WebFetch',
+  } as never)
+  const need = (read(disk, `${DIR}/s-me.json`).autoNeeds ?? [])[0]
+  expect(need?.text).toBe('Permission: WebFetch')
+  expect(need?.taskId).toBeUndefined()
+})
+
+test('a bare permission notice is never shown bare: it says where to look and what to do', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, { now: 'n' })
+  await $.classic.Notification({
+    notification_type: 'permission_prompt',
+    message: 'Claude needs your permission',
+  } as never)
+  expect((read(disk, `${DIR}/s-me.json`).autoNeeds ?? [])[0]?.text).toBe(
+    'Permission prompt in session app — open that terminal to see and answer it',
+  )
+})
+
+test('an ask may name its task or subagent: that one shows the Needs-you mark with the ask beneath; a plain string still works', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-r', description: 'Lane R', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [
+      { id: 'rel', title: 'Release 0.23.2', status: 'doing' },
+      { id: 'other', title: 'Other work', status: 'doing' },
+    ],
+    needsYou: [
+      { text: 'Push progress-panel 0.23.2? — reply yes or no here', task: 'rel' },
+      { text: 'Pick a port for Lane R — answer here', agent: 'Lane R' },
+      'Plug in the USB key — any time today',
+    ],
+  })
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-r',
+    now: 'r',
+    tasks: [{ title: 'Bind', status: 'doing' }],
+  } as never)
+  const file = read(disk, `${DIR}/s-me.json`)
+  expect(file.needsYou).toEqual([
+    'Push progress-panel 0.23.2? — reply yes or no here',
+    'Pick a port for Lane R — answer here',
+    'Plug in the USB key — any time today',
+  ])
+  const ui = await pane($, 120)
+  const all = await texts(ui)
+  expect(all).toContain('⚠ Release 0.23.2')
+  expect(all).toContain('Push progress-panel 0.23.2? — reply yes or no here')
+  expect(all).toContain('● Other work')
+  expect(all).toContain('⚠ ▾ Lane R')
+  expect(all).toContain('⚠ Bind')
+  await ui.unmount()
+  // Answered: [] clears the asks, and the marks go with them.
+  await update($, { needsYou: [] })
+  const after = await pane($, 120)
+  expect(await texts(after)).toContain('● Release 0.23.2')
+  await after.unmount()
+  // A blank ask is refused.
+  const answer = String(
+    ((await update($, { needsYou: [{ text: ' ' }] })) as { result?: unknown }).result ?? '',
+  )
+  expect(answer).toContain('an ask needs its text')
 })

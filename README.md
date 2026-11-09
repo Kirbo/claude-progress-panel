@@ -60,11 +60,18 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   works in several, puts every decision only you can make in **Needs you**, and watches every push
   to a repo with CI. Nothing to add to your `CLAUDE.md`; the bundled `progress-panel` skill has the
   details.
-- **Claude Code's own waits are Needs you too:** a session stopped on a permission prompt
-  ("Permission: …", or "<agent> needs permission: …" for a subagent) or waiting for your reply
-  shows it under **Needs you**, toasted to the other sessions, until the wait ends — the tool ran
-  or was denied, the turn ended, or you answered. The agent's own asks are never touched.
-  Settings `autoNeedsPermission` / `autoNeedsIdle` (both on).
+- **Claude Code's own waits are Needs you too:** a session stopped on a permission prompt or
+  waiting for your reply shows it under **Needs you**, toasted to the other sessions, until the wait
+  ends — the tool ran or was denied, the turn ended, or you answered. The agent's own asks are never
+  touched. Settings `autoNeedsPermission` / `autoNeedsIdle` (both on).
+- **No "needs your attention" without what, where and how.** A permission prompt says which tool
+  and input ("Permission: Bash — git push origin next (agent: Lane Q)"), taken from the call
+  waiting on it when Claude Code's own notice is only "Claude needs your permission"; when even that
+  cannot be told it says where to look ("Permission prompt in session app — open that terminal to
+  see and answer it"). The agent writes its asks the same way, and links each to its task or
+  subagent; **the task, agent or step a wait or an ask belongs to shows the same magenta ⚠ with the
+  reason beneath it**, so the tree shows what needs you and why. The status line names the ask
+  itself, not only a count.
 - **Sessions** are named as Claude Code names them: a `/rename` shows from your next prompt on
   (else the repo or folder name).
 - **What each mark means:** ○ to do, ● in progress, ⚠ blocked (magenta), ✓ done, – skipped

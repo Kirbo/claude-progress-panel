@@ -158,6 +158,8 @@ export const en = {
   'pane.dismiss': '  ✕  ',
   'pane.forget': '  ✕  ',
   'status.needsYou': '⚠ {count} need you',
+  'status.needsYouOne': '⚠ {project}: {item}',
+  'status.needsYouMany': '⚠ {count} need you — {project}: {item}',
   'toast.needsYou': '{project} needs you: {item}',
   'sort.plan': 'plan',
   'sort.status': 'status',
@@ -178,7 +180,7 @@ export const en = {
   'rule.done':
     "- A task is `done` when its work is done and verified. A push's CI is tracked by its pipeline, linked to the task automatically (done on green, failed on red) — never keep a task open only to wait for CI. A `doing` task left untouched at the end of a turn stops that turn once, so you update it to its true state.",
   'rule.needs':
-    '- Everything only the user can do or decide (an approval, a push OK, a login, a choice) goes in `needsYou` the moment it comes up; send `[]` once it is answered.',
+    '- Everything only the user can do or decide (an approval, a push OK, a login, a choice) goes in `needsYou` the moment it comes up — each item says WHAT is needed, WHERE and HOW to give it ("Push progress-panel 0.23.2? — reply yes or no here"), as { text, task } when it is about a task (or { text, agent } for a subagent), so that task shows it too; send `[]` once it is answered.',
   'rule.push':
     "- A `git push` you run is watched automatically (the repo's CI, forge and host detected; its result tells you). A repo without CI is remembered and skipped, and you are told once: never `watch` a repo the plugin said runs no CI. `watch` yourself only what the plugin cannot see: a run by id, another repo's pipeline, a push made outside this session.",
   'rule.oneReply': '- A question answered in one reply needs no entry.',
@@ -272,6 +274,8 @@ export const en = {
     'Progress pane: agent "{agent}" was stopped in the Progress pane — task "{task}" is unassigned: re-plan or skip it.',
   'pane.linkedAgentStopped': '■ {agent} stopped in the Progress pane — re-plan or skip this task',
   'pane.otherRepo': 'other',
+  'wait.permission': 'waiting for your permission: {what}',
+  'wait.reply': 'waiting for your reply',
   'pane.linkedPipeline': '⧗ waits on {label}: {state} — closes by itself when it finishes',
   'pane.unconfirmed': '? not updated since {min} min — unconfirmed at the end of a turn',
   'push.linkedTask':
@@ -287,8 +291,11 @@ export const en = {
     'Progress pane: these tasks still say `doing` but were not touched this turn — update each to its true state (done, blocked, todo…) with progress_update, or touch it if it really is still in progress:\n{list}',
   'stop.untouchedLine': '- {id} "{task}" (doing, last updated {min} min ago)',
   'auto.permission': 'Permission: {message}',
-  'auto.permissionAgent': '{agent} needs permission: {message}',
-  'auto.idle': 'Waiting for your reply',
+  'auto.permissionAgent': 'Permission: {message} (agent: {agent})',
+  'auto.idle': 'Waiting for your reply — answer in this session',
+  'auto.permissionUnknown':
+    'Permission prompt in session {session}{agent} — open that terminal to see and answer it',
+  'auto.agentSuffix': ' (agent: {agent})',
   'tool.reportingOff': 'Reporting is off for this session (/progress on to resume): nothing was written.',
   'tool.agentsOff': 'Agent reporting is off for this session: nothing was written.',
   'tool.tasksOff': 'Tasks are off for this session: `tasks`, `order` and `remove` were ignored.',

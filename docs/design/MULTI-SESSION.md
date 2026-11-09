@@ -566,6 +566,16 @@ Background work (same release): a SubagentStop's `background_tasks` is the whole
 owner; only ids the agent's own Bash results named (`backgroundTaskId`) count as its, so a stop with
 none of its own ends it. The "waiting on" line is one short name (`commandHead`).
 
+Needs you never bare (same release): `needsYou` items are a string or `{ text, task?, agent? }`;
+the file keeps `needsYou` as texts (every reader unchanged) plus `needLinks` (text → task / agent),
+replaced with every `needsYou`. Automatic permission items take what from the loop's pending tool
+call (a pass-through `tool.call` hook notes it and forgets it when the call returns — PreToolUse
+rides `tool.call`); else the tool the notice names; else "Permission prompt in session <name> —
+open that terminal to see and answer it". `attentionFor` gives a task / agent / agent step its
+reason — an automatic wait (main loop: its one `doing` task; a subagent: its row, its `doing` step,
+the task linked to it) or a linked ask — and the pane draws the magenta ⚠ with it beneath. The
+status line names the first ask (`⚠ <project>: <ask>`), cut with "…".
+
 The Settings view (same release): rows grouped (`SETTING_GROUPS`), values in the right column,
 coloured by `valueTone`, bold when `isChangedSetting` against the manifest's own defaults.
 

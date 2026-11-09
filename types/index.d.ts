@@ -159,9 +159,21 @@ export type SessionFile = {
   /** Needs-you items Claude Code's own waiting states raised (0.23.0) — a permission prompt, the
    *  idle "waiting for your input" — apart from the agent's `needsYou` (which every report
    *  replaces); cleared as soon as the wait ends. */
-  autoNeeds?: { kind: 'permission' | 'idle'; text: string; at: string; agentId?: string }[]
+  autoNeeds?: {
+    kind: 'permission' | 'idle'
+    text: string
+    at: string
+    agentId?: string
+    /** What it waits on, one line (0.23.2): a permission's tool and input; shown beneath the task. */
+    what?: string
+    /** The session task the wait belongs to (0.23.2): the main loop's one `doing` task. */
+    taskId?: string
+  }[]
   now?: string
   needsYou: string[]
+  /** Which task or agent each `needsYou` item belongs to (0.23.2), by its text: that item shows the
+   *  Needs-you mark with the ask beneath it. Absent = an ask about nothing listed. */
+  needLinks?: { text: string; task?: string; agent?: string }[]
   updatedAt: string
   tasks: Task[]
   dismissed: string[]

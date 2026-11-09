@@ -21,6 +21,7 @@ import {
   groupWorkByRepo,
   isBlank,
   isClosed,
+  isGenericPermission,
   linkPushedPipeline,
   listSignature,
   markUnconfirmed,
@@ -44,6 +45,7 @@ import {
   staleTasks,
   syncAgents,
   timeLeft,
+  toolCallSummary,
   untouchedDoing,
   visibleTasks,
   waitingOnFrom,
@@ -993,4 +995,18 @@ test("a repo's name from git's common dir: a worktree counts as its repo", () =>
   expect(repoFromCommonDir('/srv/repos/app.git')).toBe('app')
   expect(repoFromCommonDir('C:\\\\w\\\\app\\\\.git')).toBe('app')
   expect(repoFromCommonDir('')).toBeUndefined()
+})
+
+test('a tool call in one line: its tool and the input that matters, cut with …; a generic notice is told apart', () => {
+  expect(toolCallSummary('Bash', { command: 'git push\nsecond line', description: 'push' })).toBe(
+    'Bash — git push',
+  )
+  expect(toolCallSummary('Edit', { file_path: '/w/a.ts', old_string: 'x' })).toBe('Edit — /w/a.ts')
+  expect(toolCallSummary('WebFetch', { url: 'https://x.y', prompt: 'p' })).toBe('WebFetch — https://x.y')
+  expect(toolCallSummary('Bash', { command: 'x'.repeat(100) }, 20)).toBe(`Bash — ${'x'.repeat(19)}…`)
+  expect(toolCallSummary('TaskList', {})).toBe('TaskList')
+  expect(isGenericPermission('Claude needs your permission')).toBe(true)
+  expect(isGenericPermission('')).toBe(true)
+  expect(isGenericPermission('Claude needs your permission to use Bash')).toBe(true)
+  expect(isGenericPermission('Approve the deploy?')).toBe(false)
 })

@@ -48,9 +48,11 @@ export type TaskInput = {
   /** The pipeline it waits on (a watch key); '' clears it. Closes the task when it finishes. */
   pipeline?: string
 }
+/** One ask: its text alone, or with the task (id) or agent (label / id) it belongs to. */
+export type NeedInput = string | { text?: string; task?: string; agent?: string }
 export type UpdateInput = {
   now?: string
-  needsYou?: string[]
+  needsYou?: NeedInput[]
   tasks?: TaskInput[]
   remove?: string[]
   /** Task ids (or exact titles) in the order the session will do them; the rest keep theirs after. */
@@ -190,7 +192,7 @@ export function applyUpdate(
     file: {
       ...file,
       ...(input.now !== undefined ? { now: input.now } : {}),
-      ...(input.needsYou !== undefined ? { needsYou: [...input.needsYou] } : {}),
+      ...(input.needsYou !== undefined ? needsFrom(input.needsYou, errors) : {}),
       tasks,
       dismissed,
       seq,
@@ -1441,4 +1443,95 @@ export function repoFromCommonDir(commonDir: string): string | undefined {
   if (!last) return undefined
   if (last === '.git') return parts.at(-2)
   return last.replace(/\.git$/, '') || undefined
+}
+
+// --- What a wait is about (0.23.2) ------------------------------------------------------------------
+
+const GENERIC_PERMISSION = /^claude needs your permission\b/i
+
+/** One line naming a tool call: its tool and the input that matters — Bash's command, a file tool's
+ *  path, a fetch's URL, else the first string argument — cut with "…" past `max` characters. */
+export function toolCallSummary(tool: string, args: Record<string, unknown>, max = 80): string {
+  const pick = ['command', 'file_path', 'path', 'url', 'pattern', 'description', 'prompt']
+    .map(k => args[k])
+    .find((v): v is string => typeof v === 'string' && v.trim() !== '')
+  const any = pick ?? Object.values(args).find((v): v is string => typeof v === 'string' && v.trim() !== '')
+  const line = (any ?? '').trim().split(/\r?\n/)[0] ?? ''
+  const cut = line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line
+  return cut ? `${tool} — ${cut}` : tool
+}
+
+/** A permission prompt's message is the generic one ("Claude needs your permission…"): the plugin's
+ *  own record of the call says what it is about instead. */
+export function isGenericPermission(message: string): boolean {
+  return message.trim() === '' || GENERIC_PERMISSION.test(message.trim())
+}
+
+/** The automatic Needs-you item a task, an agent or an agent's step is waiting under: the main
+ *  loop's names its task (`taskId`); a subagent's its agent — that agent's row, its `doing` step and
+ *  the session task linked to it. */
+export function waitFor(
+  file: SessionFile,
+  target: { taskId?: string; agentId?: string; task?: Task },
+): NonNullable<SessionFile['autoNeeds']>[number] | undefined {
+  const needs = file.autoNeeds ?? []
+  if (target.agentId) return needs.find(n => n.agentId === target.agentId)
+  if (target.task) {
+    const linked = target.task.agent ? linkedAgent(file, target.task) : undefined
+    return needs.find(n => (n.taskId && n.taskId === target.task?.id) || (linked && n.agentId === linked.id))
+  }
+  return target.taskId ? needs.find(n => n.taskId === target.taskId) : undefined
+}
+
+/** The asks a report sends: their texts (`needsYou`, what every reader shows) and, for the ones that
+ *  name a task or an agent, the links (`needLinks`). A blank ask is refused. */
+function needsFrom(
+  items: readonly NeedInput[],
+  errors: string[],
+): { needsYou: string[]; needLinks?: NonNullable<SessionFile['needLinks']> } {
+  const needsYou: string[] = []
+  const needLinks: NonNullable<SessionFile['needLinks']> = []
+  items.forEach((item, i) => {
+    const text = (typeof item === 'string' ? item : (item?.text ?? '')).trim()
+    if (!text) {
+      errors.push(`needsYou[${i}]: an ask needs its text`)
+      return
+    }
+    needsYou.push(text)
+    if (typeof item === 'object' && item && (item.task?.trim() || item.agent?.trim()))
+      needLinks.push({
+        text,
+        ...(item.task?.trim() ? { task: item.task.trim() } : {}),
+        ...(item.agent?.trim() ? { agent: item.agent.trim() } : {}),
+      })
+  })
+  return { needsYou, ...(needLinks.length > 0 ? { needLinks } : { needLinks: [] }) }
+}
+
+/** What a task, an agent or an agent's step waits on the person for — an automatic wait (a
+ *  permission prompt, a question) or an ask the agent linked to it — as its reason, or none. */
+export function attentionFor(
+  file: SessionFile,
+  target: { task?: Task; agent?: AgentEntry },
+  reasons: { permission: (what: string) => string; reply: () => string },
+): string | undefined {
+  const auto = target.agent
+    ? waitFor(file, { agentId: target.agent.id })
+    : target.task
+      ? waitFor(file, { task: target.task })
+      : undefined
+  if (auto) return auto.kind === 'permission' ? reasons.permission(auto.what ?? '') : reasons.reply()
+  const agent = target.agent ?? (target.task?.agent ? linkedAgent(file, target.task) : undefined)
+  const link = (file.needLinks ?? []).find(
+    l =>
+      file.needsYou.includes(l.text) &&
+      ((target.task && l.task === target.task.id) ||
+        (agent && l.agent !== undefined && (l.agent === agent.label || l.agent === agent.id))),
+  )
+  return link?.text
+}
+
+/** The tool a generic permission notice names ("…to use Bash"), if any. */
+export function noticeTool(message: string): string | undefined {
+  return /to use ([\w.:-]+)/i.exec(message)?.[1]
 }

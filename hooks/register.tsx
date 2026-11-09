@@ -24,6 +24,7 @@ import {
   agentHasTask,
   applyAgentUpdate,
   applyUpdate,
+  attentionFor,
   autoLinkTarget,
   cancelDeeper,
   cancelTasks,
@@ -39,6 +40,7 @@ import {
   groupWorkByRepo,
   isBlank,
   isClosed,
+  isGenericPermission,
   linkedAgent,
   linkPushedPipeline,
   listSignature,
@@ -48,6 +50,7 @@ import {
   mergeSidecar,
   needsLivenessCheck,
   newSession,
+  noticeTool,
   OTHER_REPO,
   ownBackground,
   parseSessionFile,
@@ -68,6 +71,7 @@ import {
   syncAgents,
   taskPipeline,
   timeLeft,
+  toolCallSummary,
   trackedByPipeline,
   untouchedDoing,
   visibleTasks,
@@ -405,8 +409,6 @@ const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> =
 const INDENT = 2
 // Cells a task row keeps on its right (`██████░░ 12/14  ✕`): what a title is measured against.
 const TASK_RIGHT_COLS = 18
-// …and an agent row's (`██░░ 12/14 · 1h 2m · ~3 min left  ✕`).
-const AGENT_RIGHT_COLS = 36
 const COUNT_ORDER: JobState[] = ['running', 'queued', 'skipped', 'success', 'failed', 'canceled', 'manual']
 const COUNT_COLOR: Partial<Record<JobState, string>> = { running: 'yellow', success: 'green', failed: 'red' }
 // A pipeline's own state on its row: a live one in the running / queued colour behind its mark and
@@ -442,6 +444,12 @@ const MARK: Record<string, { sign: string; color?: string; dim?: true }> = {
 }
 
 /** The line beneath a task / step: its note — for an `unfinished` one without its own, why it is. */
+// The line beneath a task / agent / step that waits on the person.
+const WAIT_REASONS = {
+  permission: (what: string) => t('wait.permission', { what }),
+  reply: () => t('wait.reply'),
+}
+
 function reasonOf(item: { status: Status; note?: string }): string | undefined {
   if (item.note) return item.note
   return item.status === 'unfinished' ? t('pane.unfinishedReason') : undefined
@@ -454,8 +462,23 @@ const INPUT_SCHEMA = {
     now: { type: 'string', description: 'One line: what you are doing now and what comes next.' },
     needsYou: {
       type: 'array',
-      items: { type: 'string' },
-      description: 'Everything only the user can do or decide right now; [] clears it.',
+      items: {
+        anyOf: [
+          { type: 'string' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              text: { type: 'string', description: 'What is needed, and how to give it.' },
+              task: { type: 'string', description: 'The id of the task it is about.' },
+              agent: { type: 'string', description: 'The subagent it is about (its description or id).' },
+            },
+            required: ['text'],
+          },
+        ],
+      },
+      description:
+        'Everything only the user can do or decide right now; [] clears it. Each item says WHAT is needed, WHERE and HOW to give it ("Push progress-panel 0.23.2? — reply yes or no here"); give it as { text, task } (or { text, agent }) when it is about a task or a subagent — that one then shows the Needs-you mark with this text beneath it.',
     },
     tasks: {
       type: 'array',
@@ -856,6 +879,10 @@ function callSummary(input: ToolInput | undefined): string {
 }
 
 /** How the pane names a session: Claude Code's name for it, else its repo / folder. */
+function cutText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
+}
+
 function sessionName(file: SessionFile): string {
   return file.session.title || file.session.project
 }
@@ -876,7 +903,17 @@ function liveNeeds(all: Loaded): { project: string; item: string; key: string }[
 // The status line, and a toast for each ask another session raised since the last look.
 async function announce($: EngineInterface, all: Loaded, me: string): Promise<void> {
   const needs = liveNeeds(all)
-  await $.ui.status(needs.length > 0 ? t('status.needsYou', { count: needs.length }) : undefined)
+  // The status line names the ask itself (cut with "…"), never only a count.
+  const first = needs[0]
+  await $.ui.status(
+    first
+      ? t(needs.length === 1 ? 'status.needsYouOne' : 'status.needsYouMany', {
+          count: needs.length,
+          project: first.project,
+          item: cutText(first.item, 60),
+        })
+      : undefined,
+  )
   if (seenNeeds) {
     for (const n of needs) {
       if (!seenNeeds.has(n.key) && !n.key.startsWith(`${me}\u0000`) && settings.toastNeedsYou) {
@@ -1840,6 +1877,36 @@ async function setToggle(
 // Claude Code's own waiting states as Needs-you items of this session: a permission prompt (naming
 // the subagent that asks) and the idle "waiting for your reply" — each kind behind its setting, only
 // while reporting is on. Kept apart from the agent's own `needsYou`, never touching it.
+// The tool call each loop is in (main loop = '', else the subagent's id): what a permission prompt
+// is about — Claude Code's own notice often says only "Claude needs your permission".
+const pendingCall = new Map<string, { token: object; toolUseId?: string; what: string }>()
+
+function notePendingCall(e: unknown): { loop: string; token: object } | undefined {
+  const call = e as Record<string, unknown> & { tool?: unknown; tool_use_id?: unknown; agentId?: unknown }
+  if (typeof call.tool !== 'string') return undefined
+  const loop = typeof call.agentId === 'string' ? call.agentId : ''
+  const { tool, tool_use_id, agentId: _a, ...args } = call
+  const token = {}
+  pendingCall.set(loop, {
+    token,
+    ...(typeof tool_use_id === 'string' ? { toolUseId: tool_use_id } : {}),
+    what: toolCallSummary(tool, args),
+  })
+  return { loop, token }
+}
+
+// The call that `key` noted ended: forgotten, unless a later call of that loop replaced it.
+function endPendingCallOf(key: { loop: string; token: object }): void {
+  if (pendingCall.get(key.loop)?.token === key.token) pendingCall.delete(key.loop)
+}
+
+function endPendingCall(e: unknown): void {
+  const call = e as { agent_id?: unknown; tool_use_id?: unknown }
+  const loop = typeof call.agent_id === 'string' ? call.agent_id : ''
+  const pending = pendingCall.get(loop)
+  if (pending && (!pending.toolUseId || pending.toolUseId === call.tool_use_id)) pendingCall.delete(loop)
+}
+
 async function raiseAutoNeed($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
   const n = e as { notification_type?: unknown; message?: unknown; agent_id?: unknown }
   const kind =
@@ -1855,17 +1922,51 @@ async function raiseAutoNeed($: EngineInterface, options: PluginOptions, e: unkn
   const agentId = typeof n.agent_id === 'string' && n.agent_id ? n.agent_id : undefined
   const message = oneLine(typeof n.message === 'string' ? n.message : '')
   let text = t('auto.idle')
+  // What the permission is for: the plugin's own record of the loop's pending call when Claude
+  // Code's message is the generic one.
+  const pending = pendingCall.get(agentId ?? '')
+  // Never bare: the pending call's tool and input; else the tool the notice names; else Claude
+  // Code's own words when they say more than the generic line; else where to look.
+  const what =
+    kind !== 'permission'
+      ? undefined
+      : pending && isGenericPermission(message)
+        ? pending.what
+        : isGenericPermission(message)
+          ? noticeTool(message)
+          : message
   if (kind === 'permission') {
     const agent = agentId
-      ? (await $.agent.list().catch(() => [])).find(a => a.id === agentId)?.description
+      ? ((await $.agent.list().catch(() => [])).find(a => a.id === agentId)?.description ?? agentId)
       : undefined
-    text = agent ? t('auto.permissionAgent', { agent, message }) : t('auto.permission', { message })
+    const session = sessionName(await ownFile($, dir))
+    text = !what
+      ? t('auto.permissionUnknown', { session, agent: agent ? t('auto.agentSuffix', { agent }) : '' })
+      : agent
+        ? t('auto.permissionAgent', { agent, message: what })
+        : t('auto.permission', { message: what })
   }
   const at = await nowIso($)
   await exclusive(async () => {
     const own = await ownFile($, dir)
+    // The main loop's wait belongs to its one `doing` task (several or none: the Needs-you line only).
+    const doing = agentId ? [] : own.tasks.filter(x => x.status === 'doing')
+    const taskId = doing.length === 1 ? doing[0]?.id : undefined
     const rest = (own.autoNeeds ?? []).filter(a => !(a.kind === kind && a.agentId === agentId))
-    await save($, dir, { ...own, autoNeeds: [...rest, { kind, text, at, ...(agentId ? { agentId } : {}) }] })
+    await save($, dir, {
+      ...own,
+      autoNeeds: [
+        ...rest,
+        {
+          kind,
+          text,
+          at,
+          ...(agentId ? { agentId } : {}),
+          ...(what ? { what } : {}),
+          ...(taskId ? { taskId } : {}),
+        },
+      ],
+    })
   })
   await announce($, await read($, sessions), await $.session.id())
 }
@@ -1891,6 +1992,7 @@ async function clearAutoNeeds(
 
 // The permission was answered (the tool ran, failed or was denied): that loop's item goes.
 async function permissionAnswered($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
+  endPendingCall(e)
   const agentId = (e as { agent_id?: unknown }).agent_id
   const id = typeof agentId === 'string' && agentId ? agentId : undefined
   await clearAutoNeeds($, options, a => a.kind === 'permission' && a.agentId === id).catch(() => undefined)
@@ -2577,6 +2679,17 @@ export const register: Register = (on, options) => {
     await raiseAutoNeed($, options, e).catch(() => undefined)
     return next(e)
   }).catch(() => undefined)
+  // Every tool call about to run (PreToolUse rides `tool.call`): remembered per loop, so a
+  // permission prompt can say what it is for. It only notes and passes on — never changes a call.
+  on('tool.call', async (_$, e, next) => {
+    const key = notePendingCall(e)
+    try {
+      return await next(e)
+    } finally {
+      // The call ended (ran, failed or was refused): it no longer explains a prompt.
+      if (key) endPendingCallOf(key)
+    }
+  }).catch(() => undefined)
   on('classic.PostToolUseFailure', async ($, e, next) => {
     await permissionAnswered($, options, e)
     return next(e)
@@ -3176,7 +3289,13 @@ export const register: Register = (on, options) => {
 
     const taskRow = (sessionId: string, given: Task) => {
       let task = given
-      const mark = MARK[task.status] ?? { sign: '?' }
+      // Waiting on the person (a permission prompt, a reply): the Needs-you mark, the reason beneath.
+      const waitFile = all[sessionId]?.file
+      const wait =
+        waitFile && !isClosed(task.status) ? attentionFor(waitFile, { task }, WAIT_REASONS) : undefined
+      const mark = wait
+        ? (MARK.blocked as { sign: string; color?: string })
+        : (MARK[task.status] ?? { sign: '?' })
       // The subagent working on it: its live progress, under the task (its steps stay its own).
       const linkFile = all[sessionId]?.file
       const linked = linkFile && !isClosed(task.status) ? linkedAgent(linkFile, task) : undefined
@@ -3196,7 +3315,7 @@ export const register: Register = (on, options) => {
           </Text>
         </Box>
       ) : null
-      const reason = reasonOf(task)
+      const reason = wait ?? reasonOf(task)
       const note = reason ? (
         <Box paddingLeft={INDENT}>
           <Text dimColor>{hl(reason)}</Text>
@@ -3430,9 +3549,16 @@ export const register: Register = (on, options) => {
       a.tasks
         .filter(step => !removedHere(id, removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })))
         .map(step => {
-          const m = MARK[step.status] ?? { sign: '?' }
+          // The agent waits on the person: its `doing` step carries the Needs-you mark and why.
+          const agentWait =
+            live && step.status === 'doing' && all[id]?.file
+              ? attentionFor(all[id].file, { agent: a }, WAIT_REASONS)
+              : undefined
+          const m = agentWait
+            ? (MARK.blocked as { sign: string; color?: string; dim?: true })
+            : (MARK[step.status] ?? { sign: '?' })
           const stepKey = removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })
-          const why = reasonOf(step)
+          const why = agentWait ?? reasonOf(step)
           return (
             <Box key={`agentstepbox:${id}:${stepKey}`} flexDirection="column">
               <Box
@@ -3481,6 +3607,8 @@ export const register: Register = (on, options) => {
       const runOpen = folded[runKey] ?? true
       const agentRow = (a: (typeof agents)[number]) => {
         const key = `agent:${id}:${a.id}`
+        // A permission prompt or a question of this agent's: the row says so, magenta like Needs you.
+        const personWait = attentionFor(file, { agent: a }, WAIT_REASONS)
         const isOpen = folded[key] ?? true
         const closed = a.tasks.filter(x => isClosed(x.status)).length
         const steps =
@@ -3511,7 +3639,14 @@ export const register: Register = (on, options) => {
                   plain
                   onPress={() => void toggle($, key, isOpen)}
                 >
-                  <Text wrap="truncate-end">
+                  {/* Folded: one cut line; open: the whole label wraps here (shown once). Waiting on the
+                      person: the Needs-you mark before it. */}
+                  <Text {...(isOpen ? {} : { wrap: 'truncate-end' as const })}>
+                    {personWait ? (
+                      <Text color={tint(settings.palette, 'magenta')} bold>
+                        {'⚠ '}
+                      </Text>
+                    ) : null}
                     {t('pane.agentFold', { fold: isOpen ? '▾' : '▸', label: a.label })}
                   </Text>
                 </Button>,
@@ -3537,10 +3672,15 @@ export const register: Register = (on, options) => {
                 )}
               </Box>
             </Box>
+            {personWait ? (
+              <Box paddingLeft={INDENT}>
+                <Text color={tint(settings.palette, 'magenta')} wrap="truncate-end">
+                  {personWait}
+                </Text>
+              </Box>
+            ) : null}
             {isOpen ? (
               <Box flexDirection="column" paddingLeft={INDENT}>
-                {/* A label the row cut with "…": whole here, wrapped. */}
-                {wouldCut(a.label, INDENT * 3 + 2, AGENT_RIGHT_COLS) ? <Text>{a.label}</Text> : null}
                 {a.waiting && a.endedAt === null ? (
                   <Text dimColor wrap="truncate-end">
                     {a.waitingOn ? t('pane.waitingOn', { what: a.waitingOn }) : t('pane.waitingOnUnknown')}

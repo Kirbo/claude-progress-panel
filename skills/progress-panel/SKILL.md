@@ -84,7 +84,10 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
   `doing` task you did not touch in a turn stops that turn once with the list: update each to its
   true state. A task untouched for 20 min is asked about once.
 - **Asks:** put a blocker in `needsYou` the moment you need the user, and clear it (`[]` or the
-  remaining list) as soon as it is answered. Keep it honest — every session shows it.
+  remaining list) as soon as it is answered. Keep it honest — every session shows it. Each ask
+  says WHAT is needed, WHERE and HOW to give it ("Push progress-panel 0.23.2? — reply yes or no
+  here"); when it is about a task, send it as `{ text, task: "<id>" }` (or `{ text, agent }` for a
+  subagent) — that task then shows the Needs-you mark with the ask beneath it.
 - **Keep `now` true:** what is actually running right now.
 - **Don't delete history:** finished tasks stay `done`; the user clears them (✕ / Clear all) or
   the plugin's auto-clear setting does.
