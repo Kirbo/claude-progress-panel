@@ -109,7 +109,12 @@ pushed commit's sha, and watches that run. A push that fails, is rejected, is a 
 branch watches nothing; a repo without CI neither, nor a push to a mirror on another kind of forge
 (a GitLab-CI repo pushed to its GitHub mirror). It reads `cd`/`pushd` (Windows' `cd /d` and drive
 paths too), `git -C` and `git.exe`; a push through a git alias or a wrapper script it cannot see —
-there the agent's own `watch` (the rule) still covers it. The agent still `watch`es a CI run by id, or by
+there the agent's own `watch` (the rule) still covers it. **Repos without CI are remembered**, for
+every session on the machine (`ci-memory.v1` in the progress folder): no CI files, a mirror on
+another forge, or a pushed commit that got no pipeline within 10 minutes (CI off on the forge) —
+their later pushes are skipped without any lookup, and the agent is told once per session not to
+watch them. A CI file appearing or disappearing, 7 days passing, `/progress pipelines recheck` or
+`/progress doctor` judges the repo again. The agent still `watch`es a CI run by id, or by
 commit sha (whole or abbreviated) before the run exists — another repo's, or a push made outside the
 session — and the pane follows it
 live: state, a progress bar of finished / all jobs while it runs, how long it has run (beside an

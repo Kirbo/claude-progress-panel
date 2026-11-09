@@ -2,6 +2,16 @@ import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 
 import type { Folds, Loaded, PipelineProvider, SortChoice } from '../types'
+import {
+  CI_MEMORY_FILE,
+  type CiMemory,
+  ciFiles,
+  markNoPipeline,
+  parseCiMemory,
+  remembered,
+  repoKey,
+  withVerdict,
+} from './cimemory'
 import { commandArgv, parseCommandStatus } from './command'
 import { type Check, classifyCliError, classifyGitError, formatChecks } from './doctor'
 import { apiHost, forgeMatches, parseRemote } from './forges'
@@ -1140,6 +1150,13 @@ async function pollPipelines($: EngineInterface, options: PluginOptions): Promis
   // file as it is by then (a task, a watch or an unwatch sent meanwhile stays).
   const fresh: Pipeline[] = []
   for (const p of unfinished) fresh.push(await refreshPipeline($, options, p, at))
+  // A watched commit that never got a pipeline (the 10-minute hint): its repo runs no CI on that
+  // forge — remembered, so its next pushes are not watched for nothing.
+  const none = fresh.filter(p => p.id === null && p.error === noneYet(p))
+  if (none.length > 0)
+    await updateCiMemory($, dir, m =>
+      none.reduce((acc, p) => markNoPipeline(acc, apiHost(p), p.project, Date.parse(at)), m),
+    )
   await exclusive(async () => {
     const file = await ownFile($, dir)
     const pipelines = (file.pipelines ?? []).map(p => fresh.find(f => f.key === p.key) ?? p)
@@ -1282,7 +1299,12 @@ async function withSubagentRule<R extends { additionalContext?: string[] }>(
 // nothing, and a branch whose remote-tracking ref is not the pushed sha (rejected) neither. The
 // watch goes through the same `applyWatch` as the tool's, so one the agent also sends is the same
 // key — never a second row.
-async function watchPushes($: EngineInterface, options: PluginOptions, e: unknown): Promise<string[]> {
+async function watchPushes(
+  $: EngineInterface,
+  options: PluginOptions,
+  e: unknown,
+  notes: string[],
+): Promise<string[]> {
   const call = e as {
     tool_name?: unknown
     tool_input?: { command?: unknown }
@@ -1302,7 +1324,7 @@ async function watchPushes($: EngineInterface, options: PluginOptions, e: unknow
   const home = (await $.env.get('HOME')) ?? undefined
   const watches: WatchInput[] = []
   for (const push of pushes)
-    watches.push(...(await pushWatches($, options, resolvePath(base, push.dir, home), push)))
+    watches.push(...(await pushWatches($, options, resolvePath(base, push.dir, home), push, notes)))
   if (watches.length === 0) return []
   const at = await nowIso($)
   const { added, file } = await exclusive(async () => {
@@ -1327,19 +1349,46 @@ async function repoCi(
   options: PluginOptions,
   root: string,
 ): Promise<PipelineProvider | undefined> {
+  return (await repoCiFiles($, options, root)).provider
+}
+
+// The repo's CI files (stats and one listing per kind — cheap enough for every push) and the CI
+// they name, plus the files as one string the CI memory compares.
+async function repoCiFiles(
+  $: EngineInterface,
+  options: PluginOptions,
+  root: string,
+): Promise<{ provider: PipelineProvider | undefined; files: string }> {
   const has = async (path: string) =>
     (await $.fs.stat(`${root}/${path}`).catch(() => undefined)) !== undefined
   const workflows = async (path: string) =>
     ((await $.fs.list(`${root}/${path}`).catch(() => undefined)) ?? []).some(f => /\.ya?ml$/i.test(f.name))
-  return ciProvider(
-    {
-      gitlab: await has('.gitlab-ci.yml'),
-      github: await workflows('.github/workflows'),
-      gitea: (await workflows('.gitea/workflows')) || (await workflows('.forgejo/workflows')),
-    },
-    optionString(options, 'ciCommand').trim() !== '',
-  )
+  const found = {
+    gitlab: await has('.gitlab-ci.yml'),
+    github: await workflows('.github/workflows'),
+    gitea: (await workflows('.gitea/workflows')) || (await workflows('.forgejo/workflows')),
+  }
+  const hasCommand = optionString(options, 'ciCommand').trim() !== ''
+  return { provider: ciProvider(found, hasCommand), files: ciFiles(found, hasCommand) }
 }
+
+async function readCiMemory($: EngineInterface, dir: string): Promise<CiMemory> {
+  return parseCiMemory(await $.fs.read(`${dir}/${CI_MEMORY_FILE}`).catch(() => undefined))
+}
+
+// Read, change, write — the file is tiny and shared by the machine's sessions.
+async function updateCiMemory(
+  $: EngineInterface,
+  dir: string,
+  change: (m: CiMemory) => CiMemory,
+): Promise<void> {
+  const before = await readCiMemory($, dir)
+  const after = change(before)
+  if (after !== before) await $.fs.write(`${dir}/${CI_MEMORY_FILE}`, `${JSON.stringify(after, null, 2)}\n`)
+}
+
+// Repos whose agent was told, this session, that they run no CI (once each).
+const toldNoCi = new Set<string>()
 
 // One of this session's switches set (or, with `undefined`, reset to its default): kept in its own
 // file (a reload or a resume keeps it), and the agent told once — a note for what changed, the whole
@@ -1368,6 +1417,21 @@ async function setToggle(
     if (note) pendingNotes.push(t(note))
   }
   if (feature === 'reporting' && after.reporting) void $.ui.open(paneArgs(options))
+}
+
+// `/progress pipelines recheck` (and `/progress doctor`): forget what is remembered about this repo's
+// CI, so its next push is judged afresh.
+async function forgetCiVerdicts($: EngineInterface, options: PluginOptions): Promise<string> {
+  const dir = await progressDir($, options)
+  const root = (
+    await runCli($, ['git', '-C', await $.session.cwd(), 'rev-parse', '--show-toplevel'])
+  ).text?.trim()
+  if (!dir || !root) return t('ciMemory.noRepo')
+  await updateCiMemory($, dir, m => {
+    const keys = Object.keys(m.repos).filter(k => k.startsWith(`${root}|`))
+    return keys.length === 0 ? m : keys.reduce((acc, k) => withVerdict(acc, k, undefined), m)
+  })
+  return t('ciMemory.forgotten', { repo: baseName(root) })
 }
 
 // `/progress status`: each switch for this session, and whether it is its own or the default.
@@ -1440,6 +1504,8 @@ async function doctor($: EngineInterface, options: PluginOptions): Promise<strin
     return `${t('doctor.title')}\n${formatChecks(checks)}`
   }
   const repo = baseName(root)
+  // A doctor run judges this repo's CI afresh: what was remembered is forgotten.
+  await forgetCiVerdicts($, options)
   const provider = await repoCi($, options, root)
   checks.push(
     provider
@@ -1547,13 +1613,37 @@ async function pushWatches(
   options: PluginOptions,
   where: string,
   push: ReturnType<typeof parsePushes>[number],
+  notes: string[],
 ): Promise<WatchInput[]> {
   const git = async (...args: string[]) =>
     (await runCli($, ['git', '-C', where, ...args])).text?.trim() || undefined
   const root = await git('rev-parse', '--show-toplevel')
   if (!root) return []
-  const provider = await repoCi($, options, root)
-  if (!provider) return []
+  const dir = await progressDir($, options)
+  const nowMs = await $.clock.now()
+  const { provider, files } = await repoCiFiles($, options, root)
+  const key = repoKey(root, push.remote)
+  const memory = dir ? await readCiMemory($, dir) : undefined
+  const known = memory ? remembered(memory, key, files, nowMs) : undefined
+  const noCi = async (ci: 'none' | 'nopipeline', where?: { host: string; path: string }) => {
+    if (dir && !known)
+      await updateCiMemory($, dir, m =>
+        withVerdict(m, key, {
+          ci,
+          files,
+          checkedAtMs: nowMs,
+          ...(where ? { host: where.host, project: where.path } : {}),
+        }),
+      )
+    if (!toldNoCi.has(key)) {
+      toldNoCi.add(key)
+      notes.push(t('push.noCi', { repo: baseName(root) }))
+    }
+    return []
+  }
+  // Known to run no CI (no files, a mirror, or no pipeline ever came): nothing more to find out.
+  if (known && known.ci !== 'yes') return noCi(known.ci)
+  if (!provider) return noCi('none')
   // The remote: the one the push named (a name or a URL), else the branch's upstream's, else origin.
   const upstream = push.remote
     ? undefined
@@ -1564,7 +1654,16 @@ async function pushWatches(
   const remote = parseRemote(url)
   if (provider !== 'command' && !remote) return []
   // A mirror on another kind of forge runs none of this repo's CI.
-  if (remote && !forgeMatches(provider, remote.host)) return []
+  if (remote && !forgeMatches(provider, remote.host)) return noCi('none', remote)
+  if (dir && !known)
+    await updateCiMemory($, dir, m =>
+      withVerdict(m, key, {
+        ci: 'yes',
+        files,
+        checkedAtMs: nowMs,
+        ...(remote ? { host: remote.host, project: remote.path } : {}),
+      }),
+    )
   const repo = baseName(root)
   const specs = push.refs.length > 0 ? push.refs : push.tags && !push.all ? [] : ['HEAD']
   const out: WatchInput[] = []
@@ -1591,12 +1690,14 @@ async function pushWatches(
   return out
 }
 
-function withPushNote<R extends { additionalContext?: string[] }>(keys: string[], result: R): R {
-  if (keys.length === 0) return result
-  return {
-    ...result,
-    additionalContext: [...(result.additionalContext ?? []), t('push.watched', { keys: keys.join(', ') })],
-  }
+function withPushNote<R extends { additionalContext?: string[] }>(
+  keys: string[],
+  result: R,
+  notes: string[],
+): R {
+  const lines = [...(keys.length > 0 ? [t('push.watched', { keys: keys.join(', ') })] : []), ...notes]
+  if (lines.length === 0) return result
+  return { ...result, additionalContext: [...(result.additionalContext ?? []), ...lines] }
 }
 
 function withRemovalNotice<R extends { additionalContext?: string[] }>(result: R): R {
@@ -1772,10 +1873,11 @@ export const register: Register = (on, options) => {
   })
   // A subagent's first call instead carries the reporting rule it never got (`withSubagentRule`).
   on('classic.PostToolUse', async ($, e, next) => {
+    const pushNotes: string[] = []
     const pushed = isOn(options, 'pipelines')
-      ? await watchPushes($, options, e).catch(() => [] as string[])
+      ? await watchPushes($, options, e, pushNotes).catch(() => [] as string[])
       : []
-    const result = withPushNote(pushed, await next(e))
+    const result = withPushNote(pushed, await next(e), pushNotes)
     const agentId = (e as { agent_id?: unknown }).agent_id
     if (typeof agentId === 'string' && agentId) return withSubagentRule($, options, agentId, result)
     if (agentId) return result
@@ -1801,6 +1903,7 @@ export const register: Register = (on, options) => {
         }),
       }
     }
+    if (command.kind === 'recheck') return { text: await forgetCiVerdicts($, options) }
     if (command.kind === 'unknown') return { text: t('toggle.usage') }
     await scan($, options)
     await $.ui.open(paneArgs(options))

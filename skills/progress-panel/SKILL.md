@@ -45,7 +45,8 @@ send only what changed:
 forge, host and the pushed sha once the push lands, and the tool result tells you (`that push is
 watched automatically`); do not `watch` it again. `watch` yourself only what that cannot see: a
 pipeline or run by id, another repo's pipeline, a push made outside this session (then the rules
-below apply) — and a push it cannot see: through a git alias or a wrapper script (`git p`,
+below apply) — never a repo the plugin told you runs no CI (it remembers those and skips their
+pushes) — and a push it cannot see: through a git alias or a wrapper script (`git p`,
 `./release.sh`), so `watch` those by sha yourself. CI = a `.gitlab-ci.yml` (GitLab), any `.github/workflows/*.yml` (GitHub
 Actions: `provider: "github"`, `project: "owner/repo"`), any `.gitea/workflows/` or
 `.forgejo/workflows/` (`provider: "gitea"`, `project: "owner/repo"`), or another CI the user set

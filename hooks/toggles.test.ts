@@ -42,6 +42,7 @@ test('/progress arguments: open, doctor, status, on/off and per-feature switches
   expect(parseProgressCommand('enable')).toEqual({ kind: 'set', feature: 'reporting', on: true })
   expect(parseProgressCommand('pipelines off')).toEqual({ kind: 'set', feature: 'pipelines', on: false })
   expect(parseProgressCommand('AGENTS on')).toEqual({ kind: 'set', feature: 'agents', on: true })
+  expect(parseProgressCommand('pipelines recheck')).toEqual({ kind: 'recheck' })
   expect(parseProgressCommand('tasks')).toEqual({ kind: 'unknown' })
   expect(parseProgressCommand('bogus on')).toEqual({ kind: 'unknown' })
 })

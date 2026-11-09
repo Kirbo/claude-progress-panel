@@ -155,7 +155,7 @@ export const en = {
   'rule.needs':
     '- Everything only the user can do or decide (an approval, a push OK, a login, a choice) goes in `needsYou` the moment it comes up; send `[]` once it is answered.',
   'rule.push':
-    "- A `git push` you run is watched automatically (the repo's CI, forge and host detected; its result tells you). `watch` yourself only what the plugin cannot see: a run by id, another repo's pipeline, a push made outside this session.",
+    "- A `git push` you run is watched automatically (the repo's CI, forge and host detected; its result tells you). A repo without CI is remembered and skipped, and you are told once: never `watch` a repo the plugin said runs no CI. `watch` yourself only what the plugin cannot see: a run by id, another repo's pipeline, a push made outside this session.",
   'rule.oneReply': '- A question answered in one reply needs no entry.',
   'rule.subagent':
     "- A subagent reports too, under its coordinator's session (never as the session's tasks): every few steps — and when its plan changes — call progress_update with `now`, its steps as `tasks` (statuses moving; each open step's `note` its own estimate, e.g. ~10 min) and `eta` (minutes it expects the rest to take). Its coordinator sees them in its own progress_update answers and in the pane.",
@@ -173,7 +173,7 @@ export const en = {
   'toggle.statusItem': '{feature} {state} ({source})',
   'toggle.set': 'Progress panel: {feature} is {state} for this session.',
   'toggle.usage':
-    'Usage: /progress [on|off|status|doctor] · /progress <reporting|tasks|agents|pipelines> <on|off>',
+    'Usage: /progress [on|off|status|doctor] · /progress <reporting|tasks|agents|pipelines> <on|off> · /progress pipelines recheck',
   'toggle.note.reportingOff':
     'Progress pane: reporting is off for this session — do not call mcp__progress-panel__progress_update (the person turned it off; /progress on resumes).',
   'toggle.note.tasksOff':
@@ -186,6 +186,10 @@ export const en = {
   'toggle.note.pipelinesOff':
     'Progress pane: pipelines are off for this session — pushes are not watched and `watch` is ignored; do not send it.',
   'toggle.note.pipelinesOn': 'Progress pane: pipelines are on again — pushes are watched automatically.',
+  'push.noCi':
+    'Progress pane: {repo} runs no CI (remembered for this machine) — do not `watch` its pushes. /progress pipelines recheck judges it again.',
+  'ciMemory.noRepo': 'Not in a git repository: nothing to recheck.',
+  'ciMemory.forgotten': "Forgot what was remembered about {repo}'s CI: its next push is judged afresh.",
   'tool.reportingOff': 'Reporting is off for this session (/progress on to resume): nothing was written.',
   'tool.agentsOff': 'Agent reporting is off for this session: nothing was written.',
   'tool.tasksOff': 'Tasks are off for this session: `tasks`, `order` and `remove` were ignored.',

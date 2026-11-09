@@ -2910,6 +2910,65 @@ test("an Agent call's prompt carries the subagent rule — once, not to a fork, 
   expect(prompts[3]).toBe('Do the thing.')
 })
 
+const memoryOf = (disk: Disk) =>
+  JSON.parse(disk.files.get(`${DIR}/ci-memory.v1`)?.text ?? '{"repos":{}}').repos
+
+test('a repo without CI is remembered: told once, later pushes skip the work; a CI file appearing or the TTL judges it again', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  gitRepo(world, '/w/plain', { url: 'git@gitlab.com:team/plain.git' })
+  const first = await bash($, 'git push', { cwd: '/w/plain' })
+  expect(first).toContain('plain runs no CI')
+  expect(memoryOf(disk)['/w/plain|']).toMatchObject({ ci: 'none', files: '----' })
+  // Again: no note (told once), and no remote lookup at all.
+  const lookups = () => world.runs.filter(r => r.includes('get-url')).length
+  const before = lookups()
+  expect(await bash($, 'git push', { cwd: '/w/plain' })).toBe('')
+  expect(lookups()).toBe(before)
+  // A CI file appears: judged again — and watched.
+  ciFile(disk, '/w/plain/.gitlab-ci.yml')
+  expect(await bash($, 'git push', { cwd: '/w/plain' })).toContain('watched automatically')
+  expect(memoryOf(disk)['/w/plain|']).toMatchObject({ ci: 'yes', project: 'team/plain' })
+  // A no-CI verdict past the TTL (7 days) is judged again: a fresh stamp.
+  disk.files.delete('/w/plain/.gitlab-ci.yml')
+  const old = T0 - 8 * 24 * 3_600_000
+  put(disk, `${DIR}/ci-memory.v1`, {
+    version: 1,
+    repos: { '/w/plain|': { ci: 'none', files: '----', checkedAtMs: old } },
+  })
+  await bash($, 'git push', { cwd: '/w/plain' })
+  expect(memoryOf(disk)['/w/plain|'].checkedAtMs).toBeGreaterThan(old)
+})
+
+test("another session's verdict is reused; a commit that never got a pipeline is remembered; recheck forgets", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
+  // Pushed and watched; then 10 minutes with no pipeline for that commit (CI off on the forge).
+  world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${'a'.repeat(40)}&per_page=1`, [])
+  expect(await bash($, 'git push')).toContain('watched automatically')
+  await world.clock.advance(11 * 60_000)
+  expect(memoryOf(disk)['/w/app|']).toMatchObject({ ci: 'nopipeline' })
+  // The next push is not watched; the agent is told once.
+  const next = await bash($, 'git push')
+  expect(next).toContain('app runs no CI')
+  expect(next).not.toContain('watched automatically')
+  // Shared: a verdict another session wrote is read the same way (here: written straight to disk).
+  put(disk, `${DIR}/ci-memory.v1`, {
+    version: 1,
+    repos: { '/w/other|': { ci: 'none', files: '----', checkedAtMs: T0 + 11 * 60_000 } },
+  })
+  gitRepo(world, '/w/other', { url: 'git@gitlab.com:team/other.git' })
+  expect(await bash($, 'git push', { cwd: '/w/other' })).toContain('other runs no CI')
+  // /progress pipelines recheck forgets this repo's verdict.
+  world.programs.set('git -C /w/app/sub rev-parse --show-toplevel', '/w/app\n')
+  expect(await cmd($, 'pipelines recheck')).toContain("Forgot what was remembered about app's CI")
+  expect(memoryOf(disk)['/w/app|']).toBeUndefined()
+})
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)

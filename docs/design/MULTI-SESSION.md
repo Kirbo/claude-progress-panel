@@ -428,6 +428,19 @@ prompt) from the settings `paneColumns` (default 84 — the content's natural wi
 the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when it opens unasked
 (from 144 columns) are Claude Code's — a plugin cannot open itself narrower.
 
+## Repos without CI are remembered (0.23.0)
+
+Asked 2026-11-09 (item 6): the first push from a repo decides whether it runs CI, and the verdict
+is reused. `hooks/cimemory.ts` (pure) + `ci-memory.v1` in the progress folder (not `.json`: the
+session scan reads those), shared by the machine's sessions, read-change-write (tiny). Key = the
+repo's toplevel + the remote the push named (a mirror apart). Verdicts: `none` (no CI files, or a
+known forge of another kind), `yes`, `nopipeline` — the poller saw a by-sha watch reach the
+10-minute "no pipeline yet" hint (`markNoPipeline`, every `yes` entry on that host + project).
+Each push stats the CI files (`repoCiFiles`, cheap) and compares them with the verdict's `files`:
+same files and younger than `CI_MEMORY_TTL_MS` (7 days) → a non-`yes` verdict skips every other
+lookup; else the repo is judged again. A no-CI repo's agent is told once per session per repo
+(`push.noCi`). `/progress pipelines recheck` and `/progress doctor` forget the repo's verdicts.
+
 ## Switches: per-session features over plugin defaults (0.23.0)
 
 Asked 2026-11-09 (items 5–7): turn the panel's agent-facing parts off per session, with defaults

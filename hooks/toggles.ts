@@ -56,6 +56,7 @@ export type ProgressCommand =
   | { kind: 'doctor' }
   | { kind: 'status' }
   | { kind: 'set'; feature: Feature; on: boolean }
+  | { kind: 'recheck' }
   | { kind: 'unknown' }
 
 const ON = new Set(['on', 'enable', 'resume', 'start'])
@@ -72,6 +73,7 @@ export function parseProgressCommand(args: string | undefined): ProgressCommand 
   if (first === 'doctor') return { kind: 'doctor' }
   if (first === 'status') return { kind: 'status' }
   if (ON.has(first) || OFF.has(first)) return { kind: 'set', feature: 'reporting', on: ON.has(first) }
+  if (first === 'pipelines' && second === 'recheck') return { kind: 'recheck' }
   if ((FEATURES as readonly string[]).includes(first) && second && (ON.has(second) || OFF.has(second)))
     return { kind: 'set', feature: first as Feature, on: ON.has(second) }
   return { kind: 'unknown' }
