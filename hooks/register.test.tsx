@@ -643,30 +643,35 @@ test('a subagent that never reports (no progress tool) still shows under Agents 
 test('an agent gone from an EMPTY list (after a reload) ends once quiet; clearAgents clears finished rows', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
-  await start($)
-  await update($, { now: 'coordinating' })
-  world.agents.push({ id: 'gone-1', description: 'Lane A', type: 'general-purpose', status: 'running' })
+  // Seeded as the agents were — O(1): one scan, never minutes of simulated 2 s ticks (load-proof).
+  const agent = (id: string, label: string, quietMin: number) => {
+    const at = new Date(T0 - quietMin * 60_000).toISOString()
+    return { id, label, now: null, tasks: [], seq: 0, startedAt: at, updatedAt: at, endedAt: null }
+  }
+  put(disk, `${DIR}/s-me.json`, {
+    ...other('s-me', 'app', T0 - 10 * 60_000, { now: 'coordinating' }),
+    agents: [agent('gone-1', 'Lane A', 4), agent('recent-1', 'Lane C', 1), agent('busy-1', 'Lane B', 30)],
+  })
+  // Lane A and C dropped out of the list (finished agents do; after a reload it is empty); B runs on.
   world.agents.push({ id: 'busy-1', description: 'Lane B', type: 'general-purpose', status: 'running' })
+  await start($)
   await world.clock.advance(2100)
-  // Lane A drops out of the list (finished agents do; after a reload the list is empty), B runs on.
-  world.agents.splice(0, 1)
-  await world.clock.advance(60_000)
-  expect(read(disk, `${DIR}/s-me.json`).agents?.find(a => a.id === 'gone-1')?.endedAt).toBeNull()
-  await world.clock.advance(3 * 60_000)
   const after = read(disk, `${DIR}/s-me.json`).agents ?? []
+  // Quiet past the 3 min idle window: ended. Quiet for only 1 min: not yet.
   expect(after.find(a => a.id === 'gone-1')?.endedAt).not.toBeNull()
+  expect(after.find(a => a.id === 'recent-1')?.endedAt).toBeNull()
   // Listed as running: never ended, however quiet.
   expect(after.find(a => a.id === 'busy-1')?.endedAt).toBeNull()
   // The coordinator clears the finished row; the running one stays, unnamed in a clear-all.
   const answer = String(((await update($, { clearAgents: true })) as { result?: unknown }).result ?? '')
   expect(answer).toContain('Cleared from the pane: Lane A')
-  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.id)).toEqual(['busy-1'])
+  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.id)).toEqual(['recent-1', 'busy-1'])
   // Named explicitly while running: kept, and said so.
   const named = String(
     ((await update($, { dismissAgents: ['Lane B'] })) as { result?: unknown }).result ?? '',
   )
   expect(named).toContain('Not cleared — still working: Lane B')
-  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.id)).toEqual(['busy-1'])
+  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.id)).toEqual(['recent-1', 'busy-1'])
 })
 
 test("a subagent's first tool call carries the reporting rule once; one that reported is never told", async ($, on) => {
@@ -1182,9 +1187,10 @@ test('a dismissed task that is reopened and finished again shows again', async (
   await ui.press({ key: 'dismiss:s-me:t1' })
   await ui.unmount()
 
-  await world.clock.advance(60_000)
+  // A later completion only needs another time stamp: a second, not a minute of 2 s ticks.
+  await world.clock.advance(1000)
   await update($, { tasks: [{ id: 't1', title: 'Flaky', status: 'doing' }] })
-  await world.clock.advance(60_000)
+  await world.clock.advance(1000)
   await update($, { tasks: [{ id: 't1', status: 'done' }] })
 
   // The Done fold stays open from before (fold state is the pane's, not the mount's).
@@ -1990,6 +1996,19 @@ test('a watch by an abbreviated sha is resolved to the whole commit id and finds
   })
 })
 
+// Ages this session's watched pipelines as if they had been added `min` minutes ago — so a test of
+// a time-based rule runs ONE refresh, never minutes of simulated 2 s ticks (load-proof).
+function ageWatches(disk: Disk, min: number) {
+  const file = read(disk, `${DIR}/s-me.json`)
+  put(disk, `${DIR}/s-me.json`, {
+    ...file,
+    pipelines: (file.pipelines ?? []).map(p => ({
+      ...p,
+      addedAt: new Date(T0 - min * 60_000).toISOString(),
+    })),
+  })
+}
+
 test('a watch whose commit has no pipeline says so after 10 minutes instead of waiting silently', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
@@ -1998,7 +2017,8 @@ test('a watch whose commit has no pipeline says so after 10 minutes instead of w
   world.gitlab.set(`projects/g%2Fapp/pipelines?sha=${full}&per_page=1`, [])
   await update($, { watch: [{ project: 'g/app', sha: full, label: 'app' }] })
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toBeUndefined()
-  await world.clock.advance(11 * 60_000)
+  ageWatches(disk, 11)
+  await world.clock.advance(16_000)
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toMatch(
     /^no pipeline for commit bbbbbbbbbbbb after 10 min/,
   )
@@ -3121,7 +3141,8 @@ test("another session's verdict is reused; a commit that never got a pipeline is
   // Pushed and watched; then 10 minutes with no pipeline for that commit (CI off on the forge).
   world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${'a'.repeat(40)}&per_page=1`, [])
   expect(await bash($, 'git push')).toContain('watched automatically')
-  await world.clock.advance(11 * 60_000)
+  ageWatches(disk, 11)
+  await world.clock.advance(16_000)
   expect(memoryOf(disk)['/w/app|']).toMatchObject({ ci: 'nopipeline' })
   // The next push is not watched; the agent is told once.
   const next = await bash($, 'git push')
@@ -4340,16 +4361,20 @@ test('a red pipeline fails its task with the failing job; two `doing` tasks in t
 
 test('a `doing` task untouched this turn stops the turn once — never twice for the same list — then is marked unconfirmed', async ($, on) => {
   const disk = makeDisk()
-  const world = engine(on, disk)
+  engine(on, disk)
+  // The tasks are seeded 11 min old — O(1) work, never minutes of simulated 2 s ticks (load-proof).
+  put(
+    disk,
+    `${DIR}/s-me.json`,
+    other('s-me', 'app', T0 - 11 * 60_000, {
+      now: 'n',
+      tasks: [
+        { id: 'w', title: 'Write docs', status: 'doing' },
+        { title: 'Later', status: 'todo' },
+      ],
+    }),
+  )
   await start($)
-  await update($, {
-    now: 'n',
-    tasks: [
-      { id: 'w', title: 'Write docs', status: 'doing' },
-      { title: 'Later', status: 'todo' },
-    ],
-  })
-  await world.clock.advance(11 * 60_000)
   await $.classic.UserPromptSubmit({ prompt: 'thanks' } as never)
   const first = (await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }
   expect(first.block).toContain('w "Write docs" (doing, last updated 11 min ago)')
@@ -4377,14 +4402,14 @@ test(
   { options: { tasksDefault: 'off' } },
   async ($, on) => {
     const disk = makeDisk()
-    const world = engine(on, disk)
-    await start($)
+    engine(on, disk)
+    // Seeded 30 min old: the check would stop this turn if tasks were on.
     put(
       disk,
       `${DIR}/s-me.json`,
-      other('s-me', 'app', T0, { tasks: [{ id: 'w', title: 'Write', status: 'doing' }] }),
+      other('s-me', 'app', T0 - 30 * 60_000, { tasks: [{ id: 'w', title: 'Write', status: 'doing' }] }),
     )
-    await world.clock.advance(30 * 60_000)
+    await start($)
     await $.classic.UserPromptSubmit({ prompt: 'x' } as never)
     expect(
       ((await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }).block,
@@ -4394,13 +4419,17 @@ test(
 
 test('an open task untouched for 20 min is asked about once with the next prompt, never twice in the same state', async ($, on) => {
   const disk = makeDisk()
-  const world = engine(on, disk)
+  engine(on, disk)
+  // Seeded 21 min old — one prompt, no simulated minutes.
+  put(
+    disk,
+    `${DIR}/s-me.json`,
+    other('s-me', 'app', T0 - 21 * 60_000, {
+      now: 'n',
+      tasks: [{ id: 'b', title: 'Waiting on review', status: 'blocked', note: 'review' }],
+    }),
+  )
   await start($)
-  await update($, {
-    now: 'n',
-    tasks: [{ id: 'b', title: 'Waiting on review', status: 'blocked', note: 'review' }],
-  })
-  await world.clock.advance(21 * 60_000)
   const ctx = async () =>
     (
       ((await $.classic.UserPromptSubmit({ prompt: 'p' } as never)) as { additionalContext?: string[] })
@@ -4474,4 +4503,59 @@ test('the Settings view: values right-aligned and coloured, a changed one bold, 
     await ui.press({ key: 'settings:back' })
     await ui.unmount()
   }
+})
+
+test("a session's work in several repos groups by repo, each with its own agents; one repo stays flat", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push(
+    { id: 'ag-a', description: 'Lane A', type: 'general-purpose', status: 'running' },
+    { id: 'ag-w', description: 'Lane W', type: 'general-purpose', status: 'running' },
+    { id: 'ag-x', description: 'Lane X', type: 'general-purpose', status: 'running' },
+  )
+  // Lane W works in a worktree of `site`: git names the repo by its common dir.
+  world.programs.set(
+    'git -C /tmp/wt-site rev-parse --path-format=absolute --git-common-dir',
+    '/w/site/.git\n',
+  )
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [
+      { id: 'p', title: 'Panel fix', status: 'doing', repo: 'panel', agent: 'Lane A' },
+      { id: 'q', title: 'App fix', status: 'doing' },
+    ],
+  })
+  await world.clock.advance(2100)
+  await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: { command: 'ls' },
+    tool_response: { stdout: '', stderr: '', interrupted: false },
+    tool_use_id: 'w1',
+    agent_id: 'ag-w',
+    cwd: '/tmp/wt-site',
+  } as never)
+  const ui = await pane($, 100)
+  // Each repo branch holds its agents; the unknown one goes to "other"; no session-level Agents.
+  expect(await ui.find({ type: 'Button', key: 'agents:s-me:panel' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'agents:s-me:site' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'agents:s-me:\u0000other' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'agents:s-me' })).toBeUndefined()
+  expect((await ui.find({ type: 'Button', key: 'repo:s-me:\u0000other' }))?.text).toBe('▾ other  0 open')
+  await ui.unmount()
+})
+
+test('one repo: tasks, then the session-level Agents — no repo headings', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'ag-a', description: 'Lane A', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, { now: 'n', tasks: [{ id: 'q', title: 'App fix', status: 'doing', agent: 'Lane A' }] })
+  await world.clock.advance(2100)
+  const ui = await pane($, 100)
+  expect(await ui.find({ type: 'Button', key: 'agents:s-me' })).toBeDefined()
+  expect(
+    (await ui.findAll({ type: 'Button' })).some(b => String(b.props.key ?? '').startsWith('repo:')),
+  ).toBe(false)
+  await ui.unmount()
 })
