@@ -91,6 +91,11 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   looked up from this repository's GitLab Releases at most every 6 h, shared by every session on
   the machine; `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` turns the check off.
 - **Closed the pane?** `/progress` in any session opens it again.
+- **Something not working?** `/progress doctor` checks this session's setup, one line per check
+  with its fix: the plugin version, whether this session got the reporting rule, the progress
+  folder, the repo's CI, the forge CLI for it (installed, logged in for the host, able to read
+  this project — one API call through your own `glab` / `gh` / `tea`) and whether git reaches the
+  remote (an untrusted SSH host key, missing credentials). Read-only.
 - **In the transcript** a `progress_update` call is one quiet line (`◦ Progress · <now> · 2 tasks`);
   ctrl+o shows it in full.
 

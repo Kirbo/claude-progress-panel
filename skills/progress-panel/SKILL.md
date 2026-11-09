@@ -83,3 +83,6 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
 - `/progress` opens it (a session opens it by itself only on a terminal ~144 columns wide).
 - No `progress_update` tool and no `/progress` → the plugin is not installed on this machine: see
   the repository's `CLAUDE.md` ("Set the panel up on a machine").
+- A pipeline that shows an error, a rule that never arrived, a push that was not watched →
+  `/progress doctor` names the cause and its fix (forge CLI missing / not logged in / unable to read
+  this project, SSH host key, folder not writable).

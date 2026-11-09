@@ -403,6 +403,20 @@ prompt) from the settings `paneColumns` (default 84 — the content's natural wi
 the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when it opens unasked
 (from 144 columns) are Claude Code's — a plugin cannot open itself narrower.
 
+## `/progress doctor` (0.22.1)
+
+`/progress doctor` (the `progress` command's argument, case and spaces ignored) answers one line per
+check, ✓ / ✗ / –, each ✗ with its fix beneath (`hooks/doctor.ts`: the classifiers + the format,
+pure; the checks in register.tsx): the version (`ownManifest`); the reporting rule (`ruleComposed` /
+`ruleSent` / not yet); the progress folder (resolved, then a probe file written and deleted); the
+repo's CI (`repoCi`, the one detection the auto-watch uses); the forge CLI — ONE API call for this
+repo's project through the person's own `glab` / `gh` / `tea` (`projects/<path>`, `repos/<path>`),
+its failure classified (`classifyCliError`): not installed, not logged in for the host, or logged in
+but unable to read the project (403/404 — a token scoped to other projects, the 2026-11-09 case);
+and `git ls-remote --exit-code origin HEAD`, its whole stderr classified (`classifyGitError`: an
+untrusted SSH host key, missing credentials). Read-only apart from the probe; a custom CI command is
+not run.
+
 ## Out of scope / later
 
 - Other machines: the store is local. Mirroring to a shared place stays the agent's job.

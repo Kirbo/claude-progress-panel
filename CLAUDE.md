@@ -29,7 +29,8 @@ How to _use_ the panel during a task is the bundled skill:
    with the `progress_update` tool (tasks + now + needsYou) — never invent content.
 5. Pipelines in the pane need [`glab`](https://gitlab.com/gitlab-org/cli) on PATH and logged in
    (`glab auth status`); without it everything else works and a watched pipeline shows glab's error.
-6. Verify: `claude plugin list` shows `progress-panel@claude-progress-panel` enabled. The pane
+6. Verify: `claude plugin list` shows `progress-panel@claude-progress-panel` enabled, then
+   `/progress doctor` in a session (one line per check, each failure with its fix). The pane
    appears in the NEXT session (or after `/reload-plugins` in a running one); `/progress` opens it.
    It needs a terminal ≥ ~144 columns to open by itself and does not draw usefully inside
    `screen`/`tmux` panes that are too narrow.

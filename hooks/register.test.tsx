@@ -2660,6 +2660,69 @@ test('a subagent is handed the reporting rule as it starts; its first tool call 
   expect((first.additionalContext ?? []).join(' ')).not.toContain('you are a subagent')
 })
 
+test('/progress doctor names what is wrong with the setup, with its fix — and all green once fixed', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  world.programs.set('git -C /w/app/sub rev-parse --show-toplevel', '/w/app\n')
+  world.programs.set('git -C /w/app remote get-url origin', 'git@gitlab.com:group/app.git\n')
+  // Today's two real failures: a token that sees only another project, an SSH host key not trusted.
+  world.failures.set('projects/group%2Fapp', {
+    exitCode: 1,
+    stdout: '',
+    stderr: 'glab: 404 Project Not Found',
+  })
+  world.failures.set('HEAD', {
+    exitCode: 128,
+    stdout: '',
+    stderr: 'Host key verification failed.\nfatal: Could not read from remote repository.',
+  })
+  const doctor = async () =>
+    ((await $.command.run({ command: 'progress', args: 'doctor' } as never)) as { text: string }).text
+  const before = await doctor()
+  expect(before).toContain('✓ Version: 0.14.0')
+  expect(before).toContain('✗ Reporting rule: not delivered yet')
+  expect(before).toContain('✓ Progress folder:')
+  expect(before).toContain('✓ CI: gitlab in app')
+  expect(before).toContain('✗ Forge CLI: glab is logged in but cannot read group/app on gitlab.com')
+  expect(before).toContain('→ log glab in with a token that can read group/app')
+  expect(before).toContain(
+    '✗ Git remote: git cannot reach git@gitlab.com:group/app.git: the SSH host key is not trusted',
+  )
+  // The probe file is gone again.
+  expect([...disk.files.keys()].some(k => k.includes('.doctor-'))).toBe(false)
+
+  world.failures.delete('projects/group%2Fapp')
+  world.failures.delete('HEAD')
+  world.gitlab.set('projects/group%2Fapp', { id: 1 })
+  world.programs.set('git -C /w/app ls-remote --exit-code origin HEAD', 'abc\tHEAD\n')
+  await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)
+  const after = await doctor()
+  expect(after).toContain('✓ Reporting rule: handed over with a prompt')
+  expect(after).toContain('✓ Forge CLI: glab reads group/app on gitlab.com')
+  expect(after).toContain('✓ Git remote: git reaches')
+  expect(after).not.toContain('✗')
+})
+
+test('/progress doctor outside a repository checks only what applies; a missing CLI says to install it', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  const doctor = async () =>
+    ((await $.command.run({ command: 'progress', args: ' Doctor ' } as never)) as { text: string }).text
+  expect(await doctor()).toContain('– CI: not in a git repository')
+  world.programs.set('git -C /w/app/sub rev-parse --show-toplevel', '/w/app\n')
+  world.programs.set('git -C /w/app remote get-url origin', 'https://github.com/owner/app.git\n')
+  world.programs.set('git -C /w/app ls-remote --exit-code origin HEAD', 'abc\tHEAD\n')
+  disk.files.set('/w/app/.github/workflows/ci.yml', { text: 'ci', mtimeMs: 1 })
+  world.failures.set('repos/owner/app', { exitCode: 127, stdout: '', stderr: '' })
+  const text = await doctor()
+  expect(text).toContain('✓ CI: github in app')
+  expect(text).toContain('✗ Forge CLI: gh is not installed or not on PATH')
+  expect(text).toContain('→ install gh')
+})
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)

@@ -1,8 +1,9 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { atom, read, update } from 'claude-code'
 
-import type { Folds, Loaded, SortChoice } from '../types'
+import type { Folds, Loaded, PipelineProvider, SortChoice } from '../types'
 import { commandArgv, parseCommandStatus } from './command'
+import { type Check, classifyCliError, classifyGitError, formatChecks } from './doctor'
 import { apiHost, parseRemote } from './forges'
 import { parseGiteaJobs, parseGiteaRun, teaLoginFor } from './gitea'
 import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
@@ -1184,6 +1185,180 @@ async function watchPushes($: EngineInterface, options: PluginOptions, e: unknow
   return added.map(p => p.key)
 }
 
+// The CI a repository runs, read off its files (else the person's custom command, else none) —
+// the one detection the auto-watch and `/progress doctor` share.
+async function repoCi(
+  $: EngineInterface,
+  options: PluginOptions,
+  root: string,
+): Promise<PipelineProvider | undefined> {
+  const has = async (path: string) =>
+    (await $.fs.stat(`${root}/${path}`).catch(() => undefined)) !== undefined
+  const workflows = async (path: string) =>
+    ((await $.fs.list(`${root}/${path}`).catch(() => undefined)) ?? []).some(f => /\.ya?ml$/i.test(f.name))
+  return ciProvider(
+    {
+      gitlab: await has('.gitlab-ci.yml'),
+      github: await workflows('.github/workflows'),
+      gitea: (await workflows('.gitea/workflows')) || (await workflows('.forgejo/workflows')),
+    },
+    optionString(options, 'ciCommand').trim() !== '',
+  )
+}
+
+// `/progress doctor`: one line per check, each failed one with its fix. Cheap and read-only: one
+// probe file in the progress folder, one API call through the forge's own CLI (installed, logged in
+// for the host AND able to read this project — a token scoped to other projects fails exactly
+// there), one `git ls-remote` (the SSH host key, the credentials).
+async function doctor($: EngineInterface, options: PluginOptions): Promise<string> {
+  const checks: Check[] = []
+  checks.push({ state: 'ok', label: t('doctor.version'), detail: (await ownManifest($)).version || '?' })
+  checks.push(
+    ruleComposed
+      ? { state: 'ok', label: t('doctor.rule'), detail: t('doctor.rule.composed') }
+      : ruleSent
+        ? { state: 'ok', label: t('doctor.rule'), detail: t('doctor.rule.sent') }
+        : {
+            state: 'fail',
+            label: t('doctor.rule'),
+            detail: t('doctor.rule.missing'),
+            fix: t('doctor.rule.fix'),
+          },
+  )
+  const dir = await progressDir($, options)
+  if (!dir) {
+    checks.push({
+      state: 'fail',
+      label: t('doctor.folder'),
+      detail: t('doctor.folder.none'),
+      fix: t('doctor.folder.noneFix'),
+    })
+  } else {
+    const probe = `${dir}/.doctor-${await $.session.id()}`
+    const wrote = await $.fs.write(probe, 'ok').then(
+      () => undefined,
+      (err: unknown) => (err instanceof Error ? err.message : String(err)),
+    )
+    if (wrote === undefined) await deleteFile($, probe)
+    checks.push(
+      wrote === undefined
+        ? { state: 'ok', label: t('doctor.folder'), detail: dir }
+        : {
+            state: 'fail',
+            label: t('doctor.folder'),
+            detail: t('doctor.folder.unwritable', { dir, error: oneLine(wrote) }),
+            fix: t('doctor.folder.unwritableFix'),
+          },
+    )
+  }
+  const where = await $.session.cwd()
+  const root = (await runCli($, ['git', '-C', where, 'rev-parse', '--show-toplevel'])).text?.trim()
+  if (!root) {
+    checks.push({ state: 'skip', label: t('doctor.ci'), detail: t('doctor.ci.noRepo') })
+    return `${t('doctor.title')}\n${formatChecks(checks)}`
+  }
+  const repo = baseName(root)
+  const provider = await repoCi($, options, root)
+  checks.push(
+    provider
+      ? { state: 'ok', label: t('doctor.ci'), detail: t('doctor.ci.found', { kind: provider, repo }) }
+      : { state: 'skip', label: t('doctor.ci'), detail: t('doctor.ci.none', { repo }) },
+  )
+  const remoteUrl = (await runCli($, ['git', '-C', root, 'remote', 'get-url', 'origin'])).text?.trim()
+  const remote = parseRemote(remoteUrl)
+  if (provider === 'command')
+    checks.push({ state: 'skip', label: t('doctor.cli'), detail: t('doctor.cli.custom') })
+  else if (provider && !remote)
+    checks.push({ state: 'skip', label: t('doctor.cli'), detail: t('doctor.cli.noRemote') })
+  else if (provider && remote) checks.push(await forgeCheck($, provider, remote.host, remote.path))
+  if (remoteUrl) checks.push(await gitCheck($, root, remoteUrl, remote?.host ?? remoteUrl))
+  return `${t('doctor.title')}\n${formatChecks(checks)}`
+}
+
+// The forge CLI for this repo's CI: one read of its project (GitLab project, GitHub repo, Gitea repo).
+async function forgeCheck(
+  $: EngineInterface,
+  provider: PipelineProvider,
+  host: string,
+  project: string,
+): Promise<Check> {
+  const label = t('doctor.cli')
+  const cli = provider === 'github' ? 'gh' : provider === 'gitea' ? 'tea' : 'glab'
+  const ran =
+    provider === 'github'
+      ? await ghApi($, `repos/${project}`, host)
+      : provider === 'gitea'
+        ? await teaApi($, host, `/repos/${project}`)
+        : await glabApi($, `projects/${encodeURIComponent(project)}`, host)
+  const vars = { cli, host, project }
+  if (ran.error === undefined) return { state: 'ok', label, detail: t('doctor.cli.ok', vars) }
+  const error = oneLine(ran.error)
+  const login =
+    cli === 'gh'
+      ? `gh auth login --hostname ${host}`
+      : cli === 'tea'
+        ? `tea login add --url https://${host}`
+        : `glab auth login --hostname ${host}`
+  switch (classifyCliError(error)) {
+    case 'missing':
+      return {
+        state: 'fail',
+        label,
+        detail: t('doctor.cli.missing', vars),
+        fix: t('doctor.cli.missingFix', vars),
+      }
+    case 'auth':
+      return {
+        state: 'fail',
+        label,
+        detail: t('doctor.cli.auth', { ...vars, error }),
+        fix: t('doctor.cli.authFix', { login }),
+      }
+    case 'access':
+      return {
+        state: 'fail',
+        label,
+        detail: t('doctor.cli.access', { ...vars, error }),
+        fix: t('doctor.cli.accessFix', vars),
+      }
+    default:
+      return { state: 'fail', label, detail: t('doctor.cli.other', { ...vars, error }) }
+  }
+}
+
+// Whether git itself reaches the remote (an untrusted SSH host key or missing credentials stop a push).
+async function gitCheck($: EngineInterface, root: string, remote: string, host: string): Promise<Check> {
+  const label = t('doctor.git')
+  // Its whole stderr: git's last line ("Could not read from remote repository") hides the cause.
+  const ran = await $.process
+    .run(['git', '-C', root, 'ls-remote', '--exit-code', 'origin', 'HEAD'])
+    .catch((err: unknown) => ({
+      exitCode: 127,
+      stdout: '',
+      stderr: err instanceof Error ? err.message : String(err),
+    }))
+  if (ran.exitCode === 0) return { state: 'ok', label, detail: t('doctor.git.ok', { remote }) }
+  const error = oneLine(ran.stderr) || `git exited ${ran.exitCode}`
+  switch (classifyGitError(ran.stderr)) {
+    case 'hostkey':
+      return {
+        state: 'fail',
+        label,
+        detail: t('doctor.git.hostkey', { remote }),
+        fix: t('doctor.git.hostkeyFix', { host }),
+      }
+    case 'auth':
+      return {
+        state: 'fail',
+        label,
+        detail: t('doctor.git.auth', { remote }),
+        fix: t('doctor.git.authFix', { host }),
+      }
+    default:
+      return { state: 'fail', label, detail: t('doctor.git.other', { remote, error }) }
+  }
+}
+
 // The watches one push asks for: each pushed branch head (or tag) by sha, on the repo's CI.
 async function pushWatches(
   $: EngineInterface,
@@ -1195,18 +1370,7 @@ async function pushWatches(
     (await runCli($, ['git', '-C', where, ...args])).text?.trim() || undefined
   const root = await git('rev-parse', '--show-toplevel')
   if (!root) return []
-  const has = async (path: string) =>
-    (await $.fs.stat(`${root}/${path}`).catch(() => undefined)) !== undefined
-  const workflows = async (path: string) =>
-    ((await $.fs.list(`${root}/${path}`).catch(() => undefined)) ?? []).some(f => /\.ya?ml$/i.test(f.name))
-  const provider = ciProvider(
-    {
-      gitlab: await has('.gitlab-ci.yml'),
-      github: await workflows('.github/workflows'),
-      gitea: (await workflows('.gitea/workflows')) || (await workflows('.forgejo/workflows')),
-    },
-    optionString(options, 'ciCommand').trim() !== '',
-  )
+  const provider = await repoCi($, options, root)
   if (!provider) return []
   // The remote: the one the push named (a name or a URL), else the branch's upstream's, else origin.
   const upstream = push.remote
@@ -1433,7 +1597,9 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'progress' }, async $ => {
+  on('command.run', { command: 'progress' }, async ($, e) => {
+    const verb = (e.args ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? ''
+    if (verb === 'doctor') return { text: await doctor($, options) }
     await scan($, options)
     await $.ui.open(paneArgs(options))
     return { text: t('command.opened') }
