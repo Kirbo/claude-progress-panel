@@ -39,6 +39,14 @@ type Disk = {
   listFails?: boolean
 }
 
+// The disk's key for a path as the engine hands it to an `fs.*` hook. On Windows the engine
+// normalizes a path before the hooks see it (backslashes, the drive), so the plugin's
+// `/home/me/.claude/progress/s-me.json` arrives as `C:\\home\\me\\.claude\\…` there: one canonical
+// key keeps every test exercising the same plugin code on Linux, macOS and Windows alike.
+function diskKey(path: string): string {
+  return path.replace(/^[A-Za-z]:(?=[\\/])/, '').replace(/\\/g, '/')
+}
+
 function makeDisk(): Disk {
   return { files: new Map(), removed: [], tick: 1 }
 }
@@ -110,7 +118,7 @@ function engine(
   on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' }] }))
   on('fs.list', (_, e) => {
     if (disk.listFails) return { deny: `EACCES: ${e.path}` }
-    const prefix = `${e.path}/`
+    const prefix = `${diskKey(e.path)}/`
     if (![...disk.files.keys()].some(p => p.startsWith(prefix))) return { deny: `ENOENT: ${e.path}` }
     return {
       value: [...disk.files.entries()]
@@ -125,14 +133,14 @@ function engine(
     }
   })
   on('fs.stat', (_, e) => {
-    const f = disk.files.get(e.path)
+    const f = disk.files.get(diskKey(e.path))
     return f
       ? { value: { kind: 'file', size: f.text.length, mtimeMs: f.mtimeMs, isLink: false } }
       : { deny: `ENOENT: ${e.path}` }
   })
   on('fs.read', (_, e) => {
-    const f = disk.files.get(e.path)
-    if (!f && e.path.endsWith('/.claude-plugin/plugin.json'))
+    const f = disk.files.get(diskKey(e.path))
+    if (!f && diskKey(e.path).endsWith('/.claude-plugin/plugin.json'))
       return { value: JSON.stringify({ name: 'progress-panel', version: '0.14.0', repository: PANEL_REPO }) }
     return f ? { value: f.text } : { deny: `ENOENT: ${e.path}` }
   })
@@ -151,7 +159,7 @@ function engine(
   })
   on('fs.write', (_, e) => {
     disk.tick += 1
-    disk.files.set(e.path, { text: e.text, mtimeMs: disk.tick })
+    disk.files.set(diskKey(e.path), { text: e.text, mtimeMs: disk.tick })
     return { value: undefined }
   })
   const runs: string[][] = []
@@ -219,7 +227,7 @@ function engine(
     }
     const target = e.argv[e.argv.length - 1] as string
     disk.removed.push(target)
-    disk.files.delete(target)
+    disk.files.delete(diskKey(target))
     return { value: { exitCode: 0, stdout: '', stderr: '' } } as never
   })
   return {

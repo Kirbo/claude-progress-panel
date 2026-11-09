@@ -2206,7 +2206,7 @@ export const register: Register = (on, options) => {
       return result
     ruleSent = true
     return { ...result, additionalContext: [...(result.additionalContext ?? []), ruleText(options)] }
-  })
+  }).catch(() => undefined)
   // A subagent starts: the subagent part of the rule, once (its tool calls then carry none).
   on('classic.SubagentStart', async ($, e, next) => {
     const result = await next(e)
@@ -2219,7 +2219,7 @@ export const register: Register = (on, options) => {
     await noteTitle($, options, (e as { session_title?: unknown }).session_title)
     const result = withPendingNotes(await next(e))
     return withReportingNudge($, options, isOn(options, 'reporting') ? withRemovalNotice(result) : result)
-  })
+  }).catch(() => undefined)
   // After every main-loop tool call: a task the person removed reaches the agent at its next step
   // (a subagent's calls never take the note — it is the coordinator's).
   // A subagent stopped: its entry is marked finished — it folds under Agents and stays (nothing is
@@ -2246,7 +2246,7 @@ export const register: Register = (on, options) => {
       })
     }
     return next(e)
-  })
+  }).catch(() => undefined)
   // A subagent's first call instead carries the reporting rule it never got (`withSubagentRule`).
   on('classic.PostToolUse', async ($, e, next) => {
     await permissionAnswered($, options, e)
@@ -2269,26 +2269,26 @@ export const register: Register = (on, options) => {
     pendingNotes.push(...takeFinishedLinks())
     const noted = withPendingNotes(result)
     return isOn(options, 'reporting') ? withRemovalNotice(noted) : noted
-  })
+  }).catch(() => undefined)
 
   // Claude Code waits on the person: a permission prompt or the idle prompt becomes a Needs-you item.
   on('classic.Notification', async ($, e, next) => {
     await raiseAutoNeed($, options, e).catch(() => undefined)
     return next(e)
-  })
+  }).catch(() => undefined)
   on('classic.PostToolUseFailure', async ($, e, next) => {
     await permissionAnswered($, options, e)
     return next(e)
-  })
+  }).catch(() => undefined)
   on('classic.PermissionDenied', async ($, e, next) => {
     await permissionAnswered($, options, e)
     return next(e)
-  })
+  }).catch(() => undefined)
   // The turn ended: no permission is pending any more.
   on('classic.Stop', async ($, e, next) => {
     await clearAutoNeeds($, options, a => a.kind === 'permission').catch(() => undefined)
     return next(e)
-  })
+  }).catch(() => undefined)
 
   on('session.end', async ($, e, next) => {
     await markEnded($, options)
@@ -2324,13 +2324,13 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
     await queueMessage($, options, e).catch(() => undefined)
     return next(e)
-  })
+  }).catch(() => undefined)
 
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     await autoLink($, options, (e as { description?: unknown }).description).catch(() => undefined)
     const prompt = feedAgentPrompt(options, e as never)
     return next(prompt === undefined ? e : ({ ...e, prompt } as typeof e))
-  })
+  }).catch(() => undefined)
 
   on('tool.call', { tool: TOOL_ID }, async ($, e) => {
     // One entry per session, kept by its main loop: a subagent's report would mix into it.
