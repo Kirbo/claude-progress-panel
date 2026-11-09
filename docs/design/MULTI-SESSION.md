@@ -133,6 +133,16 @@ with an `agent_id`) carries it instead — once per agent id either way (process
 at all to one whose entry already holds a `now` or tasks. The main loop's `PostToolUse` keeps only
 the removal notice.
 
+**…and in the Agent call's own prompt (0.23.0).** A note at start or after the first tool call
+still came too late for a short subagent (3–4 calls batched in one turn, ~6 s: it was done before
+acting on it — seen with haiku and the default model, 2026-11-09). So a `tool.call` hook on the
+coordinator's `Agent` tool appends `prompt.subagent` to the call's `prompt` (`next({ ...e, prompt })`,
+checked against the tool's schema) — not for a `fork` (it inherits the session's context, rule
+included), not to a prompt already holding it, not while reporting or agents are off. Its
+description is remembered (`promptFed`), and SubagentStart / the first-call fallback skip an agent
+whose `$.agent.list()` description is one of those. The rule says a job of about three tool calls
+may skip reporting; a longer one reports from its first call.
+
 **…and after a compaction (0.22.1).** A compaction keeps the system prompt but summarises the
 conversation, so a rule that only rode a prompt (the mid-way case) can be summarised away. The
 session's own compaction fires `classic.SessionStart` with `source: "compact"` (no `agent_id`):

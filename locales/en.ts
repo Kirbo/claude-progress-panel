@@ -191,7 +191,7 @@ export const en = {
   'tool.tasksOff': 'Tasks are off for this session: `tasks`, `order` and `remove` were ignored.',
   'tool.pipelinesOff': 'Pipelines are off for this session: `watch` was ignored.',
   'prompt.subagent':
-    "Progress pane: you are a subagent, and your coordinator's session shows you in the Progress pane. Your next call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta` (minutes left); then again every few steps and when your plan changes. It lands under your coordinator's session, never as its tasks.",
+    "Progress pane: you are a subagent, and your coordinator's session shows you in the Progress pane. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta` (minutes left); then again every few steps and when your plan changes. It lands under your coordinator's session, never as its tasks.",
   'prompt.nudge':
     'Progress pane: this session has not reported yet. If this request takes more than one step, your first tool call is mcp__progress-panel__progress_update with `now` and the task list (progress-panel skill); a question answered in one reply needs none.',
   'tool.description':

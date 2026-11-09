@@ -2877,6 +2877,39 @@ test("the pane's switches row turns this session's features off and on", async (
   await ui.unmount()
 })
 
+test("an Agent call's prompt carries the subagent rule — once, not to a fork, not while agents are off", async ($, on) => {
+  const prompts: string[] = []
+  on('tool.call', { tool: 'Agent' }, (_, e) => {
+    prompts.push((e as { prompt: string }).prompt)
+    return { result: {} } as never
+  })
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-fed', description: 'Lane A', type: 'general-purpose', status: 'running' })
+  await start($)
+  const agent = (input: Record<string, unknown>) =>
+    $.tool.call({ tool: 'Agent', description: 'Lane A', prompt: 'Do the thing.', ...input } as never)
+  await agent({ subagent_type: 'general-purpose' })
+  expect(prompts[0]).toContain('Do the thing.')
+  expect(prompts[0]).toContain('you are a subagent')
+  // A prompt that already holds it gains no second copy; a fork inherits this session's context.
+  await agent({ prompt: prompts[0] })
+  expect(prompts[1]?.split('you are a subagent')).toHaveLength(2)
+  await agent({ subagent_type: 'fork' })
+  expect(prompts[2]).toBe('Do the thing.')
+  // The subagent its prompt fed gets no second copy at start or with its first tool call.
+  const started = (await $.classic.SubagentStart({
+    agent_id: 'sub-fed',
+    agent_type: 'general-purpose',
+  } as never)) as {
+    additionalContext?: string[]
+  }
+  expect(started.additionalContext ?? []).toEqual([])
+  await cmd($, 'agents off')
+  await agent({ description: 'Lane B' })
+  expect(prompts[3]).toBe('Do the thing.')
+})
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)

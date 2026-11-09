@@ -1228,6 +1228,26 @@ async function readOwnPlain(
   return text === undefined ? undefined : parseSessionFile(text)
 }
 
+// The descriptions of Agent calls whose prompt carried the subagent rule (`feedAgentPrompt`): their
+// subagents get no second copy at start or with their first tool call.
+const promptFed = new Set<string>()
+
+// The subagent rule rides the Agent call's own prompt, so a subagent knows it before its first step
+// (a short one, its calls batched in one turn, used to finish before a later note reached it). Not
+// a fork (it inherits this session's context, rule included), not a prompt that already holds it,
+// not while reporting or agents are off.
+function feedAgentPrompt(
+  options: PluginOptions,
+  e: { prompt?: unknown; description?: unknown; subagent_type?: unknown },
+): string | undefined {
+  if (!isOn(options, 'agents') || e.subagent_type === 'fork') return undefined
+  if (typeof e.prompt !== 'string') return undefined
+  const rule = t('prompt.subagent')
+  if (e.prompt.includes(rule)) return undefined
+  if (typeof e.description === 'string' && e.description) promptFed.add(e.description)
+  return `${e.prompt}\n\n${rule}`
+}
+
 // Subagents told the reporting rule (once each, process-wide).
 const subagentRuleSent = new Set<string>()
 
@@ -1243,6 +1263,12 @@ async function withSubagentRule<R extends { additionalContext?: string[] }>(
 ): Promise<R> {
   if (subagentRuleSent.has(agentId) || !isOn(options, 'agents')) return result
   subagentRuleSent.add(agentId)
+  // Its prompt already carried the rule (the Agent call was fed it): no second copy.
+  if (promptFed.size > 0) {
+    const listed = await $.agent.list().catch(() => [])
+    const description = listed.find(a => a.id === agentId)?.description
+    if (description && promptFed.has(description)) return result
+  }
   const own = await readOwnPlain($, options)
   if (own === 'nowhere') return result
   const entry = own?.agents?.find(a => a.id === agentId)
@@ -1779,6 +1805,11 @@ export const register: Register = (on, options) => {
     await scan($, options)
     await $.ui.open(paneArgs(options))
     return { text: t('command.opened') }
+  })
+
+  on('tool.call', { tool: 'Agent' }, async (_$, e, next) => {
+    const prompt = feedAgentPrompt(options, e as never)
+    return next(prompt === undefined ? e : ({ ...e, prompt } as typeof e))
   })
 
   on('tool.call', { tool: TOOL_ID }, async ($, e) => {
