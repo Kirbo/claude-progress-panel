@@ -86,9 +86,12 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
 
 When a subagent takes over a task, set that task's `agent` to the Agent call's description (the
 plugin links it on its own when the description names exactly one task you have `doing`). The
-pane shows the agent's progress under the task — do not copy its steps. When it finishes you are
-told once ("agent … finished — verify its result and update task …"): check its result, then mark
-the task done yourself.
+pane shows the agent's own steps under the task — never copy or mirror them into the task (steps
+sent to a linked task are dropped); send it only its status and note. Work you send a running agent
+later needs no copy either: its new steps show there as it adds them. An agent that works on no
+task of yours is shown as a stand-in task "↳ <agent>" until you link the real one (you are told
+once). When it finishes you are told once ("agent … finished — verify its result and update task
+…"): check its result, then mark the task done yourself — the plugin never does.
 
 ## Removed in the pane
 

@@ -340,7 +340,12 @@ function extras(
   const agent = patch.agent !== undefined ? patch.agent.trim() : old.agent
   const repo = patch.repo !== undefined ? patch.repo.trim() : old.repo
   let steps = old.steps
-  if (patch.steps !== undefined) {
+  // A task linked to an agent shows that agent's own steps: copies sent here are dropped, said once.
+  if (patch.steps !== undefined && agent) {
+    errors.push(
+      `tasks[${i}]: linked to agent "${agent}" — its steps come from the agent; send this task only its status and note`,
+    )
+  } else if (patch.steps !== undefined) {
     steps = [] as Step[]
     for (const [j, step] of patch.steps.entries()) {
       const title = typeof step?.title === 'string' ? step.title.trim() : ''
@@ -914,4 +919,70 @@ export function autoLinkTarget(file: SessionFile, description: string): Task | u
       (t.title.toLowerCase().includes(d) || d.includes(t.title.toLowerCase())),
   )
   return hits.length === 1 ? hits[0] : undefined
+}
+
+/** Whether an open task of the session is linked to this agent (by id or label). */
+export function agentHasTask(file: SessionFile, agent: { id: string; label: string }): boolean {
+  return file.tasks.some(
+    t => !isClosed(t.status) && !!t.agent && (t.agent === agent.id || t.agent === agent.label),
+  )
+}
+
+/** A task the plugin makes for an agent that works on none: `↳ <label>`, doing, linked to it. */
+export function withAutoTask(file: SessionFile, label: string, nowIso: string): SessionFile {
+  const seq = file.seq + 1
+  return {
+    ...file,
+    seq,
+    tasks: [
+      ...file.tasks,
+      {
+        id: `t${seq}`,
+        title: `↳ ${label}`,
+        status: 'doing',
+        agent: label,
+        auto: true,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        doneAt: null,
+      },
+    ],
+    updatedAt: nowIso,
+  }
+}
+
+/** Auto tasks whose agent the coordinator linked a task of its own to are no longer needed. */
+export function dropReplacedAutoTasks(file: SessionFile): SessionFile {
+  const linked = new Set(file.tasks.filter(t => !t.auto && t.agent).map(t => t.agent as string))
+  const kept = file.tasks.filter(t => !(t.auto && t.agent && linked.has(t.agent)))
+  return kept.length === file.tasks.length ? file : { ...file, tasks: kept }
+}
+
+/** A coordinator's SendMessage to a known agent (by id or label): queued on its entry until it picks
+ *  it up. Same object when no agent matches. */
+export function queueForAgent(file: SessionFile, to: string, text: string, nowIso: string): SessionFile {
+  const agents = file.agents ?? []
+  const agent = agents.find(a => a.id === to) ?? agents.find(a => a.label === to)
+  if (!agent || !text.trim()) return file
+  return {
+    ...file,
+    agents: agents.map(a =>
+      a === agent ? { ...a, queued: [...(a.queued ?? []), text.trim()], updatedAt: nowIso } : a,
+    ),
+    updatedAt: nowIso,
+  }
+}
+
+/** The agent acted (its report or tool call): what was queued for it is picked up. */
+export function pickedUp(file: SessionFile, id: string): SessionFile {
+  const agents = file.agents ?? []
+  if (!agents.some(a => a.id === id && a.queued?.length)) return file
+  return {
+    ...file,
+    agents: agents.map(a => {
+      if (a.id !== id) return a
+      const { queued: _q, ...rest } = a
+      return rest
+    }),
+  }
 }

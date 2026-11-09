@@ -452,6 +452,16 @@ kept) and stamps `resumedAt`; `syncAgents` no longer ends a resumed agent (only 
 `background_tasks` is not empty marks it `waiting` (shown "waiting on background work"), not
 finished.
 
+## No drift between a task and its agent (0.23.0)
+
+Asked 2026-11-09 (item 18), on top of the links: a linked task's steps ARE its agent's — `extras`
+drops `steps` sent to a task with `agent` (one error line in the answer), and the pane draws the
+agent's own steps for it (n/m included). An Agent call whose description no open task is linked to
+(and no unambiguous auto-link) queues one `notice.agentUnlinked` for the coordinator; if the agent
+then reports while still on no task, a stand-in `↳ <label>` task (`auto`, doing, linked) appears
+(`withAutoTask`), and `dropReplacedAutoTasks` removes it once the coordinator links a task of its
+own to that agent. A stand-in is never marked done by the plugin either.
+
 ## Tasks linked to subagents (0.23.0)
 
 Asked 2026-11-09 (item 14): the coordinator keeps owning its task list (one writer; it verifies

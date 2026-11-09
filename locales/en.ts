@@ -106,6 +106,7 @@ export const en = {
   'pane.agentFold': '{fold} {label}',
   'pane.agentElapsed': ' · {d}',
   'pane.agentWaiting': ' · waiting on background work',
+  'pane.agentQueued': '⧗ queued: {text}',
   'pane.agentSteps': '{bar} {done}/{total}',
   'pane.agentFinished': '✓ {label}  finished {when}',
   'agent.eta': ', ~{min} min left',
@@ -161,7 +162,7 @@ export const en = {
     "- A `git push` you run is watched automatically (the repo's CI, forge and host detected; its result tells you). A repo without CI is remembered and skipped, and you are told once: never `watch` a repo the plugin said runs no CI. `watch` yourself only what the plugin cannot see: a run by id, another repo's pipeline, a push made outside this session.",
   'rule.oneReply': '- A question answered in one reply needs no entry.',
   'rule.delegate':
-    "- When you hand a task to a subagent, set that task's `agent` to the Agent call's description: the pane shows the agent's progress under it. You still mark the task done yourself, once you verified the agent's result (you are told when it finishes).",
+    "- When you hand a task to a subagent, set that task's `agent` to the Agent call's description: the pane shows the agent's own steps under it — never copy or mirror them into the task; send the task only its status and note. Work you send a running agent later needs no copy either: its new steps show there as it adds them. You still mark the task done yourself, once you verified the agent's result (you are told when it finishes).",
   'rule.subagent':
     "- A subagent reports too, under its coordinator's session (never as the session's tasks): every few steps — and when its plan changes — call progress_update with `now`, its steps as `tasks` (statuses moving; each open step's `note` its own estimate, e.g. ~10 min) and `eta` (minutes it expects the rest to take). Its coordinator sees them in its own progress_update answers and in the pane. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
   'rule.milestones':
@@ -226,6 +227,8 @@ export const en = {
   'pipe.cancelFailed': 'Not cancelled: {error}',
   'pipe.deleteRefused': 'Cancelled, but not deleted (deleting needs the Maintainer/Owner role): {error}',
   'pipe.deleteFailed': 'Cancelled, but not deleted: {error}',
+  'notice.agentUnlinked':
+    'Progress pane: agent "{agent}" works on no task of yours — set `agent` on the task it serves (until then the pane shows it as "↳ {agent}").',
   'auto.permission': 'Permission: {message}',
   'auto.permissionAgent': '{agent} needs permission: {message}',
   'auto.idle': 'Waiting for your reply',

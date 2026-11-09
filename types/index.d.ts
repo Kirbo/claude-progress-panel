@@ -25,6 +25,8 @@ export type AgentEntry = {
   waiting?: true
   /** It was resumed after it had ended (0.23.0): only its own next stop ends it again. */
   resumedAt?: string
+  /** Messages the coordinator sent it (SendMessage) that it has not picked up yet (0.23.0). */
+  queued?: string[]
 }
 
 /** One subtask of a task: a title, its own status and, once closed, when (0.23.0: the pace a
@@ -45,6 +47,9 @@ export type Task = {
   /** The subagent working on it (0.23.0): its Agent call's description or its id; the pane shows
    *  that agent's live progress under the task. */
   agent?: string
+  /** Made by the plugin for a subagent that reported while working on no task (0.23.0): replaced
+   *  as soon as the coordinator links a task of its own to that agent. */
+  auto?: true
   createdAt: string
   updatedAt: string
   doneAt: string | null

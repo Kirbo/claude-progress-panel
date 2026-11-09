@@ -21,12 +21,14 @@ import { t, tn } from './i18n'
 import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
 import {
   addDismissals,
+  agentHasTask,
   applyAgentUpdate,
   applyUpdate,
   autoLinkTarget,
   cancelDeeper,
   cancelTasks,
   capNewest,
+  dropReplacedAutoTasks,
   endAgent,
   endDeadSession,
   formatClock,
@@ -42,7 +44,9 @@ import {
   newSession,
   parseSessionFile,
   parseSidecar,
+  pickedUp,
   pruneDone,
+  queueForAgent,
   removalKey,
   reopenAgent,
   SORTS,
@@ -52,6 +56,7 @@ import {
   syncAgents,
   timeLeft,
   visibleTasks,
+  withAutoTask,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
 import type { JobState, Pipeline, PipelineHead, PipelineJob, WatchInput } from './pipelines'
@@ -318,7 +323,7 @@ const INPUT_SCHEMA = {
           agent: {
             type: 'string',
             description:
-              'The subagent working on this task: its Agent call\'s description (or id). The pane shows that agent\'s live progress under the task; you still mark the task done yourself once you verified its result. "" clears.',
+              "The subagent working on this task: its Agent call's description (or id). The pane shows that agent's own steps under the task — never copy them into the task (`steps` sent to a linked task are dropped); send it only its status and note. You still mark it done yourself once you verified the agent's result. \"\" clears.",
           },
           detail: {
             type: 'string',
@@ -816,7 +821,9 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
     ? parseRemote((await $.session.repo().catch(() => null))?.remote)
     : undefined
   const { updated, watched, file } = await exclusive(async () => {
-    const updated = applyUpdate(await ownFile($, dir), input, at)
+    const applied = applyUpdate(await ownFile($, dir), input, at)
+    // A task of its own linked to an agent replaces the plugin's stand-in for it.
+    const updated = { ...applied, file: dropReplacedAutoTasks(applied.file) }
     const watched = applyWatch(
       updated.file.pipelines ?? [],
       input.watch ?? [],
@@ -919,9 +926,14 @@ async function runAgentUpdate(
     listed.find(a => a.id === id)?.description?.trim() || t('agent.fallbackLabel', { id: id.slice(0, 8) })
   const at = await nowIso($)
   const { errors, entry } = await exclusive(async () => {
-    const r = applyAgentUpdate(await ownFile($, dir), { id, label }, input, at)
-    await save($, dir, r.file)
-    return { errors: r.errors, entry: r.file.agents?.find(a => a.id === id) }
+    const r = applyAgentUpdate(pickedUp(await ownFile($, dir), id), { id, label }, input, at)
+    // Still on no task of the session: a stand-in task, linked to it (done stays the coordinator's).
+    const file =
+      isOn(options, 'tasks') && !agentHasTask(r.file, { id, label })
+        ? withAutoTask(r.file, label, at)
+        : r.file
+    await save($, dir, file)
+    return { errors: r.errors, entry: file.agents?.find(a => a.id === id) }
   })
   const steps = entry ? entry.tasks : []
   const done = steps.filter(x => isClosed(x.status)).length
@@ -1343,14 +1355,37 @@ async function reopenIfActive($: EngineInterface, options: PluginOptions, agentI
   const plain = await readOwnPlain($, options)
   if (plain === 'nowhere') return
   const entry = plain?.agents?.find(a => a.id === agentId)
-  if (!entry || (entry.endedAt === null && !entry.waiting)) return
+  if (!entry || (entry.endedAt === null && !entry.waiting && !entry.queued?.length)) return
   const dir = await progressDir($, options)
   if (!dir) return
   const at = await nowIso($)
   await exclusive(async () => {
     const own = await ownFile($, dir)
-    const next = reopenAgent(own, agentId, at)
+    const next = pickedUp(reopenAgent(own, agentId, at), agentId)
     if (next !== own) await save($, dir, next)
+  })
+}
+
+// A main-loop SendMessage to one of this session's agents: its summary (or the message's first line)
+// queued on the agent's entry. Another session or a teammate is not this pane's to show.
+async function queueMessage($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
+  const call = e as { to?: unknown; summary?: unknown; message?: unknown; agentId?: unknown }
+  if (call.agentId || typeof call.to !== 'string' || !isOn(options, 'agents')) return
+  const text = oneLine(
+    typeof call.summary === 'string' && call.summary.trim()
+      ? call.summary
+      : typeof call.message === 'string'
+        ? call.message
+        : '',
+  )
+  if (!text) return
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const at = await nowIso($)
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const queued = queueForAgent(own, call.to as string, text, at)
+    if (queued !== own) await save($, dir, queued)
   })
 }
 
@@ -1362,8 +1397,13 @@ async function autoLink($: EngineInterface, options: PluginOptions, description:
   if (!dir) return
   await exclusive(async () => {
     const own = await ownFile($, dir)
+    if (agentHasTask(own, { id: '', label: description })) return
     const task = autoLinkTarget(own, description)
-    if (!task) return
+    if (!task) {
+      // Working on no task of the session: the coordinator is told once to link the one it serves.
+      finishedLinks.push(t('notice.agentUnlinked', { agent: description }))
+      return
+    }
     await save($, dir, {
       ...own,
       tasks: own.tasks.map(x => (x.id === task.id ? { ...x, agent: description } : x)),
@@ -2247,6 +2287,12 @@ export const register: Register = (on, options) => {
     return { text: t('command.opened') }
   })
 
+  // The coordinator sends a running agent more work: shown on that agent's row until it picks it up.
+  on('tool.call', { tool: 'SendMessage' }, async ($, e, next) => {
+    await queueMessage($, options, e).catch(() => undefined)
+    return next(e)
+  })
+
   on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     await autoLink($, options, (e as { description?: unknown }).description).catch(() => undefined)
     const prompt = feedAgentPrompt(options, e as never)
@@ -2656,7 +2702,8 @@ export const register: Register = (on, options) => {
       )
     }
 
-    const taskRow = (sessionId: string, task: Task) => {
+    const taskRow = (sessionId: string, given: Task) => {
+      let task = given
       const mark = MARK[task.status] ?? { sign: '?' }
       // The subagent working on it: its live progress, under the task (its steps stay its own).
       const linkFile = all[sessionId]?.file
@@ -2681,6 +2728,8 @@ export const register: Register = (on, options) => {
           <Text dimColor>{hl(task.note)}</Text>
         </Box>
       ) : null
+      // A linked task shows the agent's own steps (never a copy in the task).
+      if (linked) task = { ...task, steps: linked.tasks.map(x => ({ title: x.title, status: x.status })) }
       // Nothing more to show: one plain line.
       // ✕ removes an open task of a live session: it will not be done.
       const live = all[sessionId]?.file.session.endedAt === null
@@ -2885,6 +2934,9 @@ export const register: Register = (on, options) => {
             {isOpen ? (
               <Box flexDirection="column" paddingLeft={INDENT}>
                 {a.now ? <Text dimColor>{a.now}</Text> : null}
+                {(a.queued ?? []).map(q => (
+                  <Text dimColor>{t('pane.agentQueued', { text: q })}</Text>
+                ))}
                 {a.tasks
                   .filter(
                     step =>

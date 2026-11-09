@@ -557,7 +557,9 @@ test("a subagent's progress lands under its coordinator's session, never among t
   } as never)
   expect(JSON.stringify(answer)).toMatch(/coordinator/i)
   const file = read(disk, `${DIR}/s-me.json`)
-  expect(file.tasks.map(t => t.title)).toEqual(['Coordinate the lanes'])
+  // Its steps never become the session's tasks; on no task of the coordinator's, it gets a stand-in.
+  expect(file.tasks.map(t => t.title)).toEqual(['Coordinate the lanes', '↳ Lane A: scopes'])
+  expect(file.tasks.flatMap(t => t.steps ?? [])).toEqual([])
   expect(file.agents?.[0]).toMatchObject({
     id: 'sub-1',
     label: 'Lane A: scopes',
@@ -581,6 +583,8 @@ test("a subagent's progress lands under its coordinator's session, never among t
   // Folded, the agent keeps its one line and its steps go.
   await ui.press({ key: 'agent:s-me:sub-1' })
   expect((await ui.find({ type: 'Button', key: 'agent:s-me:sub-1' }))?.text).toBe('▸ Lane A: scopes')
+  // (Its stand-in task shows the same steps — the agent's own — until it is folded too.)
+  await ui.press({ key: 'task:s-me:t2' })
   expect(await texts(ui)).not.toContain('✓ read')
   await ui.unmount()
 
@@ -680,7 +684,8 @@ test('a subagent that stops is marked finished and folded under Agents — and s
   expect((await texts(ui)).some(l => l.startsWith('✓ Lane B: the rest'))).toBe(true)
   await ui.unmount()
   const mine = await update($, { now: 'still here' })
-  expect(JSON.stringify(mine)).not.toContain('Lane B')
+  // A finished agent leaves the coordinator's "Subagents:" line.
+  expect(JSON.stringify(mine)).not.toContain('Subagents:')
   // An hour later — the file aged by hand, then ONE scan (an hour of 2 s ticks cost real seconds
   // and timed out on a loaded machine): still there.
   const aged = read(disk, `${DIR}/s-me.json`)
@@ -3504,6 +3509,93 @@ test(
     await ui.unmount()
   },
 )
+
+test("a linked task's steps are its agent's: steps sent to it are dropped with a note, and the pane shows the agent's", async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk).agents.push({
+    id: 'sub-d',
+    description: 'Lane D',
+    type: 'general-purpose',
+    status: 'running',
+  })
+  await start($)
+  await update($, { tasks: [{ title: 'Port it', status: 'doing', agent: 'Lane D' }] })
+  const answer = JSON.stringify(await update($, { tasks: [{ id: 't1', steps: [{ title: 'copied' }] }] }))
+  expect(answer).toContain('linked to agent')
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]?.steps).toBeUndefined()
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-d',
+    now: 'w',
+    tasks: [{ title: 'own step', status: 'done' }, { title: 'next' }],
+  } as never)
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'task:s-me:t1' }))?.text).toContain('Port it')
+  await ui.press({ key: 'task:s-me:t1' })
+  const shown = (await texts(ui)).join('\n')
+  expect(shown).toContain('own step')
+  expect(shown).not.toContain('copied')
+  await ui.unmount()
+})
+
+test('an agent on no task: the coordinator is told, a stand-in task appears on its first report, a real link replaces it; never done for it', async ($, on) => {
+  on('tool.call', { tool: 'Agent' }, () => ({ result: {} }) as never)
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-u', description: 'Lane U', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, { now: 'coordinating', tasks: [{ title: 'Unrelated', status: 'doing' }] })
+  await $.tool.call({ tool: 'Agent', description: 'Lane U', prompt: 'p' } as never)
+  expect(JSON.stringify(await update($, { now: 'n' }))).toContain('agent \\"Lane U\\" works on no task')
+  await $.tool.call({ tool: TOOL, agentId: 'sub-u', now: 'w', tasks: [{ title: 'x' }] } as never)
+  const stand = read(disk, `${DIR}/s-me.json`).tasks.find(x => x.auto)
+  expect(stand).toMatchObject({ title: '↳ Lane U', status: 'doing', agent: 'Lane U' })
+  // It stops: the stand-in stays doing (the coordinator's to close).
+  await $.classic.SubagentStop({
+    agent_id: 'sub-u',
+    agent_type: 'general-purpose',
+    stop_hook_active: false,
+    agent_transcript_path: '/t',
+  } as never)
+  expect(read(disk, `${DIR}/s-me.json`).tasks.find(x => x.auto)?.status).toBe('doing')
+  // The coordinator links its own task: the stand-in goes.
+  await update($, { tasks: [{ title: 'Real work', status: 'doing', agent: 'Lane U' }] })
+  expect(read(disk, `${DIR}/s-me.json`).tasks.some(x => x.auto)).toBe(false)
+})
+
+test('a message sent to a running agent shows on its row as queued until the agent picks it up', async ($, on) => {
+  on('tool.call', { tool: 'SendMessage' }, () => ({ result: {} }) as never)
+  const disk = makeDisk()
+  engine(on, disk).agents.push({
+    id: 'sub-q',
+    description: 'Lane Q',
+    type: 'general-purpose',
+    status: 'running',
+  })
+  await start($)
+  await update($, { now: 'coordinating' })
+  await $.tool.call({ tool: TOOL, agentId: 'sub-q', now: 'w', tasks: [{ title: 'a' }] } as never)
+  await $.tool.call({
+    tool: 'SendMessage',
+    to: 'sub-q',
+    summary: 'also fix the docs',
+    message: 'long text',
+  } as never)
+  const entry = () => read(disk, `${DIR}/s-me.json`).agents?.find(a => a.id === 'sub-q')
+  expect(entry()?.queued).toEqual(['also fix the docs'])
+  const ui = await pane($)
+  expect((await texts(ui)).some(x => x.includes('queued: also fix the docs'))).toBe(true)
+  await ui.unmount()
+  // Its next tool call picks it up.
+  await $.classic.PostToolUse({
+    tool_name: 'Read',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'q2',
+    agent_id: 'sub-q',
+  } as never)
+  expect(entry()?.queued).toBeUndefined()
+})
 
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
