@@ -84,6 +84,10 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   ones fold behind **N older**, so a long day's history never pushes the live work out of view. A subagent that cannot report (one without the tool, such as a read-only
   reviewer) still shows there by its task description while it runs. The coordinator sees its
   running subagents in every `progress_update` answer.
+- **A task handed to a subagent** carries its `agent`: the pane shows that agent's live progress
+  under the task (`● <agent> 3/7 · ~4 min left`). When the agent finishes, its coordinator is told
+  once to verify the result and update the task — the plugin never marks it done for it. An Agent
+  call whose description names exactly one task in progress links it on its own.
 - **Remove a task** with the `✕` on its row: every pane hides it at once, its session marks it
   skipped ("removed in the Progress pane") and tells its agent right after its next step — "do not
   do it; stop if you are on it". Works for any live session's tasks, not only this one's — and at

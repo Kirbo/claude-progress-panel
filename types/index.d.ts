@@ -38,6 +38,9 @@ export type Task = {
   repo?: string
   /** Subtasks, shown when unfolded; the title counts the closed ones (`n/m`). */
   steps?: Step[]
+  /** The subagent working on it (0.23.0): its Agent call's description or its id; the pane shows
+   *  that agent's live progress under the task. */
+  agent?: string
   createdAt: string
   updatedAt: string
   doneAt: string | null

@@ -82,6 +82,14 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
 - **Resume:** a resumed session keeps its entry while its session id is unchanged (a `/clear`
   starts a new entry); the tool's answer lists your tasks and ids.
 
+## Delegating to a subagent
+
+When a subagent takes over a task, set that task's `agent` to the Agent call's description (the
+plugin links it on its own when the description names exactly one task you have `doing`). The
+pane shows the agent's progress under the task — do not copy its steps. When it finishes you are
+told once ("agent … finished — verify its result and update task …"): check its result, then mark
+the task done yourself.
+
 ## Removed in the pane
 
 The person can remove a task, a task's step, one of a subagent's steps, or a whole subagent's work

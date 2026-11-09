@@ -33,6 +33,8 @@ export type TaskInput = {
   repo?: string
   /** Subtasks, replacing the task's whole list; [] clears it. */
   steps?: StepInput[]
+  /** The subagent working on it (its Agent call's description or id); '' clears it. */
+  agent?: string
 }
 export type UpdateInput = {
   now?: string
@@ -142,7 +144,7 @@ export function applyUpdate(
     const old = tasks[at] as Task
     const next = status ?? old.status
     const doneAt = isClosed(next) ? (isClosed(old.status) ? old.doneAt : nowIso) : null
-    const { detail: _d, steps: _s, repo: _r, ...kept } = old
+    const { detail: _d, steps: _s, repo: _r, agent: _a, ...kept } = old
     tasks[at] = {
       ...kept,
       ...extras(old, patch, i, errors, nowIso),
@@ -328,13 +330,14 @@ export function groupByRepo(tasks: readonly Task[], own: string): { repo: string
 
 /** A task's detail and steps after a patch: given ones replace, '' / [] clear, absent ones stay. */
 function extras(
-  old: Pick<Task, 'detail' | 'steps' | 'repo'>,
+  old: Pick<Task, 'detail' | 'steps' | 'repo' | 'agent'>,
   patch: TaskInput,
   i: number,
   errors: string[],
   nowIso: string,
-): Pick<Task, 'detail' | 'steps' | 'repo'> {
+): Pick<Task, 'detail' | 'steps' | 'repo' | 'agent'> {
   const detail = patch.detail !== undefined ? patch.detail : old.detail
+  const agent = patch.agent !== undefined ? patch.agent.trim() : old.agent
   const repo = patch.repo !== undefined ? patch.repo.trim() : old.repo
   let steps = old.steps
   if (patch.steps !== undefined) {
@@ -368,6 +371,7 @@ function extras(
     ...(detail ? { detail } : {}),
     ...(steps && steps.length > 0 ? { steps } : {}),
     ...(repo ? { repo } : {}),
+    ...(agent ? { agent } : {}),
   }
 }
 
@@ -850,4 +854,28 @@ export function cancelDeeper(
     file: { ...file, tasks, agents, cancelled: [...already, ...done], updatedAt: nowIso },
     notices,
   }
+}
+
+/** The agent entry a task is linked to: by id, else by its label (the Agent call's description). */
+export function linkedAgent(file: SessionFile, task: Pick<Task, 'agent'>): AgentEntry | undefined {
+  const name = task.agent?.trim()
+  if (!name) return undefined
+  const agents = file.agents ?? []
+  return agents.find(a => a.id === name) ?? agents.find(a => a.label === name)
+}
+
+/**
+ * The coordinator's open `doing` task an Agent call's description names — only when exactly one
+ * does (and none is linked yet): an unambiguous auto-link.
+ */
+export function autoLinkTarget(file: SessionFile, description: string): Task | undefined {
+  const d = description.trim().toLowerCase()
+  if (!d) return undefined
+  const hits = file.tasks.filter(
+    t =>
+      t.status === 'doing' &&
+      !t.agent &&
+      (t.title.toLowerCase().includes(d) || d.includes(t.title.toLowerCase())),
+  )
+  return hits.length === 1 ? hits[0] : undefined
 }

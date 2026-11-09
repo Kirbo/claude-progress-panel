@@ -159,6 +159,8 @@ export const en = {
   'rule.push':
     "- A `git push` you run is watched automatically (the repo's CI, forge and host detected; its result tells you). A repo without CI is remembered and skipped, and you are told once: never `watch` a repo the plugin said runs no CI. `watch` yourself only what the plugin cannot see: a run by id, another repo's pipeline, a push made outside this session.",
   'rule.oneReply': '- A question answered in one reply needs no entry.',
+  'rule.delegate':
+    "- When you hand a task to a subagent, set that task's `agent` to the Agent call's description: the pane shows the agent's progress under it. You still mark the task done yourself, once you verified the agent's result (you are told when it finishes).",
   'rule.subagent':
     "- A subagent reports too, under its coordinator's session (never as the session's tasks): every few steps — and when its plan changes — call progress_update with `now`, its steps as `tasks` (statuses moving; each open step's `note` its own estimate, e.g. ~10 min) and `eta` (minutes it expects the rest to take). Its coordinator sees them in its own progress_update answers and in the pane. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
   'rule.milestones':
@@ -214,6 +216,10 @@ export const en = {
   'settings.hint':
     'Press a row to change it; type and press Enter for a text field. Also: /plugin configure progress-panel@claude-progress-panel',
   'settings.refused': 'Setting not changed: {reason}',
+  'notice.agentFinished':
+    'Progress pane: agent "{agent}" finished — verify its result and update task "{task}" yourself.',
+  'pane.linkedAgent': '● {agent}{steps}{left}',
+  'pane.linkedAgentDone': '✓ {agent} finished — verify and update this task',
   'auto.permission': 'Permission: {message}',
   'auto.permissionAgent': '{agent} needs permission: {message}',
   'auto.idle': 'Waiting for your reply',

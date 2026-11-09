@@ -3259,6 +3259,57 @@ test("the Settings view: this session's switches with reset, defaults cycled or 
   expect(await cmd($, 'settings')).toContain('Settings opened')
 })
 
+test('a task linked to a subagent shows its live progress; its finish is told to the coordinator once, never marked done for it', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-l', description: 'Lane L', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, {
+    now: 'coordinating',
+    tasks: [{ title: 'Port the parser', status: 'doing', agent: 'Lane L' }],
+  })
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-l',
+    now: 'w',
+    tasks: [{ title: 'a', status: 'done' }, { title: 'b' }],
+  } as never)
+  const ui = await pane($)
+  expect((await texts(ui)).some(x => x.startsWith('● Lane L 1/2'))).toBe(true)
+  await ui.unmount()
+  // The agent stops: the coordinator is told — in its next answer, once — and the task stays open.
+  await $.classic.SubagentStop({
+    agent_id: 'sub-l',
+    agent_type: 'general-purpose',
+    stop_hook_active: false,
+    agent_transcript_path: '/t',
+  } as never)
+  const answer = JSON.stringify(await update($, { now: 'checking' }))
+  expect(answer).toContain('agent \\"Lane L\\" finished')
+  expect(JSON.stringify(await update($, { now: 'still' }))).not.toContain('finished')
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]?.status).toBe('doing')
+})
+
+test('an Agent call auto-links the one doing task its description names — never an ambiguous one', async ($, on) => {
+  on('tool.call', { tool: 'Agent' }, () => ({ result: {} }) as never)
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, {
+    tasks: [
+      { title: 'Lint fixes', status: 'doing' },
+      { title: 'Docs pass', status: 'doing' },
+      { title: 'Docs pass extra', status: 'doing' },
+    ],
+  })
+  await $.tool.call({ tool: 'Agent', description: 'Lint fixes', prompt: 'p' } as never)
+  await $.tool.call({ tool: 'Agent', description: 'Docs pass', prompt: 'p' } as never)
+  const tasks = read(disk, `${DIR}/s-me.json`).tasks
+  expect(tasks.find(x => x.title === 'Lint fixes')?.agent).toBe('Lint fixes')
+  // "Docs pass" names two doing tasks: nothing linked.
+  expect(tasks.filter(x => x.title.startsWith('Docs')).every(x => !x.agent)).toBe(true)
+})
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)

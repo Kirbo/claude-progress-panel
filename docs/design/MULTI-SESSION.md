@@ -428,6 +428,20 @@ prompt) from the settings `paneColumns` (default 84 — the content's natural wi
 the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when it opens unasked
 (from 144 columns) are Claude Code's — a plugin cannot open itself narrower.
 
+## Tasks linked to subagents (0.23.0)
+
+Asked 2026-11-09 (item 14): the coordinator keeps owning its task list (one writer; it verifies
+an agent's result), but the two must not drift apart. A task's optional `agent` (tool field, `''`
+clears) names the subagent by its Agent call's description — what `$.agent.list()` returns — or
+its id; `linkedAgent` matches it to the session's agent entry. The pane draws, under an open
+linked task, `● <label> n/m · ~N min left` (the agent's own counts and `timeLeft`), or "finished —
+verify and update this task" once it ended — never a copy of its steps. `SubagentStop` queues one
+`notice.agentFinished` per open task linked to it (`finishedLinks`), handed to the coordinator in
+its next `progress_update` answer or main-loop `PostToolUse`, once; nothing is marked done. The
+Agent-call hook auto-links (`autoLinkTarget`): only when exactly one open `doing`, unlinked task's
+title and the description contain one another; otherwise nothing. The rule gains `rule.delegate`
+(when agents and tasks are on, not at minimal effort).
+
 ## ✕ at every level (0.23.0)
 
 Asked 2026-11-09 (item 10): the task ✕ (0.16.0) reaches every level through the SAME path — the

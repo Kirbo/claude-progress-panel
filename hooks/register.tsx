@@ -23,6 +23,7 @@ import {
   addDismissals,
   applyAgentUpdate,
   applyUpdate,
+  autoLinkTarget,
   cancelDeeper,
   cancelTasks,
   capNewest,
@@ -33,6 +34,7 @@ import {
   groupByRepo,
   isBlank,
   isClosed,
+  linkedAgent,
   matchesTask,
   mergeScan,
   mergeSidecar,
@@ -198,6 +200,13 @@ let settings: Settings = readSettings({})
 // prompt or main-loop tool call.
 let sessionToggles: Toggles | undefined
 const pendingNotes: string[] = []
+// Linked agents that finished, not yet told to the coordinator (its next progress_update answer, or
+// its next main-loop tool call — once).
+const finishedLinks: string[] = []
+
+function takeFinishedLinks(): string[] {
+  return finishedLinks.splice(0)
+}
 // A subagent's own removal notices (its tasks, or all its work), handed to IT at its next tool call.
 const pendingAgentNotices = new Map<string, string[]>()
 
@@ -297,6 +306,11 @@ const INPUT_SCHEMA = {
             type: 'string',
             description:
               'The repo this task belongs to (its name), when the session works in more than one; the pane groups tasks by it. "" clears.',
+          },
+          agent: {
+            type: 'string',
+            description:
+              'The subagent working on this task: its Agent call\'s description (or id). The pane shows that agent\'s live progress under the task; you still mark the task done yourself once you verified its result. "" clears.',
           },
           detail: {
             type: 'string',
@@ -809,7 +823,7 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
   await announce($, await read($, sessions), file.session.id)
   const added = watched.list.filter(p => !(updated.file.pipelines ?? []).some(old => old.key === p.key))
   if (added.length > 0) await pollPipelines($, options)
-  const notice = takeRemovalNotice()
+  const notice = [takeRemovalNotice(), ...takeFinishedLinks()].filter(Boolean).join('\n')
   const agents = agentsLine(file)
   const text = `${notice ? `${notice}\n` : ''}${summarize(file, [...updated.errors, ...watched.errors])}${agents ? `\n${agents}` : ''}`
   return added.length > 0
@@ -1313,6 +1327,23 @@ function feedAgentPrompt(
   if (e.prompt.includes(rule)) return undefined
   if (typeof e.description === 'string' && e.description) promptFed.add(e.description)
   return `${e.prompt}\n\n${rule}`
+}
+
+// An Agent call whose description names exactly one open `doing` task (none linked yet): that task
+// is linked to it, so the pane shows the agent's progress there. Ambiguous → nothing.
+async function autoLink($: EngineInterface, options: PluginOptions, description: unknown): Promise<void> {
+  if (typeof description !== 'string' || !isOn(options, 'agents') || !isOn(options, 'tasks')) return
+  const dir = await progressDir($, options)
+  if (!dir) return
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const task = autoLinkTarget(own, description)
+    if (!task) return
+    await save($, dir, {
+      ...own,
+      tasks: own.tasks.map(x => (x.id === task.id ? { ...x, agent: description } : x)),
+    })
+  })
 }
 
 // Subagents told the reporting rule (once each, process-wide).
@@ -2003,6 +2034,12 @@ export const register: Register = (on, options) => {
         const own = await ownFile($, dir)
         const ended = endAgent(own, id, at)
         if (ended !== own) await save($, dir, ended)
+        // A task linked to it: the coordinator is told to verify and update it — never done for it.
+        for (const task of own.tasks)
+          if (!isClosed(task.status) && linkedAgent(own, task)?.id === id)
+            finishedLinks.push(
+              t('notice.agentFinished', { agent: linkedAgent(own, task)?.label ?? id, task: task.title }),
+            )
       })
     }
     return next(e)
@@ -2025,6 +2062,7 @@ export const register: Register = (on, options) => {
       return withSubagentRule($, options, agentId, told)
     }
     if (agentId) return result
+    pendingNotes.push(...takeFinishedLinks())
     const noted = withPendingNotes(result)
     return isOn(options, 'reporting') ? withRemovalNotice(noted) : noted
   })
@@ -2078,7 +2116,8 @@ export const register: Register = (on, options) => {
     return { text: t('command.opened') }
   })
 
-  on('tool.call', { tool: 'Agent' }, async (_$, e, next) => {
+  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
+    await autoLink($, options, (e as { description?: unknown }).description).catch(() => undefined)
     const prompt = feedAgentPrompt(options, e as never)
     return next(prompt === undefined ? e : ({ ...e, prompt } as typeof e))
   })
@@ -2470,6 +2509,24 @@ export const register: Register = (on, options) => {
 
     const taskRow = (sessionId: string, task: Task) => {
       const mark = MARK[task.status] ?? { sign: '?' }
+      // The subagent working on it: its live progress, under the task (its steps stay its own).
+      const linkFile = all[sessionId]?.file
+      const linked = linkFile && !isClosed(task.status) ? linkedAgent(linkFile, task) : undefined
+      const linkLine = linked ? (
+        <Box paddingLeft={INDENT}>
+          <Text dimColor>
+            {(() => {
+              const counts = linked.tasks.filter(x => isClosed(x.status)).length
+              const left = timeLeft(linked.tasks, linked.startedAt, linked.etaMin)
+              return t(linked.endedAt === null ? 'pane.linkedAgent' : 'pane.linkedAgentDone', {
+                agent: linked.label,
+                steps: linked.tasks.length > 0 ? ` ${counts}/${linked.tasks.length}` : '',
+                left: left ? t(left.guess ? 'pane.agentEtaGuess' : 'pane.agentEta', { min: left.min }) : '',
+              })
+            })()}
+          </Text>
+        </Box>
+      ) : null
       const note = task.note ? (
         <Box paddingLeft={INDENT}>
           <Text dimColor>{hl(task.note)}</Text>
@@ -2498,6 +2555,7 @@ export const register: Register = (on, options) => {
               {remove}
             </Box>
             {note}
+            {linkLine}
           </Box>
         )
       // Details or subtasks: the title folds them, its steps counted on the right like a pipeline's jobs.
@@ -2550,6 +2608,7 @@ export const register: Register = (on, options) => {
             </Box>
           </Box>
           {note}
+          {linkLine}
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT * 2}>
               {task.detail ? <Text dimColor>{hl(task.detail)}</Text> : null}
