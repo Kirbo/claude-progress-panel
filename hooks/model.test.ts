@@ -23,6 +23,7 @@ import {
   sortTasks,
   splitMatches,
   syncAgents,
+  timeLeft,
   visibleTasks,
 } from './model'
 
@@ -515,4 +516,49 @@ test('a live session on this machine, idle long enough, gets a liveness check �
   expect(needsLivenessCheck(endDeadSession(mine), 's-me', 'mini', idle)).toBe(false)
   // A dead one ends as of its last write.
   expect(endDeadSession(mine).session.endedAt).toBe(mine.updatedAt)
+})
+
+test("time left: the agent's guess until a step finishes (marked), then the measured pace", () => {
+  const start = '2026-11-09T10:00:00.000Z'
+  const at = (min: number) => new Date(Date.parse(start) + min * 60_000).toISOString()
+  const todo = { status: 'todo' as const }
+  // Nothing finished yet: its own guess, shown as one.
+  expect(timeLeft([todo, todo], start, 120)).toEqual({ min: 120, guess: true })
+  expect(timeLeft([todo], start, undefined)).toBeUndefined()
+  // Two steps done in 2 and 4 minutes (median 3), three open: ~9 min — the 120-minute guess is gone.
+  const done = (min: number) => ({ status: 'done' as const, doneAt: at(min) })
+  expect(timeLeft([done(2), done(6), todo, todo, todo], start, 120)).toEqual({ min: 9, guess: false })
+  // Median, not mean: one slow step does not swing it (1, 1, 20 → median 1).
+  expect(timeLeft([done(1), done(2), done(22), todo], start, 5)).toEqual({ min: 1, guess: false })
+  // All closed: nothing left to estimate.
+  expect(timeLeft([done(1)], start, 5)).toBeUndefined()
+})
+
+test('a closed step keeps the time it closed; a step closing now is stamped now', () => {
+  const t0 = '2026-11-09T10:00:00.000Z'
+  const t1 = '2026-11-09T10:05:00.000Z'
+  const base = newSession({ id: 's', project: 'p', cwd: '/w' }, t0)
+  const first = applyUpdate(
+    base,
+    { tasks: [{ title: 'A', steps: [{ title: 'one', status: 'done' }, { title: 'two' }] }] },
+    t0,
+  ).file
+  expect(first.tasks[0]?.steps?.[0]?.doneAt).toBe(t0)
+  expect(first.tasks[0]?.steps?.[1]?.doneAt).toBeUndefined()
+  const second = applyUpdate(
+    first,
+    {
+      tasks: [
+        {
+          id: 't1',
+          steps: [
+            { title: 'one', status: 'done' },
+            { title: 'two', status: 'done' },
+          ],
+        },
+      ],
+    },
+    t1,
+  ).file
+  expect(second.tasks[0]?.steps?.map(s => s.doneAt)).toEqual([t0, t1])
 })

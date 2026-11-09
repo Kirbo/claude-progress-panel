@@ -82,6 +82,13 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
 - **Resume:** a resumed session keeps its entry while its session id is unchanged (a `/clear`
   starts a new entry); the tool's answer lists your tasks and ids.
 
+## Estimates
+
+Every estimate you report — a subagent's `eta`, a step's `~N min` note — is YOUR OWN wall-clock
+time as an agent: the tool calls, builds and tests still to run. Never the time the work would take
+a person (an agent finishes in minutes what a person plans in hours). Once a step has finished, the
+pane shows the pace it has measured instead of your guess; until then your guess shows as "(est.)".
+
 ## When the person switched parts off
 
 The person can switch this session's reporting, tasks, agents and pipelines off (`/progress …`,

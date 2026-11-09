@@ -19,8 +19,9 @@ export type AgentEntry = {
   endedAt: string | null
 }
 
-/** One subtask of a task: a title and its own status. */
-export type Step = { title: string; status: Status }
+/** One subtask of a task: a title, its own status and, once closed, when (0.23.0: the pace a
+ *  time-left estimate is calibrated on). */
+export type Step = { title: string; status: Status; doneAt?: string }
 
 export type Task = {
   id: string

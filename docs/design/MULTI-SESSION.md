@@ -428,6 +428,18 @@ prompt) from the settings `paneColumns` (default 84 — the content's natural wi
 the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when it opens unasked
 (from 144 columns) are Claude Code's — a plugin cannot open itself narrower.
 
+## Time left: measured, not guessed (0.23.0)
+
+Asked 2026-11-09 (item 11): agents' estimates were far too pessimistic — human-effort hours for work
+an agent finished in minutes. Both ends: the rule, the subagent note, the tool description and the
+skill say an estimate is the agent's OWN wall-clock time (the calls, builds and tests left), never
+a person's; and the pane stops trusting the guess once it has data. `timeLeft` (model.ts): with at
+least one finished step, the median of the finished steps' durations (each from the previous
+finish, the first from the agent's `startedAt`) × the open steps, at least 1 min; before that the
+agent's `etaMin`, shown as `(est.)` — in the pane's agent row and in the coordinator's
+`Subagents: … ~N min left` line alike. A step's `doneAt` is stamped when it closes (kept across the
+whole-list resends of `steps`), so a task's steps carry the same history.
+
 ## Repos without CI are remembered (0.23.0)
 
 Asked 2026-11-09 (item 6): the first push from a repo decides whether it runs CI, and the verdict

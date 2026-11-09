@@ -47,6 +47,7 @@ import {
   splitMatches,
   stepCounts,
   syncAgents,
+  timeLeft,
   visibleTasks,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
@@ -891,7 +892,8 @@ function agentsLine(file: SessionFile): string | undefined {
   const parts = running.map(a => {
     const done = a.tasks.filter(x => isClosed(x.status)).length
     const steps = a.tasks.length > 0 ? ` ${done}/${a.tasks.length}` : ''
-    const eta = typeof a.etaMin === 'number' ? t('agent.eta', { min: a.etaMin }) : ''
+    const left = timeLeft(a.tasks, a.startedAt, a.etaMin)
+    const eta = left ? t(left.guess ? 'agent.etaGuess' : 'agent.eta', { min: left.min }) : ''
     return `${a.label}${steps}${eta}`
   })
   return t('tool.agents', { list: parts.join('; ') })
@@ -2346,7 +2348,8 @@ export const register: Register = (on, options) => {
             : ''
         const ranS = Math.max(0, (nowMs - Date.parse(a.startedAt)) / 1000)
         const elapsed = Number.isFinite(ranS) ? t('pane.agentElapsed', { d: formatDuration(ranS) }) : ''
-        const eta = typeof a.etaMin === 'number' ? t('pane.agentEta', { min: a.etaMin }) : ''
+        const left = timeLeft(a.tasks, a.startedAt, a.etaMin)
+        const eta = left ? t(left.guess ? 'pane.agentEtaGuess' : 'pane.agentEta', { min: left.min }) : ''
         return (
           <Box flexDirection="column">
             <Box

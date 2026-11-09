@@ -123,7 +123,7 @@ export function applyUpdate(
         title: patch.title,
         status: created,
         ...(patch.note ? { note: patch.note } : {}),
-        ...extras({}, patch, i, errors),
+        ...extras({}, patch, i, errors, nowIso),
         createdAt: nowIso,
         updatedAt: nowIso,
         doneAt: isClosed(created) ? nowIso : null,
@@ -137,7 +137,7 @@ export function applyUpdate(
     const { detail: _d, steps: _s, repo: _r, ...kept } = old
     tasks[at] = {
       ...kept,
-      ...extras(old, patch, i, errors),
+      ...extras(old, patch, i, errors, nowIso),
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.note !== undefined ? { note: patch.note } : {}),
       status: next,
@@ -323,6 +323,7 @@ function extras(
   patch: TaskInput,
   i: number,
   errors: string[],
+  nowIso: string,
 ): Pick<Task, 'detail' | 'steps' | 'repo'> {
   const detail = patch.detail !== undefined ? patch.detail : old.detail
   const repo = patch.repo !== undefined ? patch.repo.trim() : old.repo
@@ -336,7 +337,16 @@ function extras(
       } else if (step.status !== undefined && !isStatus(step.status)) {
         errors.push(`tasks[${i}].steps[${j}]: status must be one of ${STATUSES.join(', ')}`)
       } else {
-        steps.push({ title, status: (step.status as Status | undefined) ?? 'todo' })
+        const status = (step.status as Status | undefined) ?? 'todo'
+        // When it closed: kept from the step of that title already closed, else now — the pace a
+        // time-left estimate is calibrated on (stepless steps from before 0.23.0 have none).
+        const before = old.steps?.find(s => s.title === title)
+        const doneAt = isClosed(status)
+          ? before && isClosed(before.status)
+            ? before.doneAt
+            : nowIso
+          : undefined
+        steps.push({ title, status, ...(doneAt ? { doneAt } : {}) })
       }
     }
   }
@@ -643,4 +653,39 @@ export function needsLivenessCheck(
 /** A session whose process died: ended as of its last write (when it last did anything). */
 export function endDeadSession(file: SessionFile): SessionFile {
   return { ...file, session: { ...file.session, endedAt: file.updatedAt } }
+}
+
+/**
+ * Time left for a list of steps, in minutes: once at least one step has finished, the observed pace —
+ * the median of the finished steps' durations (each from the previous finish, the first from
+ * `startedAt`) × the steps still open; before that, the agent's own guess, marked as one. Undefined
+ * when nothing is open or nothing is known.
+ */
+export function timeLeft(
+  steps: readonly { status: Status; doneAt?: string | null }[],
+  startedAt: string,
+  guessMin: number | undefined,
+): { min: number; guess: boolean } | undefined {
+  const open = steps.filter(s => !isClosed(s.status)).length
+  if (open === 0) return undefined
+  const finished = steps
+    .map(s => (isClosed(s.status) && s.doneAt ? Date.parse(s.doneAt) : Number.NaN))
+    .filter(ms => Number.isFinite(ms))
+    .sort((a, b) => a - b)
+  if (finished.length > 0) {
+    let prev = Date.parse(startedAt)
+    const durations = finished.map(ms => {
+      const d = Math.max(0, ms - prev)
+      prev = ms
+      return d
+    })
+    durations.sort((a, b) => a - b)
+    const mid = Math.floor(durations.length / 2)
+    const median =
+      durations.length % 2 === 1
+        ? (durations[mid] as number)
+        : ((durations[mid - 1] as number) + (durations[mid] as number)) / 2
+    return { min: Math.max(1, Math.round((median * open) / 60_000)), guess: false }
+  }
+  return typeof guessMin === 'number' ? { min: guessMin, guess: true } : undefined
 }

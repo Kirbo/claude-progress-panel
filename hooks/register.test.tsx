@@ -567,7 +567,7 @@ test("a subagent's progress lands under its coordinator's session, never among t
   // shows how long it has run beside its steps and estimate.
   expect((await ui.find({ type: 'Button', key: 'agent:s-me:sub-1' }))?.text).toBe('▾ Lane A: scopes')
   const lines = await texts(ui)
-  expect(lines).toContain('██████░░ 3/4 · 0s · ~5 min left')
+  expect(lines).toContain('██████░░ 3/4 · 0s · ~1 min left')
   expect(lines).toContain('Writing the section table')
   expect(lines).toContain('✓ read')
   expect(lines).toContain('○ tests')
@@ -580,7 +580,7 @@ test("a subagent's progress lands under its coordinator's session, never among t
 
   // The coordinator's own next answer lists its running subagents.
   const mine = await update($, { now: 'waiting on lanes' })
-  expect(JSON.stringify(mine)).toContain('Lane A: scopes 3/4, ~5 min left')
+  expect(JSON.stringify(mine)).toContain('Lane A: scopes 3/4, ~1 min left')
 })
 
 test('a subagent that never reports (no progress tool) still shows under Agents while it runs', async ($, on) => {

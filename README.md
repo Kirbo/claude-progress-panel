@@ -70,7 +70,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   same on its own.
 - **Subagents report too:** a subagent's `progress_update` lands under its coordinator's session,
   in an **Agents** part — never among the session's tasks. Each running agent shows its steps
-  (`██░░ 3/7`), how long it has run and `~N min left`, and unfolds to what it is on and every step
+  (`██░░ 3/7`), how long it has run and `~N min left` — the pace it has measured once a step has
+  finished (the median time per finished step × the steps left), the agent's own guess before that,
+  marked `(est.)` — and unfolds to what it is on and every step
   with its status and note (a step's own estimate, e.g. `~10 min`). A finished agent moves under the
   session's **Done**, in its own folded **Agents** heading, and stays — nothing is cleaned up
   automatically. An open Done lists the newest 10 finished tasks (and 5 finished agents); older
