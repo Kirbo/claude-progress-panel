@@ -110,6 +110,7 @@ in the prompt from the start). Input — every field optional, a patch, not the 
 | `needsYou` | replaces the list (`[]` clears it)                                       |
 | `tasks`    | upserts by `id` (or exact `title` when no id); new tasks get `t<n>` ids  |
 | `remove`   | task ids to delete                                                       |
+| `clearAgents` / `dismissAgents` | remove finished (or only waiting) subagent rows — all, or by description / id (0.23.1) |
 
 **Reporting without being asked (0.13.0).** A tool description and an on-demand skill proved too
 passive: a session ran a diagnose → fix → push job with almost nothing in its entry until the user
@@ -462,6 +463,19 @@ kept) and stamps `resumedAt`; `syncAgents` no longer ends a resumed agent (only 
 `SubagentStop` does) and reopens one the list shows running again. A `SubagentStop` whose
 `background_tasks` is not empty marks it `waiting` (shown "waiting on background work"), not
 finished.
+
+**Gone from the list (0.23.1).** Bug 2026-11-09, live on 0.23.0: an agent stayed `waiting` with open
+steps hours after it finished — finished agents drop OUT of `$.agent.list()` (after a reload the
+list is empty), and `syncOwnAgents` skipped an empty answer, so nothing ever ended it. Now a failed
+list call is no answer (nothing changes), an empty one is: an agent still marked running that the
+list does not name and that showed no activity for `AGENT_IDLE_MS` (3 min) ends like a completed
+one (open steps `unfinished`); one the list says runs is never ended. An ended agent never keeps
+`waiting` (an older build's leftover is normalised on the next scan; the pane never shows
+"waiting" on an ended agent). And the coordinator clears agent rows itself: `progress_update`
+`clearAgents: true` (every agent no longer working — ended or only waiting) or `dismissAgents`
+(descriptions / ids) removes them from its own entry exactly as the pane's ✕ does; a running one is
+never removed (named in the answer when asked for by name). The reporting rule says to use it when
+the person asks to clear the pane.
 
 ## Removals cross the link (0.23.0)
 

@@ -519,8 +519,10 @@ function idle(a: AgentEntry, nowIso: string): boolean {
  * The session's subagents folded into its entries, so one that never reports (an agent without the
  * progress tool, e.g. a read-only reviewer) still shows under Agents while it runs: a running one not
  * yet known gets an entry labelled by its description, a known one the list says ended is finished.
- * An agent the list no longer names is left as it is (SubagentStop finishes it). Unchanged when
- * nothing differs, so the caller can skip the write.
+ * An agent the list does not name at all (finished agents drop out of it — after a reload the list
+ * is empty) is finished too once it showed no activity for AGENT_IDLE_MS; one the list says runs is
+ * never ended. An ended agent never keeps `waiting`. Unchanged when nothing differs, so the caller
+ * can skip the write. `listed` must be the engine's real answer — a failed list call is no answer.
  */
 export function syncAgents(file: SessionFile, listed: readonly ListedAgent[], nowIso: string): SessionFile {
   let agents = file.agents ?? []
@@ -561,7 +563,51 @@ export function syncAgents(file: SessionFile, listed: readonly ListedAgent[], no
       changed = true
     }
   }
+  const named = new Set(listed.map(a => a.id))
+  agents = agents.map(x => {
+    // Gone from the list and quiet: it stopped (its SubagentStop may never come — a resumed or
+    // waiting agent, or a reload in between).
+    if (x.endedAt === null && !named.has(x.id) && idle(x, nowIso)) {
+      changed = true
+      return stopped(x, nowIso)
+    }
+    // Ended but still marked waiting (an older build left it so): an ended agent never waits.
+    if (x.endedAt !== null && x.waiting) {
+      changed = true
+      return withoutWaiting(x)
+    }
+    return x
+  })
   return changed ? { ...file, agents, updatedAt: nowIso } : file
+}
+
+/**
+ * The coordinator clears agent rows from its own entry, as the pane's ✕ does: `which` = true for
+ * every agent that is not working (ended, or only waiting), or the ids / labels to clear. A running
+ * one is never removed — it is named in `running`. `dismissed` / `running` hold labels.
+ */
+export function dismissAgents(
+  file: SessionFile,
+  which: true | readonly string[],
+  nowIso: string,
+): { file: SessionFile; dismissed: string[]; running: string[] } {
+  const agents = file.agents ?? []
+  const wanted = (a: AgentEntry) =>
+    which === true || which.some(w => w === a.id || w.trim().toLowerCase() === a.label.trim().toLowerCase())
+  const dismissed: string[] = []
+  const running: string[] = []
+  const kept = agents.filter(a => {
+    if (!wanted(a)) return true
+    if (a.endedAt !== null || a.waiting) {
+      dismissed.push(a.label)
+      return false
+    }
+    // Named explicitly but still working: kept, and said so (clear-all skips it silently).
+    if (which !== true) running.push(a.label)
+    return true
+  })
+  if (dismissed.length === 0) return { file, dismissed, running }
+  return { file: { ...file, agents: kept, updatedAt: nowIso }, dismissed, running }
 }
 
 /**

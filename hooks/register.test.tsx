@@ -627,6 +627,35 @@ test('a subagent that never reports (no progress tool) still shows under Agents 
   expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.endedAt).not.toBeNull()
 })
 
+test('an agent gone from an EMPTY list (after a reload) ends once quiet; clearAgents clears finished rows', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'coordinating' })
+  world.agents.push({ id: 'gone-1', description: 'Lane A', type: 'general-purpose', status: 'running' })
+  world.agents.push({ id: 'busy-1', description: 'Lane B', type: 'general-purpose', status: 'running' })
+  await world.clock.advance(2100)
+  // Lane A drops out of the list (finished agents do; after a reload the list is empty), B runs on.
+  world.agents.splice(0, 1)
+  await world.clock.advance(60_000)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.find(a => a.id === 'gone-1')?.endedAt).toBeNull()
+  await world.clock.advance(3 * 60_000)
+  const after = read(disk, `${DIR}/s-me.json`).agents ?? []
+  expect(after.find(a => a.id === 'gone-1')?.endedAt).not.toBeNull()
+  // Listed as running: never ended, however quiet.
+  expect(after.find(a => a.id === 'busy-1')?.endedAt).toBeNull()
+  // The coordinator clears the finished row; the running one stays, unnamed in a clear-all.
+  const answer = String(((await update($, { clearAgents: true })) as { result?: unknown }).result ?? '')
+  expect(answer).toContain('Cleared from the pane: Lane A')
+  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.id)).toEqual(['busy-1'])
+  // Named explicitly while running: kept, and said so.
+  const named = String(
+    ((await update($, { dismissAgents: ['Lane B'] })) as { result?: unknown }).result ?? '',
+  )
+  expect(named).toContain('Not cleared — still working: Lane B')
+  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.id)).toEqual(['busy-1'])
+})
+
 test("a subagent's first tool call carries the reporting rule once; one that reported is never told", async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)

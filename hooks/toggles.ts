@@ -96,7 +96,10 @@ export function ruleKeys(
   if (eff.pipelines) keys.push('rule.push')
   keys.push('rule.oneReply')
   if (eff.agents)
-    keys.push(...(eff.tasks && effort !== 'minimal' ? (['rule.delegate'] as const) : []), 'rule.subagent')
+    keys.push(
+      ...(eff.tasks && effort !== 'minimal' ? (['rule.delegate', 'rule.clearPane'] as const) : []),
+      'rule.subagent',
+    )
   return keys
 }
 

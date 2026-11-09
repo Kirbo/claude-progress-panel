@@ -109,8 +109,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   keeps only the tasks whose title, note, detail or steps hold what you type, the matching text
   highlighted (a task whose hit is in its detail or steps unfolds by itself); sessions without a
   match step aside.
-- Every `▾`/`▸` line folds. **✕** removes a done task (or an ended session); **Clear all** (shown
-  while its Done list is open) empties the list.
+- Every `▾`/`▸` line folds. **✕** removes a done task (or an ended session, or a subagent that is no
+  longer working); **Clear all** (shown while its Done list is open) empties the list. Ask the
+  agent to clear the pane and it does the same for its finished tasks and subagent rows.
 - **Version and updates:** the pane's top-right corner shows the version it runs; when a newer
   release exists it adds `vX.Y.Z available ↗`, linking that release's notes. The newest release is
   looked up from this repository's GitLab Releases at most every 6 h, shared by every session on
@@ -281,7 +282,8 @@ or test folder) without moving everyone else's.
   stopped polling, go to a separate `<session-id>.dismissed.json`, which the session folds in on
   its next update. A file caught half-written is ignored until the next refresh. The tool takes a
   patch (`now`, `needsYou`, `tasks` upserted by id or title — with `note`, `detail`, `steps`,
-  `repo` — `remove`, `order`, `watch`, `unwatch`); the plugin stamps the times. Format:
+  `repo` — `remove`, `order`, `watch`, `unwatch`, `clearAgents` / `dismissAgents`); the plugin
+  stamps the times. Format:
   [`docs/design/MULTI-SESSION.md`](docs/design/MULTI-SESSION.md).
 - Every pane lists the folder every 2 seconds and reads a file only when it changed (plugins have
   no file-watch API). A session's own update shows at once.

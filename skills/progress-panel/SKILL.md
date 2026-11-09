@@ -32,6 +32,7 @@ send only what changed:
 | `tasks[].detail` | a longer description, shown when the person unfolds the task (`""` clears)          |
 | `order`    | task ids (or exact titles) in the order you will do them; the rest follow  |
 | `watch`    | CI to follow live — GitLab: `{ project: "group/name", pipeline: <id> }` or `{ project, sha }`; GitHub Actions: `{ provider: "github", project: "owner/repo", run: <id> }` or `{ provider: "github", project, sha }`; optional `label` |
+| `clearAgents` | `true` removes every subagent row that is no longer working (finished or only waiting) — when the person asks to clear the pane; `dismissAgents: [description|id]` names specific ones; a running one is never removed |
 | `unwatch`  | pipeline keys (`group/name#<id>`, `group/name@<sha>`, `gh:owner/repo#<id>`, `gh:owner/repo@<sha>`) to stop showing |
 
 - `status`: `todo` (○), `doing` (●), `blocked` (⚠, magenta like Needs you), `done` (✓), `skipped` (–, dim:

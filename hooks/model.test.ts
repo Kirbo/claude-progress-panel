@@ -9,6 +9,7 @@ import {
   cancelTasks,
   capNewest,
   DEAD_AFTER_MS,
+  dismissAgents,
   dismissTasks,
   displayWidth,
   endAgent,
@@ -701,6 +702,51 @@ test('a resumed or waiting agent the list calls completed ends once it shows no 
   // The list saying "running" keeps a waiting agent waiting.
   const stillRunning = syncAgents(waiting, [{ ...listed[0], status: 'running' }], iso(T0 + AGENT_IDLE_MS * 9))
   expect(stillRunning.agents?.[0]?.waiting).toBe(true)
+})
+
+test('an agent the list no longer names ends once quiet; an ended agent never stays waiting', () => {
+  // Finished agents drop out of the list (after a reload it is empty): quiet ones end, steps unfinished.
+  const running = lane()
+  expect(syncAgents(running, [], iso(T0 + AGENT_IDLE_MS - 1))).toBe(running)
+  const gone = syncAgents(running, [], iso(T0 + AGENT_IDLE_MS))
+  expect(gone.agents?.[0]?.endedAt).toBe(iso(T0 + AGENT_IDLE_MS))
+  expect(gone.agents?.[0]?.tasks.map(t => t.status)).toEqual(['done', 'unfinished', 'unfinished'])
+  // Waiting and gone from the list: ended, and no longer waiting.
+  const waiting = endAgent(lane(), 'a1', iso(T0), true, 'cargo nextest')
+  const ended = syncAgents(waiting, [], iso(T0 + AGENT_IDLE_MS))
+  expect(ended.agents?.[0]).toMatchObject({ endedAt: iso(T0 + AGENT_IDLE_MS) })
+  expect(ended.agents?.[0]?.waiting).toBeUndefined()
+  // The list saying it runs keeps it running however long it stays quiet.
+  const listed = [{ id: 'a1', description: 'Lane', status: 'running' }]
+  expect(syncAgents(running, listed, iso(T0 + AGENT_IDLE_MS * 20)).agents?.[0]?.endedAt).toBeNull()
+  // An entry an older build left ended AND waiting: the flag goes, nothing else changes.
+  const stale: SessionFile = {
+    ...gone,
+    agents: (gone.agents ?? []).map(a => ({ ...a, waiting: true as const, waitingOn: 'x' })),
+  }
+  const fixed = syncAgents(stale, [], iso(T0 + AGENT_IDLE_MS * 2))
+  expect(fixed.agents?.[0]?.waiting).toBeUndefined()
+  expect(fixed.agents?.[0]?.waitingOn).toBeUndefined()
+  expect(fixed.agents?.[0]?.endedAt).toBe(iso(T0 + AGENT_IDLE_MS))
+})
+
+test('dismissAgents clears finished and waiting agent rows, never a running one', () => {
+  const two = applyAgentUpdate(lane(), { id: 'b1', label: 'Busy lane' }, { now: 'working' }, iso(T0)).file
+  const finished = endAgent(two, 'a1', iso(T0 + 1000))
+  // All that are not working: the finished one goes, the running one stays without a word.
+  const all = dismissAgents(finished, true, iso(T0 + 2000))
+  expect(all.file.agents?.map(a => a.id)).toEqual(['b1'])
+  expect(all.dismissed).toEqual(['Lane'])
+  expect(all.running).toEqual([])
+  // By label (any case) or id; a running one named explicitly is kept and reported.
+  const named = dismissAgents(finished, ['lane', 'b1'], iso(T0 + 2000))
+  expect(named.file.agents?.map(a => a.id)).toEqual(['b1'])
+  expect(named.running).toEqual(['Busy lane'])
+  // A waiting agent counts as not working.
+  const waiting = endAgent(two, 'a1', iso(T0 + 1000), true)
+  expect(dismissAgents(waiting, true, iso(T0 + 2000)).dismissed).toEqual(['Lane'])
+  // Nothing to clear: the same file back.
+  expect(dismissAgents(two, true, iso(T0 + 2000)).file).toBe(two)
 })
 
 test('✕ on a finished or waiting agent dismisses it; on a running one it is told to stop; an old ✕ is honoured', () => {

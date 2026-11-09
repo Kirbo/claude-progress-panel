@@ -29,6 +29,7 @@ import {
   cancelTasks,
   capNewest,
   crossLinks,
+  dismissAgents,
   displayWidth,
   dropReplacedAutoTasks,
   endAgent,
@@ -427,6 +428,17 @@ const INPUT_SCHEMA = {
       },
     },
     unwatch: { type: 'array', items: { type: 'string' }, description: 'pipeline keys to stop showing' },
+    clearAgents: {
+      type: 'boolean',
+      description:
+        "true: remove every subagent row that is no longer working (finished, or only waiting) from this session's entry — as the pane's ✕ does. Use it when the person asks to clear the pane. A running agent is never removed.",
+    },
+    dismissAgents: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        "Subagent rows to remove, by the Agent call's description or id — only ones no longer working; a running one is kept and named in the answer.",
+    },
   },
 }
 
@@ -868,9 +880,15 @@ function summarize(file: SessionFile, errors: readonly string[]): string {
   return lines.join('\n')
 }
 
-type ToolInput = UpdateInput & { watch?: WatchInput[]; unwatch?: string[] }
+type ToolInput = UpdateInput & {
+  watch?: WatchInput[]
+  unwatch?: string[]
+  clearAgents?: boolean
+  dismissAgents?: string[]
+}
 
 async function runUpdate($: EngineInterface, options: PluginOptions, input: ToolInput): Promise<string> {
+  let agentClearing: { dismissed: string[]; running: string[] } = { dismissed: [], running: [] }
   const dir = await progressDir($, options)
   if (!dir) return t('tool.noDir')
   const at = await nowIso($)
@@ -880,8 +898,14 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
     : undefined
   const { updated, watched, file } = await exclusive(async () => {
     const applied = applyUpdate(await ownFile($, dir), input, at)
+    // Agent rows the coordinator clears (as the pane's ✕ does): never a running one.
+    const cleared =
+      input.clearAgents || input.dismissAgents?.length
+        ? dismissAgents(applied.file, input.clearAgents ? true : (input.dismissAgents ?? []), at)
+        : { file: applied.file, dismissed: [], running: [] }
+    agentClearing = cleared
     // A task of its own linked to an agent replaces the plugin's stand-in for it.
-    const updated = { ...applied, file: dropReplacedAutoTasks(applied.file) }
+    const updated = { ...applied, file: dropReplacedAutoTasks(cleared.file) }
     const watched = applyWatch(
       updated.file.pipelines ?? [],
       input.watch ?? [],
@@ -897,7 +921,15 @@ async function runUpdate($: EngineInterface, options: PluginOptions, input: Tool
   const added = watched.list.filter(p => !(updated.file.pipelines ?? []).some(old => old.key === p.key))
   if (added.length > 0) await pollPipelines($, options)
   const notice = [takeRemovalNotice(), ...takeFinishedLinks()].filter(Boolean).join('\n')
-  const agents = agentsLine(file)
+  const clearedLines = [
+    agentClearing.dismissed.length
+      ? t('tool.agentsCleared', { list: agentClearing.dismissed.join(', ') })
+      : '',
+    agentClearing.running.length
+      ? t('tool.agentsStillRunning', { list: agentClearing.running.join(', ') })
+      : '',
+  ].filter(Boolean)
+  const agents = [...clearedLines, agentsLine(file)].filter(Boolean).join('\n') || undefined
   const text = `${notice ? `${notice}\n` : ''}${summarize(file, [...updated.errors, ...watched.errors])}${agents ? `\n${agents}` : ''}`
   return added.length > 0
     ? `${text}\n${t('tool.watching', { keys: added.map(p => p.key).join(', ') })}`
@@ -1001,8 +1033,10 @@ async function runAgentUpdate(
 // This session's subagents into its own file, so one that never reports (no progress tool, e.g. a
 // read-only reviewer) still shows under Agents while it runs. Written only when something changed.
 async function syncOwnAgents($: EngineInterface, dir: string): Promise<void> {
-  const listed = await $.agent.list().catch(() => [])
-  if (listed.length === 0) return
+  // A failed list call is no answer (nothing ends on it); an EMPTY list is one — after a reload, or
+  // once every agent finished, and the agents still marked running end once idle (`syncAgents`).
+  const listed = await $.agent.list().catch(() => null)
+  if (listed === null) return
   const at = await nowIso($)
   await exclusive(async () => {
     const own = await ownFile($, dir)
@@ -2411,6 +2445,8 @@ export const register: Register = (on, options) => {
       eta: input.eta,
       watch: pipelinesOn ? input.watch : undefined,
       unwatch: input.unwatch,
+      clearAgents: input.clearAgents,
+      dismissAgents: input.dismissAgents,
     })
     return { result: dropped.length ? `${dropped.join('\n')}\n${text}` : text }
   }).catch(() => ({ result: t('tool.failed') }))
@@ -3152,7 +3188,10 @@ export const register: Register = (on, options) => {
               )}
               <Box flexDirection="row" flexShrink={0} gap={1}>
                 <Text dimColor>
-                  {`${steps}${elapsed}${a.waiting ? t('pane.agentWaiting') : eta}`.replace(/^ · /, '')}
+                  {`${steps}${elapsed}${a.waiting && a.endedAt === null ? t('pane.agentWaiting') : eta}`.replace(
+                    /^ · /,
+                    '',
+                  )}
                 </Text>
                 {/* ✕ on a running subagent: its work is cancelled — it is told to stop and wrap up. */}
                 {a.cancelledAt ? null : (
@@ -3172,7 +3211,7 @@ export const register: Register = (on, options) => {
               <Box flexDirection="column" paddingLeft={INDENT}>
                 {/* A label the row cut with "…": whole here, wrapped. */}
                 {wouldCut(a.label, INDENT * 3 + 2, AGENT_RIGHT_COLS) ? <Text>{a.label}</Text> : null}
-                {a.waiting ? (
+                {a.waiting && a.endedAt === null ? (
                   <Text dimColor>
                     {a.waitingOn ? t('pane.waitingOn', { what: a.waitingOn }) : t('pane.waitingOnUnknown')}
                   </Text>
