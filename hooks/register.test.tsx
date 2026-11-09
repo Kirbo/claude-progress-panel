@@ -2,7 +2,7 @@ import type { TestBody } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 
 import type { SessionFile } from './model'
-import { applyUpdate, formatTime, newSession } from './model'
+import { applyUpdate, formatTime, newSession, stepCounts } from './model'
 import { resolveProgressDir } from './paths'
 import type { Pipeline } from './pipelines'
 
@@ -3036,6 +3036,96 @@ test(
     expect(read(disk, `${DIR}/s-me.json`).autoNeeds?.map(a => a.kind)).toEqual(['idle'])
   },
 )
+
+test('✕ on a step: hidden at once, skipped and counted out, the main loop told — and a later report does not bring it back', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [{ title: 'A', status: 'doing', steps: [{ title: 'one' }, { title: 'two' }] }],
+  })
+  const ui = await pane($)
+  await ui.press({ key: 'cancel:s-me:step:t1:two' })
+  expect((await texts(ui)).join('\n')).not.toContain('two')
+  await world.clock.advance(2100)
+  const task = read(disk, `${DIR}/s-me.json`).tasks[0]
+  expect(task?.steps?.find(x => x.title === 'two')).toMatchObject({ status: 'skipped', removedByUser: true })
+  expect(stepCounts(task as never)).toEqual({ closed: 0, total: 1 })
+  const told = await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'r1',
+  } as never)
+  expect(ctx(told)).toContain('step "two" of "A" was removed')
+  // The agent re-sends the whole list: the removed step stays removed.
+  await update($, {
+    tasks: [
+      {
+        id: 't1',
+        steps: [
+          { title: 'one', status: 'done' },
+          { title: 'two', status: 'doing' },
+        ],
+      },
+    ],
+  })
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]?.steps?.find(x => x.title === 'two')?.status).toBe('skipped')
+  await ui.unmount()
+})
+
+test("✕ on a subagent's step or the whole subagent tells THAT subagent, not the main loop; a re-sent step stays skipped", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-r', description: 'Lane R', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, { now: 'coordinating' })
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-r',
+    now: 'w',
+    tasks: [{ title: 'read' }, { title: 'write' }],
+  } as never)
+  const ui = await pane($)
+  await ui.press({ key: 'cancel:s-me:agent:sub-r:t2' })
+  await world.clock.advance(2100)
+  const agent = read(disk, `${DIR}/s-me.json`).agents?.[0]
+  expect(agent?.tasks.find(x => x.id === 't2')?.status).toBe('skipped')
+  const call = async (agentId?: string) =>
+    ctx(
+      await $.classic.PostToolUse({
+        tool_name: 'Bash',
+        tool_input: {},
+        tool_response: {},
+        tool_use_id: `r-${agentId ?? 'main'}`,
+        ...(agentId ? { agent_id: agentId } : {}),
+      } as never),
+    )
+  expect(await call()).not.toContain('"write" was removed')
+  expect(await call('sub-r')).toContain('your step "write" was removed')
+  // Its re-sent step stays skipped.
+  await $.tool.call({ tool: TOOL, agentId: 'sub-r', tasks: [{ id: 't2', status: 'doing' }] } as never)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.tasks.find(x => x.id === 't2')?.status).toBe('skipped')
+  // The whole subagent: told to stop and wrap up.
+  await ui.press({ key: 'cancel:s-me:agentall:sub-r' })
+  await world.clock.advance(2100)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.cancelledAt).toBeTruthy()
+  expect(await call('sub-r')).toContain('cancelled your work')
+  await ui.unmount()
+})
+
+test('a task removed in a pane stays skipped when the agent upserts it again by id or title', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { tasks: [{ title: 'Alpha' }] })
+  put(disk, `${DIR}/s-me.dismissed.json`, { version: 1, sessionId: 's-me', entries: [], cancelled: ['t1'] })
+  await world.clock.advance(2100)
+  const answer = JSON.stringify(await update($, { tasks: [{ title: 'Alpha', status: 'doing' }] }))
+  expect(answer).toContain('removed in the Progress pane and stays skipped')
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]?.status).toBe('skipped')
+})
 
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())

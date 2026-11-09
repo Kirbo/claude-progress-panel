@@ -192,6 +192,12 @@ export const en = {
     'Progress pane: {repo} runs no CI (remembered for this machine) — do not `watch` its pushes. /progress pipelines recheck judges it again.',
   'ciMemory.noRepo': 'Not in a git repository: nothing to recheck.',
   'ciMemory.forgotten': "Forgot what was remembered about {repo}'s CI: its next push is judged afresh.",
+  'notice.stepRemoved':
+    'Progress pane: step "{step}" of "{task}" was removed in the Progress pane — do not do it; stop if you are on it.',
+  'notice.agentTaskRemoved':
+    'Progress pane: your step "{task}" was removed in the Progress pane — do not do it; stop if you are on it.',
+  'notice.agentCancelled':
+    'Progress pane: the person cancelled your work in the Progress pane — stop now: report what you have so far and end.',
   'auto.permission': 'Permission: {message}',
   'auto.permissionAgent': '{agent} needs permission: {message}',
   'auto.idle': 'Waiting for your reply',

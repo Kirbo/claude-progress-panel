@@ -86,7 +86,12 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   running subagents in every `progress_update` answer.
 - **Remove a task** with the `✕` on its row: every pane hides it at once, its session marks it
   skipped ("removed in the Progress pane") and tells its agent right after its next step — "do not
-  do it; stop if you are on it". Works for any live session's tasks, not only this one's.
+  do it; stop if you are on it". Works for any live session's tasks, not only this one's — and at
+  every level: a task's **step** (skipped, counted out of its n/m, the agent told), a
+  **subagent's step** (that subagent is told at its next tool call, not the main loop) and a whole
+  **running subagent** (it is told to stop and wrap up; Claude Code offers no way to stop one from
+  outside). A later report never brings a removed item back: the agent re-adds it only as a new task
+  (a new title or id).
 - **Sort** cycles plan → status → title → created → done (remembered). **Filter tasks** beside it
   keeps only the tasks whose title, note, detail or steps hold what you type, the matching text
   highlighted (a task whose hit is in its detail or steps unfolds by itself); sessions without a

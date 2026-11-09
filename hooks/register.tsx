@@ -24,6 +24,7 @@ import {
   addDismissals,
   applyAgentUpdate,
   applyUpdate,
+  cancelDeeper,
   cancelTasks,
   capNewest,
   DONE_SHOWN,
@@ -42,6 +43,7 @@ import {
   parseSessionFile,
   parseSidecar,
   pruneDone,
+  removalKey,
   SORTS,
   sortTasks,
   splitMatches,
@@ -181,6 +183,8 @@ let ruleSent = false
 // prompt or main-loop tool call.
 let sessionToggles: Toggles | undefined
 const pendingNotes: string[] = []
+// A subagent's own removal notices (its tasks, or all its work), handed to IT at its next tool call.
+const pendingAgentNotices = new Map<string, string[]>()
 
 function switches(options: PluginOptions): Effective {
   return effective(defaultsFrom(options as Record<string, unknown>), sessionToggles)
@@ -446,7 +450,19 @@ async function ownFile($: EngineInterface, dir: string): Promise<SessionFile> {
       t('task.removedNote'),
     )
     for (const task of folded.removed) pendingRemovals.set(task.id, task.title)
-    return withProcess(folded.file)
+    // The deeper removals: steps, a subagent's tasks, a whole subagent — each told to its own loop.
+    const deeper = cancelDeeper(folded.file, sidecar.cancelled, await nowIso($), t('task.removedNote'))
+    for (const n of deeper.notices) {
+      const text =
+        n.what === 'step'
+          ? t('notice.stepRemoved', { step: n.step, task: n.task })
+          : n.what === 'agentTask'
+            ? t('notice.agentTaskRemoved', { task: n.task })
+            : t('notice.agentCancelled')
+      if (n.agentId) pendingAgentNotices.set(n.agentId, [...(pendingAgentNotices.get(n.agentId) ?? []), text])
+      else pendingNotes.push(text)
+    }
+    return withProcess(deeper.file)
   }
   const cwd = await $.session.cwd()
   const repo = await $.session.repo().catch(() => null)
@@ -1943,7 +1959,14 @@ export const register: Register = (on, options) => {
       : []
     const result = withPushNote(pushed, await next(e), pushNotes)
     const agentId = (e as { agent_id?: unknown }).agent_id
-    if (typeof agentId === 'string' && agentId) return withSubagentRule($, options, agentId, result)
+    if (typeof agentId === 'string' && agentId) {
+      const own = pendingAgentNotices.get(agentId)
+      pendingAgentNotices.delete(agentId)
+      const told = own?.length
+        ? { ...result, additionalContext: [...(result.additionalContext ?? []), ...own] }
+        : result
+      return withSubagentRule($, options, agentId, told)
+    }
     if (agentId) return result
     const noted = withPendingNotes(result)
     return isOn(options, 'reporting') ? withRemovalNotice(noted) : noted
@@ -2054,6 +2077,9 @@ export const register: Register = (on, options) => {
     const by = await sortBy($, options)
     const query = await read($, filtering)
     const defaults = defaultsFrom(options as Record<string, unknown>)
+    // Whether a pane already asked a session to remove something (its sidecar's `cancelled`).
+    const removedHere = (sessionId: string, key: string) =>
+      (all[sessionId]?.sidecar?.cancelled ?? []).includes(key)
     const mine = switches(options)
     const filteringNow = query.trim() !== ''
     // The filter's hits, inverted (readable on dark and light themes); the text as is without a filter.
@@ -2367,15 +2393,39 @@ export const register: Register = (on, options) => {
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT * 2}>
               {task.detail ? <Text dimColor>{hl(task.detail)}</Text> : null}
-              {(task.steps ?? []).map(step => {
-                const m = MARK[step.status] ?? { sign: '?' }
-                return (
-                  <Text color={m.color}>
-                    {`${m.sign} `}
-                    {hl(step.title)}
-                  </Text>
+              {(task.steps ?? [])
+                // A step a pane removed hides at once, before its session folds the removal in.
+                .filter(
+                  step =>
+                    !removedHere(sessionId, removalKey({ kind: 'step', taskId: task.id, step: step.title })),
                 )
-              })}
+                .map(step => {
+                  const m = MARK[step.status] ?? { sign: '?' }
+                  const stepKey = removalKey({ kind: 'step', taskId: task.id, step: step.title })
+                  return (
+                    <Box
+                      key={`steprow:${sessionId}:${stepKey}`}
+                      flexDirection="row"
+                      justifyContent="space-between"
+                      gap={2}
+                      hover={ROW_HOVER}
+                    >
+                      <Text color={m.color}>
+                        {`${m.sign} `}
+                        {hl(step.title)}
+                      </Text>
+                      {live && !isClosed(step.status) ? (
+                        <Button
+                          key={`cancel:${sessionId}:${stepKey}`}
+                          label={t('pane.cancel')}
+                          plain
+                          dimColor
+                          onPress={() => void cancelTask($, options, sessionId, stepKey)}
+                        />
+                      ) : null}
+                    </Box>
+                  )
+                })}
             </Box>
           ) : null}
         </Box>
@@ -2446,24 +2496,61 @@ export const register: Register = (on, options) => {
                 plain
                 onPress={() => void toggle($, key, isOpen)}
               />
-              <Text dimColor>{`${steps}${elapsed}${eta}`.replace(/^ · /, '')}</Text>
+              <Box flexDirection="row" gap={1}>
+                <Text dimColor>{`${steps}${elapsed}${eta}`.replace(/^ · /, '')}</Text>
+                {/* ✕ on a running subagent: its work is cancelled — it is told to stop and wrap up. */}
+                {a.cancelledAt ? null : (
+                  <Button
+                    key={`cancel:${id}:${removalKey({ kind: 'agent', agentId: a.id })}`}
+                    label={t('pane.cancel')}
+                    plain
+                    dimColor
+                    onPress={() =>
+                      void cancelTask($, options, id, removalKey({ kind: 'agent', agentId: a.id }))
+                    }
+                  />
+                )}
+              </Box>
             </Box>
             {isOpen ? (
               <Box flexDirection="column" paddingLeft={INDENT}>
                 {a.now ? <Text dimColor>{a.now}</Text> : null}
-                {a.tasks.map(step => {
-                  const m = MARK[step.status] ?? { sign: '?' }
-                  return (
-                    <Box flexDirection="column">
-                      <Text color={m.color}>{`${m.sign} ${step.title}`}</Text>
-                      {step.note ? (
-                        <Box paddingLeft={INDENT}>
-                          <Text dimColor>{step.note}</Text>
-                        </Box>
-                      ) : null}
-                    </Box>
+                {a.tasks
+                  .filter(
+                    step =>
+                      !removedHere(id, removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })),
                   )
-                })}
+                  .map(step => {
+                    const m = MARK[step.status] ?? { sign: '?' }
+                    const stepKey = removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })
+                    return (
+                      <Box flexDirection="column">
+                        <Box
+                          key={`agentstep:${id}:${stepKey}`}
+                          flexDirection="row"
+                          justifyContent="space-between"
+                          gap={2}
+                          hover={ROW_HOVER}
+                        >
+                          <Text color={m.color}>{`${m.sign} ${step.title}`}</Text>
+                          {isClosed(step.status) ? null : (
+                            <Button
+                              key={`cancel:${id}:${stepKey}`}
+                              label={t('pane.cancel')}
+                              plain
+                              dimColor
+                              onPress={() => void cancelTask($, options, id, stepKey)}
+                            />
+                          )}
+                        </Box>
+                        {step.note ? (
+                          <Box paddingLeft={INDENT}>
+                            <Text dimColor>{step.note}</Text>
+                          </Box>
+                        ) : null}
+                      </Box>
+                    )
+                  })}
               </Box>
             ) : null}
           </Box>

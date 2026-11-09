@@ -17,11 +17,15 @@ export type AgentEntry = {
   updatedAt: string
   /** When the subagent stopped (SubagentStop); null while it runs. */
   endedAt: string | null
+  /** Its tasks the person removed in a pane (0.23.0): they stay skipped. */
+  cancelled?: string[]
+  /** When the person cancelled the whole subagent's work in a pane (0.23.0). */
+  cancelledAt?: string
 }
 
 /** One subtask of a task: a title, its own status and, once closed, when (0.23.0: the pace a
  *  time-left estimate is calibrated on). */
-export type Step = { title: string; status: Status; doneAt?: string }
+export type Step = { title: string; status: Status; doneAt?: string; removedByUser?: true }
 
 export type Task = {
   id: string

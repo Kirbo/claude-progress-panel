@@ -100,6 +100,14 @@ export function applyUpdate(
     const status = patch.status as Status | undefined
     const at = tasks.findIndex(t => (patch.id ? t.id === patch.id : t.title === patch.title))
     const wasDismissed = patch.id !== undefined && dismissed.includes(patch.id)
+    // The person removed it in a pane: it stays skipped — a new id or title is a new task.
+    const found = tasks[at]
+    if (found && (file.cancelled ?? []).includes(found.id)) {
+      errors.push(
+        `tasks[${i}]: ${found.id} was removed in the Progress pane and stays skipped (a new title makes a new task)`,
+      )
+      return
+    }
 
     if (at < 0 && wasDismissed) {
       // The person removed it: a done copy stays gone, reopening brings it back.
@@ -338,10 +346,15 @@ function extras(
       } else if (step.status !== undefined && !isStatus(step.status)) {
         errors.push(`tasks[${i}].steps[${j}]: status must be one of ${STATUSES.join(', ')}`)
       } else {
+        const before = old.steps?.find(s => s.title === title)
+        // A step the person removed in a pane stays removed, whatever a later report says.
+        if (before?.removedByUser) {
+          steps.push(before)
+          continue
+        }
         const status = (step.status as Status | undefined) ?? 'todo'
         // When it closed: kept from the step of that title already closed, else now — the pace a
         // time-left estimate is calibrated on (stepless steps from before 0.23.0 have none).
-        const before = old.steps?.find(s => s.title === title)
         const doneAt = isClosed(status)
           ? before && isClosed(before.status)
             ? before.doneAt
@@ -385,7 +398,8 @@ export function splitMatches(text: string, query: string): { text: string; hit: 
 
 /** How many of a task's steps are closed, of how many. */
 export function stepCounts(task: Pick<Task, 'steps'>): { closed: number; total: number } {
-  const steps = task.steps ?? []
+  // A step the person removed is counted out: it will not be done.
+  const steps = (task.steps ?? []).filter(s => !s.removedByUser)
   return { closed: steps.filter(s => isClosed(s.status)).length, total: steps.length }
 }
 
@@ -406,6 +420,8 @@ export function applyAgentUpdate(
     seq: old?.seq ?? 0,
     dismissed: [],
     needsYou: [],
+    // The agent's own removed tasks (its ids are its own: t1… collides with the session's).
+    cancelled: old?.cancelled ?? [],
   }
   const r = applyUpdate(
     scratch,
@@ -422,6 +438,8 @@ export function applyAgentUpdate(
     now: r.file.now ?? null,
     tasks: r.file.tasks,
     seq: r.file.seq,
+    ...(old?.cancelled?.length ? { cancelled: old.cancelled } : {}),
+    ...(old?.cancelledAt ? { cancelledAt: old.cancelledAt } : {}),
     ...(eta !== undefined ? { etaMin: eta } : {}),
     startedAt: old?.startedAt ?? nowIso,
     updatedAt: nowIso,
@@ -689,4 +707,126 @@ export function timeLeft(
     return { min: Math.max(1, Math.round((median * open) / 60_000)), guess: false }
   }
   return typeof guessMin === 'number' ? { min: guessMin, guess: true } : undefined
+}
+
+/** A removal a pane asked for, decoded from its sidecar entry. */
+export type Removal =
+  | { kind: 'task'; taskId: string }
+  | { kind: 'step'; taskId: string; step: string }
+  | { kind: 'agentTask'; agentId: string; taskId: string }
+  | { kind: 'agent'; agentId: string }
+
+/** The sidecar's `cancelled` entry for a removal (a plain task id stays a plain id). */
+export function removalKey(r: Removal): string {
+  switch (r.kind) {
+    case 'task':
+      return r.taskId
+    case 'step':
+      return `step:${r.taskId}:${r.step}`
+    case 'agentTask':
+      return `agent:${r.agentId}:${r.taskId}`
+    case 'agent':
+      return `agentall:${r.agentId}`
+  }
+}
+
+export function parseRemoval(key: string): Removal {
+  const [kind, a = '', ...rest] = key.split(':')
+  if (kind === 'step' && rest.length > 0) return { kind: 'step', taskId: a, step: rest.join(':') }
+  if (kind === 'agent' && rest.length > 0) return { kind: 'agentTask', agentId: a, taskId: rest.join(':') }
+  if (kind === 'agentall') return { kind: 'agent', agentId: [a, ...rest].join(':') }
+  return { kind: 'task', taskId: key }
+}
+
+/** Who a removal's notice goes to: the main loop, or the subagent it belongs to. */
+export type RemovalNotice = { agentId?: string } & (
+  | { what: 'step'; task: string; step: string }
+  | { what: 'agentTask'; task: string }
+  | { what: 'agent' }
+)
+
+/**
+ * The owner folds the deeper removals (steps, a subagent's tasks, a whole subagent) into its file,
+ * each once (its key joins `cancelled`): a step → `skipped` + `removedByUser` (counted out of n/m),
+ * a subagent's task → skipped in ITS list, a whole subagent → every open task of it skipped and
+ * `cancelledAt` set. The notices say whom to tell. Plain task ids are `cancelTasks`'.
+ */
+export function cancelDeeper(
+  file: SessionFile,
+  keys: readonly string[],
+  nowIso: string,
+  note: string,
+): { file: SessionFile; notices: RemovalNotice[] } {
+  const already = new Set(file.cancelled ?? [])
+  const notices: RemovalNotice[] = []
+  let tasks = file.tasks
+  let agents = file.agents ?? []
+  const done: string[] = []
+  const skip = <T extends { status: Status }>(x: T): T => ({
+    ...x,
+    status: 'skipped',
+    note,
+    updatedAt: nowIso,
+    doneAt: nowIso,
+  })
+  for (const key of keys) {
+    if (already.has(key)) continue
+    const r = parseRemoval(key)
+    if (r.kind === 'task') continue
+    if (r.kind === 'step') {
+      const task = tasks.find(t => t.id === r.taskId)
+      const step = task?.steps?.find(s => s.title === r.step && !isClosed(s.status))
+      if (!task || !step) continue
+      tasks = tasks.map(t =>
+        t.id === task.id
+          ? {
+              ...t,
+              steps: (t.steps ?? []).map(s =>
+                s === step
+                  ? { ...s, status: 'skipped' as const, removedByUser: true as const, doneAt: nowIso }
+                  : s,
+              ),
+              updatedAt: nowIso,
+            }
+          : t,
+      )
+      notices.push({ what: 'step', task: task.title, step: step.title })
+    } else if (r.kind === 'agentTask') {
+      const agent = agents.find(a => a.id === r.agentId)
+      const task = agent?.tasks.find(t => t.id === r.taskId && !isClosed(t.status))
+      if (!agent || !task) continue
+      agents = agents.map(a =>
+        a.id === agent.id
+          ? {
+              ...a,
+              tasks: a.tasks.map(t => (t === task ? skip(t) : t)),
+              cancelled: [...(a.cancelled ?? []), task.id],
+              updatedAt: nowIso,
+            }
+          : a,
+      )
+      notices.push({ what: 'agentTask', agentId: agent.id, task: task.title })
+    } else {
+      const agent = agents.find(a => a.id === r.agentId)
+      if (!agent || agent.endedAt !== null) continue
+      agents = agents.map(a =>
+        a.id === agent.id
+          ? {
+              ...a,
+              tasks: a.tasks.map(t => (isClosed(t.status) ? t : skip(t))),
+              cancelled: [...(a.cancelled ?? []), ...a.tasks.filter(t => !isClosed(t.status)).map(t => t.id)],
+              cancelledAt: nowIso,
+              updatedAt: nowIso,
+            }
+          : a,
+      )
+      notices.push({ what: 'agent', agentId: agent.id })
+    }
+    done.push(key)
+  }
+  if (done.length === 0) return { file, notices }
+  return {
+    file: { ...file, tasks, agents, cancelled: [...already, ...done], updatedAt: nowIso },
+    notices,
+  }
 }

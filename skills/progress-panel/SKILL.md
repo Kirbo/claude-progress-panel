@@ -82,6 +82,14 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
 - **Resume:** a resumed session keeps its entry while its session id is unchanged (a `/clear`
   starts a new entry); the tool's answer lists your tasks and ids.
 
+## Removed in the pane
+
+The person can remove a task, a task's step, one of a subagent's steps, or a whole subagent's work
+with ✕. You are told once ("… was removed in the Progress pane — do not do it; stop if you are on
+it"; a subagent is told about its own). Do not do it, and do not send it again: a removed item stays
+skipped whatever a later report says — only a new title or id is a new task. A cancelled subagent
+reports what it has and ends.
+
 ## Estimates
 
 Every estimate you report — a subagent's `eta`, a step's `~N min` note — is YOUR OWN wall-clock

@@ -428,6 +428,23 @@ prompt) from the settings `paneColumns` (default 84 — the content's natural wi
 the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when it opens unasked
 (from 144 columns) are Claude Code's — a plugin cannot open itself narrower.
 
+## ✕ at every level (0.23.0)
+
+Asked 2026-11-09 (item 10): the task ✕ (0.16.0) reaches every level through the SAME path — the
+sidecar's `cancelled`, folded in by the owner — with encoded keys (`removalKey` / `parseRemoval`):
+a plain task id; `step:<task>:<step title>`; `agent:<agent>:<task>` (a subagent's step — its own
+task list); `agentall:<agent>` (its whole work). `cancelDeeper` (after `cancelTasks`) folds each
+once (the key joins `cancelled`): a step → `skipped` + `removedByUser` (out of `stepCounts`), a
+subagent's task → skipped in its list + its own `cancelled`, a whole subagent → its open tasks
+skipped + `cancelledAt`. Notices are routed: the main loop's go with the next prompt or main-loop
+tool call; a subagent's (`pendingAgentNotices`) with ITS next tool call (`PostToolUse` carries
+`agent_id`). Nothing comes back: `applyUpdate` keeps a removed task skipped on any upsert (an error
+line says so; a new title or id is a new task), a removed step stays as it was in every resent
+`steps` list, and a subagent's list runs with its own `cancelled`. Panes hide a removal at once
+(`removedHere`) before the fold. The engine has no call to stop a subagent: the whole-agent ✕ is the
+notice ("stop now: report what you have so far and end"). Every ✕ sits at the right of its row,
+which lights on hover like the task rows'.
+
 ## Claude Code's waits as Needs you (0.23.0)
 
 Asked 2026-11-09 (item 13). `classic.Notification` (`notification_type` `permission_prompt` /
