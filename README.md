@@ -117,6 +117,14 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 
 ### Pipelines
 
+**A running pipeline's ✕ cancels it** — and, by default, deletes it from the CI — through your
+own `glab` / `gh` (GitLab: the pipeline's cancel, then delete — deleting needs the Maintainer or
+Owner role, so a refused delete leaves it cancelled and says so on its row; GitHub: the run's
+cancel, then delete). The first press only asks ("cancel + delete? ✕"); a second press within 5 s
+does it, then the row goes. `runningPipelineX` = `cancel` only cancels, `off` shows no ✕ on a
+running pipeline. Gitea / Forgejo and a custom CI command offer no ✕ while running (no cancel or
+delete verbs the plugin can rely on there).
+
 **Every `git push` the agent runs is watched automatically** — no tool call: when the push lands,
 the plugin reads the repo's CI off its files (`.gitlab-ci.yml` → GitLab, `.github/workflows/` →
 GitHub Actions, `.gitea/` or `.forgejo/workflows/` → Gitea/Forgejo, else your **Custom CI command**),
@@ -226,6 +234,7 @@ built-in default below.
 | `pipelineRefreshSec`    | 10, 15, 30, 60                          | 15                     |
 | `updateCheck`           | on, off                                 | on                     |
 | `palette`               | default, colorblind, none               | default                |
+| `runningPipelineX`      | delete, cancel, off                     | delete                 |
 
 `autoOpen` has no "always": Claude Code itself places a pane the plugin opens unasked only from
 ~144 columns, and a plugin cannot force it narrower.

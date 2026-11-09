@@ -27,6 +27,8 @@ export type Settings = {
   updateCheck: boolean
   /** The pane's colours: as designed, colour-blind safe, or none. */
   palette: 'default' | 'colorblind' | 'none'
+  /** ✕ on a running pipeline: cancel it and delete it from the CI, only cancel, or no ✕. */
+  runningPipelineX: 'delete' | 'cancel' | 'off'
 }
 
 function pick<T extends string>(raw: unknown, allowed: readonly T[], fallback: T): T {
@@ -53,6 +55,7 @@ export function readSettings(options: Record<string, unknown>): Settings {
     pipelineRefreshMs: num(options.pipelineRefreshSec, [10, 15, 30, 60], 15) * 1000,
     updateCheck: pick(options.updateCheck, ['on', 'off'], 'on') === 'on',
     palette: pick(options.palette, ['default', 'colorblind', 'none'], 'default'),
+    runningPipelineX: pick(options.runningPipelineX, ['delete', 'cancel', 'off'], 'delete'),
   }
 }
 

@@ -128,6 +128,13 @@ const SIDECAR = '.dismissed.json'
 // Bumped after a setting is written from the Settings view: the view redraws with the new value
 // (a userConfig value is no atom of ours).
 const configTick = atom({ plugin: 'progress-panel', key: 'configTick' } as const, 0, { shape: 'config-1' })
+// A destructive ✕ (cancel + delete a running pipeline) needs a second press within this long.
+const CONFIRM_MS = 5000
+const armed = atom(
+  { plugin: 'progress-panel', key: 'armed' } as const,
+  null as { key: string; untilMs: number } | null,
+  { shape: 'armed-1' },
+)
 // The pane's view: the sessions, or Settings (this session's switches, the defaults for new ones).
 const viewing = atom({ plugin: 'progress-panel', key: 'view' } as const, 'main' as 'main' | 'settings', {
   shape: 'view-1',
@@ -1616,6 +1623,107 @@ async function cycleConfig(
   await setConfig($, key, options[(at + 1) % options.length] ?? current)
 }
 
+// What a running pipeline's ✕ can do on its forge, through the person's own CLI: GitLab and GitHub
+// cancel (and delete); Gitea / Forgejo and a custom command have no verbs for it here, so no ✕.
+function cancellable(p: Pipeline): boolean {
+  return p.id !== null && (p.provider === undefined || p.provider === 'gitlab' || p.provider === 'github')
+}
+
+// One forge API call with a method, through glab / gh (their `-X`).
+async function forgeCall(
+  $: EngineInterface,
+  p: Pipeline,
+  method: 'POST' | 'DELETE',
+  path: string,
+): Promise<{ text?: string; error?: string }> {
+  const cli = p.provider === 'github' ? 'gh' : 'glab'
+  const host = apiHost(p)
+  return runCli($, [cli, 'api', '-X', method, ...(host ? ['--hostname', host] : []), path])
+}
+
+// ✕ on a running pipeline, second press: cancel it, then (by setting) delete it from the CI. Success
+// removes its row (dismissed as finished); a refused delete keeps it cancelled and says why; a
+// failed cancel shows its error on the row.
+async function cancelPipeline(
+  $: EngineInterface,
+  options: PluginOptions,
+  sessionId: string,
+  p: Pipeline,
+): Promise<void> {
+  const github = p.provider === 'github'
+  const base = github
+    ? `repos/${p.project}/actions/runs/${p.id}`
+    : `projects/${encodeURIComponent(p.project)}/pipelines/${p.id}`
+  const cancelled = await forgeCall($, p, 'POST', `${base}/cancel`)
+  const at = await nowIso($)
+  let error = cancelled.error ? t('pipe.cancelFailed', { error: oneLine(cancelled.error) }) : undefined
+  if (!error && settings.runningPipelineX === 'delete') {
+    const deleted = await forgeCall($, p, 'DELETE', base)
+    if (deleted.error)
+      error = /\b403\b|forbidden/i.test(deleted.error)
+        ? t('pipe.deleteRefused', { error: oneLine(deleted.error) })
+        : t('pipe.deleteFailed', { error: oneLine(deleted.error) })
+  }
+  const dir = await progressDir($, options)
+  if (!dir) return
+  if (error) {
+    const marked = {
+      ...p,
+      checkedAt: at,
+      error,
+      ...(cancelled.error ? {} : { state: 'canceled' as const, finishedAt: at }),
+    }
+    if (sessionId === (await $.session.id()))
+      await exclusive(async () => {
+        const own = await ownFile($, dir)
+        await save($, dir, {
+          ...own,
+          pipelines: (own.pipelines ?? []).map(x => (x.key === p.key ? marked : x)),
+        })
+      })
+    else
+      await writeSidecar($, dir, sessionId, s => ({
+        ...s,
+        pipelines: [...s.pipelines.filter(x => x.key !== p.key), marked],
+      }))
+    return
+  }
+  // Gone from the CI (or cancelled): gone from the pane — this session's own row is unwatched,
+  // another session's dismissed through its sidecar.
+  if (sessionId === (await $.session.id()))
+    await exclusive(async () => {
+      const own = await ownFile($, dir)
+      await save($, dir, { ...own, pipelines: (own.pipelines ?? []).filter(x => x.key !== p.key) })
+    })
+  else
+    await writeSidecar($, dir, sessionId, s => ({
+      ...s,
+      pipelines: [
+        ...s.pipelines.filter(x => x.key !== p.key),
+        { ...p, state: 'canceled', finishedAt: at, checkedAt: at },
+      ],
+      entries: [...s.entries, { id: `pipeline:${p.key}`, doneAt: at }],
+    }))
+}
+
+// The running pipeline ✕: the first press arms it (the label asks to confirm), a second within
+// CONFIRM_MS does it — never one accidental click.
+async function pressPipelineX(
+  $: EngineInterface,
+  options: PluginOptions,
+  sessionId: string,
+  p: Pipeline,
+): Promise<void> {
+  const nowMs = await $.clock.now()
+  const current = await read($, armed)
+  if (current && current.key === p.key && nowMs <= current.untilMs) {
+    await update($, armed, () => null)
+    await cancelPipeline($, options, sessionId, p)
+    return
+  }
+  await update($, armed, () => ({ key: p.key, untilMs: nowMs + CONFIRM_MS }))
+}
+
 // `/progress status`: each switch for this session, and whether it is its own or the default.
 function toggleStatus(options: PluginOptions): string {
   const eff = switches(options)
@@ -2286,6 +2394,7 @@ export const register: Register = (on, options) => {
     const by = await sortBy($, options)
     const query = await read($, filtering)
     const defaults = defaultsFrom(options as Record<string, unknown>)
+    const armedNow = await read($, armed)
     // Whether a pane already asked a session to remove something (its sidecar's `cancelled`).
     const removedHere = (sessionId: string, key: string) =>
       (all[sessionId]?.sidecar?.cancelled ?? []).includes(key)
@@ -2441,6 +2550,23 @@ export const register: Register = (on, options) => {
                 </Text>
               </Button>
               {openLink(p.url)}
+              {!finished && settings.runningPipelineX !== 'off' && cancellable(p) ? (
+                <Button
+                  key={`cancelpipe:${sessionId}:${p.key}`}
+                  label={
+                    armedNow?.key === p.key && nowMs <= armedNow.untilMs
+                      ? t(
+                          settings.runningPipelineX === 'delete'
+                            ? 'pipe.confirmDelete'
+                            : 'pipe.confirmCancel',
+                        )
+                      : t('pipe.dismiss')
+                  }
+                  plain
+                  dimColor={!(armedNow?.key === p.key && nowMs <= armedNow.untilMs)}
+                  onPress={() => void pressPipelineX($, options, sessionId, p)}
+                />
+              ) : null}
               {finished && p.finishedAt ? (
                 <Button
                   key={`unpipe:${sessionId}:${p.key}`}

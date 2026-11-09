@@ -428,6 +428,18 @@ prompt) from the settings `paneColumns` (default 84 — the content's natural wi
 the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when it opens unasked
 (from 144 columns) are Claude Code's — a plugin cannot open itself narrower.
 
+## Cancel + delete a running pipeline (0.23.0)
+
+Asked 2026-11-09 (item 15). A running pipeline's row gets a ✕ (`cancelpipe:<session>:<key>`, beside
+↗) when `cancellable` — a known id on GitLab or GitHub; Gitea/Forgejo (no tea cancel/delete the
+plugin can rely on) and a custom command (its contract has no verbs) get none. Two presses: the
+first arms it (`armed` atom: key + `CONFIRM_MS` 5 s; the label turns "cancel + delete? ✕"), a second
+within that window runs `cancelPipeline`: `glab|gh api -X POST <run>/cancel`, then by
+`runningPipelineX` (delete / cancel / off) `-X DELETE <run>`. Done → the row goes (own session:
+removed from its file; another's: a canceled copy + a dismissal in its sidecar). A failed cancel,
+or a refused delete (403: GitLab's delete needs Maintainer/Owner — then it stays cancelled), shows
+on the row as its error.
+
 ## A resumed subagent runs again (0.23.0)
 
 Bug 2026-11-09 (item 16): a subagent that stopped (its turn limit, or waiting on its own

@@ -18,6 +18,7 @@ test('every setting has its built-in default, and an unknown value falls back to
     pipelineRefreshMs: 15_000,
     updateCheck: true,
     palette: 'default',
+    runningPipelineX: 'delete',
   })
   expect(readSettings({ paneScope: 'bogus', doneShown: '7', pipelineRefreshSec: '30' })).toMatchObject({
     paneScope: 'all',

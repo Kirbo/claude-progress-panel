@@ -3399,6 +3399,112 @@ test('a subagent that stopped and was resumed is running again; one that only st
   await ui.unmount()
 })
 
+async function runningPipeline(world: ReturnType<typeof engine>, $: $Test, provider?: 'github') {
+  if (provider === 'github') {
+    world.github.set('repos/owner/app/actions/runs/77', {
+      id: 77,
+      status: 'in_progress',
+      head_branch: 'main',
+      html_url: 'u',
+    })
+    world.github.set('repos/owner/app/actions/runs/77/jobs?per_page=100', { jobs: [] })
+    world.github.set('repos/owner/app/actions/runs/77/cancel', {})
+    await update($, { watch: [{ provider: 'github', project: 'owner/app', run: 77 }] })
+    return 'gh:owner/app#77'
+  }
+  world.gitlab.set('projects/team%2Fapp/pipelines/41', {
+    id: 41,
+    status: 'running',
+    ref: 'main',
+    web_url: 'u',
+  })
+  world.gitlab.set('projects/team%2Fapp/pipelines/41/jobs?per_page=100', [])
+  world.gitlab.set('projects/team%2Fapp/pipelines/41/cancel', {})
+  await update($, { watch: [{ project: 'team/app', pipeline: 41 }] })
+  return 'team/app#41'
+}
+
+const calls = (world: ReturnType<typeof engine>, method: string) =>
+  world.runs.filter(r => r.includes('-X') && r[r.indexOf('-X') + 1] === method).map(r => r[r.length - 1])
+
+test('✕ on a running pipeline: the first press only asks; the second cancels and deletes it, and the row goes', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  const key = await runningPipeline(world, $)
+  const ui = await pane($)
+  const x = `cancelpipe:s-me:${key}`
+  await ui.press({ key: x })
+  expect((await ui.find({ type: 'Button', key: x }))?.text).toBe('cancel + delete? ✕')
+  expect(calls(world, 'POST')).toEqual([])
+  // Too late: the confirm expired, the next press only asks again.
+  await world.clock.advance(6000)
+  await ui.press({ key: x })
+  expect(calls(world, 'POST')).toEqual([])
+  await ui.press({ key: x })
+  expect(calls(world, 'POST')).toEqual(['projects/team%2Fapp/pipelines/41/cancel'])
+  expect(calls(world, 'DELETE')).toEqual(['projects/team%2Fapp/pipelines/41'])
+  expect(read(disk, `${DIR}/s-me.json`).pipelines ?? []).toEqual([])
+  await ui.unmount()
+})
+
+test('a delete the forge refuses (403) keeps it cancelled and says so on its row; GitHub runs cancel and delete too', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  const key = await runningPipeline(world, $)
+  world.failures.set('projects/team%2Fapp/pipelines/41', {
+    exitCode: 1,
+    stdout: '',
+    stderr: 'glab: 403 Forbidden',
+  })
+  const ui = await pane($)
+  await ui.press({ key: `cancelpipe:s-me:${key}` })
+  await ui.press({ key: `cancelpipe:s-me:${key}` })
+  const row = read(disk, `${DIR}/s-me.json`).pipelines?.[0]
+  expect(row?.state).toBe('canceled')
+  expect(row?.error).toContain('Cancelled, but not deleted (deleting needs the Maintainer/Owner role)')
+  world.failures.delete('projects/team%2Fapp/pipelines/41')
+  const gh = await runningPipeline(world, $, 'github')
+  await ui.press({ key: `cancelpipe:s-me:${gh}` })
+  await ui.press({ key: `cancelpipe:s-me:${gh}` })
+  expect(calls(world, 'POST')).toContain('repos/owner/app/actions/runs/77/cancel')
+  expect(calls(world, 'DELETE')).toContain('repos/owner/app/actions/runs/77')
+  await ui.unmount()
+})
+
+test(
+  'runningPipelineX cancel: only cancels; off: no ✕ on a running pipeline',
+  { options: { runningPipelineX: 'cancel' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    await start($)
+    const key = await runningPipeline(world, $)
+    const ui = await pane($)
+    await ui.press({ key: `cancelpipe:s-me:${key}` })
+    expect((await ui.find({ type: 'Button', key: `cancelpipe:s-me:${key}` }))?.text).toBe('cancel? ✕')
+    await ui.press({ key: `cancelpipe:s-me:${key}` })
+    expect(calls(world, 'POST')).toEqual(['projects/team%2Fapp/pipelines/41/cancel'])
+    expect(calls(world, 'DELETE')).toEqual([])
+    await ui.unmount()
+  },
+)
+
+test(
+  'runningPipelineX off: no ✕ on a running pipeline',
+  { options: { runningPipelineX: 'off' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    await start($)
+    const key = await runningPipeline(world, $)
+    const ui = await pane($)
+    expect(await ui.find({ type: 'Button', key: `cancelpipe:s-me:${key}` })).toBeUndefined()
+    await ui.unmount()
+  },
+)
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)

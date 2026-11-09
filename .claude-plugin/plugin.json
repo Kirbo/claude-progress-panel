@@ -215,6 +215,14 @@
       "options": ["default", "colorblind", "none"],
       "default": "default",
       "required": false
+    },
+    "runningPipelineX": {
+      "type": "string",
+      "title": "✕ on a running pipeline",
+      "description": "delete: cancel it and delete it from the CI (GitLab, GitHub; a second press confirms); cancel: only cancel it; off: no ✕ on a running pipeline.",
+      "options": ["delete", "cancel", "off"],
+      "default": "delete",
+      "required": false
     }
   }
 }

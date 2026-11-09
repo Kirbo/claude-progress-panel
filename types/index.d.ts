@@ -199,6 +199,8 @@ declare module 'claude-code' {
       view: Shaped<'main' | 'settings'>
       /** Bumped after each setting the Settings view wrote, so it redraws with the new value. */
       configTick: Shaped<number>
+      /** A running pipeline's ✕ pressed once: its key and when the confirm expires (0.23.0). */
+      armed: Shaped<{ key: string; untilMs: number } | null>
     }
   }
 }
