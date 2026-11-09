@@ -229,6 +229,11 @@ export const en = {
   'pipe.deleteFailed': 'Cancelled, but not deleted: {error}',
   'notice.agentUnlinked':
     'Progress pane: agent "{agent}" works on no task of yours — set `agent` on the task it serves (until then the pane shows it as "↳ {agent}").',
+  'notice.linkedAgentStopped':
+    'Progress pane: task "{task}" was removed in the Progress pane, and the agent working on it ("{agent}") was told to stop too.',
+  'notice.taskUnassigned':
+    'Progress pane: agent "{agent}" was stopped in the Progress pane — task "{task}" is unassigned: re-plan or skip it.',
+  'pane.linkedAgentStopped': '■ {agent} stopped in the Progress pane — re-plan or skip this task',
   'auto.permission': 'Permission: {message}',
   'auto.permissionAgent': '{agent} needs permission: {message}',
   'auto.idle': 'Waiting for your reply',

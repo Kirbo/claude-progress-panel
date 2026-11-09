@@ -986,3 +986,38 @@ export function pickedUp(file: SessionFile, id: string): SessionFile {
     }),
   }
 }
+
+/**
+ * Removals across the task ↔ agent link: a removed session task whose linked agent still runs stops
+ * that agent too (its whole work, as the agent ✕ does) — `stop` names them; a stopped agent, or one
+ * whose last open step was removed, leaves its linked open session tasks without a worker —
+ * `orphaned` names them for the coordinator (they are NOT skipped: the coordinator decides).
+ */
+export function crossLinks(
+  file: SessionFile,
+  removedTasks: readonly Task[],
+  notices: readonly RemovalNotice[],
+): { stop: { agentId: string; task: string; agent: string }[]; orphaned: { task: string; agent: string }[] } {
+  const stop: { agentId: string; task: string; agent: string }[] = []
+  for (const task of removedTasks) {
+    const agent = linkedAgent(file, task)
+    if (agent && agent.endedAt === null && !agent.cancelledAt)
+      stop.push({ agentId: agent.id, task: task.title, agent: agent.label })
+  }
+  const orphaned: { task: string; agent: string }[] = []
+  for (const n of notices) {
+    if (!n.agentId || (n.what !== 'agent' && n.what !== 'agentTask')) continue
+    const agent = file.agents?.find(a => a.id === n.agentId)
+    if (!agent) continue
+    const workLeft = agent.tasks.some(x => !isClosed(x.status))
+    if (n.what === 'agentTask' && workLeft) continue // one of its steps: the agent's own business
+    for (const task of file.tasks)
+      if (
+        !isClosed(task.status) &&
+        linkedAgent(file, task)?.id === agent.id &&
+        !orphaned.some(o => o.task === task.title)
+      )
+        orphaned.push({ task: task.title, agent: agent.label })
+  }
+  return { stop, orphaned }
+}

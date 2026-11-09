@@ -99,7 +99,9 @@ The person can remove a task, a task's step, one of a subagent's steps, or a who
 with ✕. You are told once ("… was removed in the Progress pane — do not do it; stop if you are on
 it"; a subagent is told about its own). Do not do it, and do not send it again: a removed item stays
 skipped whatever a later report says — only a new title or id is a new task. A cancelled subagent
-reports what it has and ends.
+reports what it has and ends. Across a link: a removed task's agent is stopped too (you are told);
+an agent the person stopped leaves its task unassigned — re-plan or skip it yourself; a removed
+step of an agent never changes your task's status.
 
 ## Reporting effort
 

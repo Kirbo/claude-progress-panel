@@ -452,6 +452,17 @@ kept) and stamps `resumedAt`; `syncAgents` no longer ends a resumed agent (only 
 `background_tasks` is not empty marks it `waiting` (shown "waiting on background work"), not
 finished.
 
+## Removals cross the link (0.23.0)
+
+Asked 2026-11-09 (item 19). As the owner folds removals (`ownFile`), `crossLinks` (model.ts) reads
+the link both ways: a removed session task whose linked agent still runs adds that agent's
+`agentall:` key to the same `cancelDeeper` pass — the agent is told to stop at its next tool call,
+the coordinator that it was (`notice.linkedAgentStopped`); a stopped agent, or one whose last open
+step was removed, leaves each open session task linked to it unassigned — the coordinator is told
+(`notice.taskUnassigned`) and the pane's link line reads "stopped in the Progress pane — re-plan or
+skip" (from the agent's `cancelledAt`); the task is not skipped. A removed step of an agent that
+still has work is the agent's alone: the session task's status stays the coordinator's.
+
 ## No drift between a task and its agent (0.23.0)
 
 Asked 2026-11-09 (item 18), on top of the links: a linked task's steps ARE its agent's — `extras`

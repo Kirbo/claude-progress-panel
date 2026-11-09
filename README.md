@@ -95,7 +95,11 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   **subagent's step** (that subagent is told at its next tool call, not the main loop) and a whole
   **running subagent** (it is told to stop and wrap up; Claude Code offers no way to stop one from
   outside). A later report never brings a removed item back: the agent re-adds it only as a new task
-  (a new title or id).
+  (a new title or id). **Across a task's link to its agent:** removing a session task stops the
+  agent working on it too (it is told to wrap up; the coordinator is told so); stopping an agent —
+  or removing its last open step — leaves its linked task open but unassigned (shown "stopped",
+  the coordinator told to re-plan or skip it); one of an agent's steps is the agent's business only
+  (the session task's status stays the coordinator's).
 - **Sort** cycles plan → status → title → created → done (remembered). **Filter tasks** beside it
   keeps only the tasks whose title, note, detail or steps hold what you type, the matching text
   highlighted (a task whose hit is in its detail or steps unfolds by itself); sessions without a

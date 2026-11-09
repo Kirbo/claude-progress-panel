@@ -28,6 +28,7 @@ import {
   cancelDeeper,
   cancelTasks,
   capNewest,
+  crossLinks,
   dropReplacedAutoTasks,
   endAgent,
   endDeadSession,
@@ -492,8 +493,20 @@ async function ownFile($: EngineInterface, dir: string): Promise<SessionFile> {
       t('task.removedNote'),
     )
     for (const task of folded.removed) pendingRemovals.set(task.id, task.title)
+    // A removed task's running agent stops too: its whole work, as if its own ✕ was pressed.
+    const before = crossLinks(folded.file, folded.removed, [])
+    const keys = [
+      ...sidecar.cancelled,
+      ...before.stop.map(s => removalKey({ kind: 'agent', agentId: s.agentId })),
+    ]
+    for (const s of before.stop)
+      pendingNotes.push(t('notice.linkedAgentStopped', { task: s.task, agent: s.agent }))
     // The deeper removals: steps, a subagent's tasks, a whole subagent — each told to its own loop.
-    const deeper = cancelDeeper(folded.file, sidecar.cancelled, await nowIso($), t('task.removedNote'))
+    const deeper = cancelDeeper(folded.file, keys, await nowIso($), t('task.removedNote'))
+    // A stopped agent (or its last step gone) leaves its linked task without a worker: the
+    // coordinator decides — the task is not skipped. (A task the person removed is not orphaned.)
+    for (const o of crossLinks(deeper.file, [], deeper.notices).orphaned)
+      if (!before.stop.some(s => s.task === o.task)) pendingNotes.push(t('notice.taskUnassigned', o))
     for (const n of deeper.notices) {
       const text =
         n.what === 'step'
@@ -2714,6 +2727,7 @@ export const register: Register = (on, options) => {
             {(() => {
               const counts = linked.tasks.filter(x => isClosed(x.status)).length
               const left = timeLeft(linked.tasks, linked.startedAt, linked.etaMin)
+              if (linked.cancelledAt) return t('pane.linkedAgentStopped', { agent: linked.label })
               return t(linked.endedAt === null ? 'pane.linkedAgent' : 'pane.linkedAgentDone', {
                 agent: linked.label,
                 steps: linked.tasks.length > 0 ? ` ${counts}/${linked.tasks.length}` : '',

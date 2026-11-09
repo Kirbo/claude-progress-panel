@@ -3597,6 +3597,95 @@ test('a message sent to a running agent shows on its row as queued until the age
   expect(entry()?.queued).toBeUndefined()
 })
 
+async function linkedLane($: $Test, on: On) {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-k', description: 'Lane K', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, {
+    now: 'coordinating',
+    tasks: [{ title: 'Port the parser', status: 'doing', agent: 'Lane K' }],
+  })
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-k',
+    now: 'w',
+    tasks: [{ title: 'read' }, { title: 'write' }],
+  } as never)
+  const main = async () =>
+    ctx(
+      await $.classic.PostToolUse({
+        tool_name: 'Bash',
+        tool_input: {},
+        tool_response: {},
+        tool_use_id: `m-${Math.random()}`,
+      } as never),
+    )
+  const sub = async () =>
+    ctx(
+      await $.classic.PostToolUse({
+        tool_name: 'Bash',
+        tool_input: {},
+        tool_response: {},
+        tool_use_id: `s-${Math.random()}`,
+        agent_id: 'sub-k',
+      } as never),
+    )
+  return { disk, world, main, sub }
+}
+
+test('✕ on a session task linked to a running agent stops that agent too; the coordinator is told so', async ($, on) => {
+  const { disk, world, main, sub } = await linkedLane($, on)
+  put(disk, `${DIR}/s-me.dismissed.json`, { version: 1, sessionId: 's-me', entries: [], cancelled: ['t1'] })
+  await world.clock.advance(2100)
+  const file = read(disk, `${DIR}/s-me.json`)
+  expect(file.tasks[0]?.status).toBe('skipped')
+  expect(file.agents?.[0]?.cancelledAt).toBeTruthy()
+  const told = await main()
+  expect(told).toContain('t1 "Port the parser"')
+  expect(told).toContain('("Lane K") was told to stop too')
+  expect(await sub()).toContain('cancelled your work')
+})
+
+test("✕ on a whole agent leaves its linked task unassigned — told, shown, not skipped; one of its steps stays the agent's business", async ($, on) => {
+  const { disk, world, main } = await linkedLane($, on)
+  // One of its two steps: only the agent hears of it.
+  put(disk, `${DIR}/s-me.dismissed.json`, {
+    version: 1,
+    sessionId: 's-me',
+    entries: [],
+    cancelled: ['agent:sub-k:t1'],
+  })
+  await world.clock.advance(2100)
+  expect(await main()).not.toContain('unassigned')
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]?.status).toBe('doing')
+  // The whole agent: the coordinator is told its task has no worker; the task stays open.
+  put(disk, `${DIR}/s-me.dismissed.json`, {
+    version: 1,
+    sessionId: 's-me',
+    entries: [],
+    cancelled: ['agent:sub-k:t1', 'agentall:sub-k'],
+  })
+  await world.clock.advance(2100)
+  expect(await main()).toContain('task "Port the parser" is unassigned: re-plan or skip it')
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]?.status).toBe('doing')
+  const ui = await pane($)
+  expect((await texts(ui)).some(x => x.includes('Lane K stopped in the Progress pane'))).toBe(true)
+  await ui.unmount()
+})
+
+test("✕ on an agent's last open step leaves its linked task unassigned too", async ($, on) => {
+  const { disk, world, main } = await linkedLane($, on)
+  put(disk, `${DIR}/s-me.dismissed.json`, {
+    version: 1,
+    sessionId: 's-me',
+    entries: [],
+    cancelled: ['agent:sub-k:t1', 'agent:sub-k:t2'],
+  })
+  await world.clock.advance(2100)
+  expect(await main()).toContain('is unassigned')
+})
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)
