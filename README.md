@@ -180,7 +180,19 @@ folded "Finished" row.
 
 ### Settings
 
-`/config` (or `claude plugin configure progress-panel`):
+**⚙ Settings** in the pane's top-right corner (or `/progress settings`) opens them inside the pane
+— no commands needed; **← Back** returns:
+
+- **This session** — the four switches (reporting, tasks, agents, pipelines), each showing on/off
+  and whether that is the default or this session's own choice; press to change, **reset to
+  default** to drop the session's own choice.
+- **Defaults for new sessions** — every option below: press a row to step through its values; a
+  text field (progress folder, custom CI command) takes what you type on Enter.
+
+They write the plugin's own settings — the same ones `/plugin configure
+progress-panel@claude-progress-panel` (or `/config`, or `--config KEY=VALUE` at install) changes, so
+there is one place they live. What applies: a session's own switch, else the setting, else the
+built-in default below.
 
 | Option                  | Values                                  | Default                |
 | ----------------------- | --------------------------------------- | ---------------------- |

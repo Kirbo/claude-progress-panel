@@ -38,6 +38,7 @@ test('/progress arguments: open, doctor, status, on/off and per-feature switches
   expect(parseProgressCommand(undefined)).toEqual({ kind: 'open' })
   expect(parseProgressCommand(' Doctor ')).toEqual({ kind: 'doctor' })
   expect(parseProgressCommand('status')).toEqual({ kind: 'status' })
+  expect(parseProgressCommand('settings')).toEqual({ kind: 'settings' })
   expect(parseProgressCommand('off')).toEqual({ kind: 'set', feature: 'reporting', on: false })
   expect(parseProgressCommand('enable')).toEqual({ kind: 'set', feature: 'reporting', on: true })
   expect(parseProgressCommand('pipelines off')).toEqual({ kind: 'set', feature: 'pipelines', on: false })

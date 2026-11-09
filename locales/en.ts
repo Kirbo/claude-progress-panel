@@ -177,7 +177,7 @@ export const en = {
   'toggle.statusItem': '{feature} {state} ({source})',
   'toggle.set': 'Progress panel: {feature} is {state} for this session.',
   'toggle.usage':
-    'Usage: /progress [on|off|status|doctor] · /progress <reporting|tasks|agents|pipelines> <on|off> · /progress pipelines recheck',
+    'Usage: /progress [on|off|status|doctor|settings] · /progress <reporting|tasks|agents|pipelines> <on|off> · /progress pipelines recheck',
   'toggle.note.reportingOff':
     'Progress pane: reporting is off for this session — do not call mcp__progress-panel__progress_update (the person turned it off; /progress on resumes).',
   'toggle.note.tasksOff':
@@ -200,6 +200,20 @@ export const en = {
     'Progress pane: your step "{task}" was removed in the Progress pane — do not do it; stop if you are on it.',
   'notice.agentCancelled':
     'Progress pane: the person cancelled your work in the Progress pane — stop now: report what you have so far and end.',
+  'settings.open': '⚙ Settings',
+  'settings.opened': 'Progress pane: Settings opened.',
+  'settings.title': '⚙ Settings',
+  'settings.back': '← Back',
+  'settings.session': 'This session',
+  'settings.defaults': 'Defaults for new sessions',
+  'settings.switchRow': '{feature}: {state} ({source})',
+  'settings.reset': 'reset to default',
+  'settings.row': '{label}: {value}',
+  'settings.textLabel': '{label}:',
+  'settings.empty': '(empty = default)',
+  'settings.hint':
+    'Press a row to change it; type and press Enter for a text field. Also: /plugin configure progress-panel@claude-progress-panel',
+  'settings.refused': 'Setting not changed: {reason}',
   'auto.permission': 'Permission: {message}',
   'auto.permissionAgent': '{agent} needs permission: {message}',
   'auto.idle': 'Waiting for your reply',

@@ -28,9 +28,9 @@ test("git's failure to reach a remote names the SSH host key or the credentials"
 test('the report is one line per check, a fix beneath each failed one', () => {
   expect(
     formatChecks([
-      { state: 'ok', label: 'Version', detail: '0.22.1' },
+      { state: 'ok', label: 'Version', detail: '0.23.0' },
       { state: 'fail', label: 'Forge CLI', detail: 'glab cannot read group/app', fix: 'glab auth login' },
       { state: 'skip', label: 'CI', detail: 'no repo', fix: 'never shown' },
     ]),
-  ).toBe('✓ Version: 0.22.1\n✗ Forge CLI: glab cannot read group/app\n    → glab auth login\n– CI: no repo')
+  ).toBe('✓ Version: 0.23.0\n✗ Forge CLI: glab cannot read group/app\n    → glab auth login\n– CI: no repo')
 })

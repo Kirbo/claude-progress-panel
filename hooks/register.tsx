@@ -122,6 +122,13 @@ const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {}
   shape: 'sessions-3',
 })
 const SIDECAR = '.dismissed.json'
+// Bumped after a setting is written from the Settings view: the view redraws with the new value
+// (a userConfig value is no atom of ours).
+const configTick = atom({ plugin: 'progress-panel', key: 'configTick' } as const, 0, { shape: 'config-1' })
+// The pane's view: the sessions, or Settings (this session's switches, the defaults for new ones).
+const viewing = atom({ plugin: 'progress-panel', key: 'view' } as const, 'main' as 'main' | 'settings', {
+  shape: 'view-1',
+})
 const folds = atom({ plugin: 'progress-panel', key: 'folds' } as const, {} as Folds, { shape: 'folds-1' })
 // The newest release of the plugin (from the shared store or a check), drawn in the pane's corner.
 const releasing = atom(
@@ -1539,6 +1546,27 @@ async function forgetCiVerdicts($: EngineInterface, options: PluginOptions): Pro
   return t('ciMemory.forgotten', { repo: baseName(root) })
 }
 
+// A default for new sessions written where `/plugin configure` writes it (the plugin's userConfig,
+// through the engine); a refusal is shown, never swallowed.
+async function setConfig($: EngineInterface, key: string, value: string): Promise<void> {
+  const answer = (await $.config.set({ key, value }).catch((err: unknown) => ({
+    deny: err instanceof Error ? err.message : String(err),
+  }))) as { deny?: string }
+  if (answer.deny) await $.ui.toast(t('settings.refused', { reason: answer.deny }))
+  else await update($, configTick, n => n + 1)
+}
+
+// A choice row pressed: its next option (after the last, the first again).
+async function cycleConfig(
+  $: EngineInterface,
+  key: string,
+  options: readonly string[],
+  current: string,
+): Promise<void> {
+  const at = options.indexOf(current)
+  await setConfig($, key, options[(at + 1) % options.length] ?? current)
+}
+
 // `/progress status`: each switch for this session, and whether it is its own or the default.
 function toggleStatus(options: PluginOptions): string {
   const eff = switches(options)
@@ -2039,6 +2067,11 @@ export const register: Register = (on, options) => {
       }
     }
     if (command.kind === 'recheck') return { text: await forgetCiVerdicts($, options) }
+    if (command.kind === 'settings') {
+      await update($, viewing, () => 'settings')
+      await $.ui.open(paneArgs(options))
+      return { text: t('settings.opened') }
+    }
     if (command.kind === 'unknown') return { text: t('toggle.usage') }
     await scan($, options)
     await $.ui.open(paneArgs(options))
@@ -2098,6 +2131,91 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Input, Link } = $.ui.resolve(e)
+    if ((await read($, viewing)) === 'settings') {
+      // Settings: this session's switches, and the defaults for new sessions — the plugin's own
+      // userConfig rows as the engine lists them (their labels, values and options), written back
+      // through $.config.set: the one store `/plugin configure` writes too.
+      const rows = (await $.config.list().catch(() => [])).filter(r => r.key.startsWith('progress-panel.'))
+      // Read for its redraws: a switch's change lands in this session's file, so in this atom; a
+      // written setting bumps the tick.
+      await read($, sessions)
+      await read($, configTick)
+      const eff = switches(options)
+      return (
+        <Box flexDirection="column">
+          <Box flexDirection="row" justifyContent="space-between" gap={2}>
+            <Text bold>{t('settings.title')}</Text>
+            <Button
+              key="settings:back"
+              label={t('settings.back')}
+              plain
+              onPress={() => void update($, viewing, () => 'main')}
+            />
+          </Box>
+          <Text bold>{t('settings.session')}</Text>
+          <Box flexDirection="column" paddingLeft={INDENT}>
+            {FEATURES.map(f => {
+              const own = typeof sessionToggles?.[f] === 'boolean'
+              return (
+                <Box
+                  key={`setting:row:${f}`}
+                  flexDirection="row"
+                  justifyContent="space-between"
+                  gap={2}
+                  hover={ROW_HOVER}
+                >
+                  <Button
+                    key={`setting:session:${f}`}
+                    label={t('settings.switchRow', {
+                      feature: t(`toggle.feature.${f}`),
+                      state: t(eff[f] ? 'toggle.on' : 'toggle.off'),
+                      source: t(own ? 'toggle.overridden' : 'toggle.default'),
+                    })}
+                    plain
+                    onPress={() => void setToggle($, options, f, !eff[f])}
+                  />
+                  {own ? (
+                    <Button
+                      key={`setting:reset:${f}`}
+                      label={t('settings.reset')}
+                      plain
+                      dimColor
+                      onPress={() => void setToggle($, options, f, undefined)}
+                    />
+                  ) : null}
+                </Box>
+              )
+            })}
+          </Box>
+          <Text bold>{t('settings.defaults')}</Text>
+          <Box flexDirection="column" paddingLeft={INDENT}>
+            {rows.map(r =>
+              r.options && r.options.length > 0 ? (
+                <Box key={`setting:row:${r.key}`} flexDirection="row" hover={ROW_HOVER}>
+                  <Button
+                    key={`setting:${r.key}`}
+                    label={t('settings.row', { label: r.label, value: String(r.value ?? '') })}
+                    plain
+                    onPress={() => void cycleConfig($, r.key, r.options ?? [], String(r.value ?? ''))}
+                  />
+                </Box>
+              ) : (
+                <Box key={`setting:row:${r.key}`} flexDirection="row" gap={1}>
+                  <Text>{t('settings.textLabel', { label: r.label })}</Text>
+                  <Input
+                    key={`setting:input:${r.key}`}
+                    placeholder={t('settings.empty')}
+                    value={String(r.value ?? '')}
+                    onSubmit={value => void setConfig($, r.key, value)}
+                  />
+                </Box>
+              ),
+            )}
+          </Box>
+          <Text dimColor>{t('settings.hint')}</Text>
+        </Box>
+      )
+    }
     const all = await read($, sessions)
     const folded = await read($, folds)
     const lastCheck = await read($, checked)
@@ -2857,6 +2975,13 @@ export const register: Register = (on, options) => {
               </Box>
             ) : null}
             {version ? <Text dimColor>{t('pane.version', { version })}</Text> : null}
+            <Button
+              key="settings:open"
+              label={t('settings.open')}
+              plain
+              dimColor
+              onPress={() => void update($, viewing, () => 'settings')}
+            />
           </Box>
         </Box>
         {needs.length > 0 ? (

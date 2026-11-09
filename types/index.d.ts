@@ -51,7 +51,7 @@ export type SessionInfo = {
   cwd: string
   startedAt: string
   endedAt: string | null
-  /** The Claude Code process that writes this file, and its machine (0.22.1): a session whose
+  /** The Claude Code process that writes this file, and its machine (0.23.0): a session whose
    *  process is gone without `session.end` (a closed terminal, a kill) is marked ended. */
   pid?: number
   host?: string
@@ -188,6 +188,10 @@ declare module 'claude-code' {
       release: Shaped<{ version: string; url: string } | null>
       /** When this pane last listed the folder successfully (ms since the epoch; 0 = not yet). */
       checked: Shaped<number>
+      /** What the pane shows: the sessions, or its Settings view (0.23.0). */
+      view: Shaped<'main' | 'settings'>
+      /** Bumped after each setting the Settings view wrote, so it redraws with the new value. */
+      configTick: Shaped<number>
     }
   }
 }

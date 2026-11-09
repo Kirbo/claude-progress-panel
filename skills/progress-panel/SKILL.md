@@ -113,7 +113,8 @@ on hands you the rule again.
 
 ## When the pane is not visible
 
-- `/progress` opens it (a session opens it by itself only on a terminal ~144 columns wide).
+- `/progress` opens it (a session opens it by itself only on a terminal ~144 columns wide);
+  `/progress settings` opens its Settings view (this session's switches, the defaults).
 - No `progress_update` tool and no `/progress` → the plugin is not installed on this machine: see
   the repository's `CLAUDE.md` ("Set the panel up on a machine").
 - A pipeline that shows an error, a rule that never arrived, a push that was not watched →

@@ -85,7 +85,7 @@ per session, `<session-id>.json`, written only whole:
   session's file is created by its first `progress_update`, not at start; a session still blank
   at `session.end` deletes its file and sidecar instead of stamping `endedAt`; any pane deletes an
   ended blank file it finds (older versions wrote one at start), and the pane skips a live blank one.
-- **A session that died without `session.end` is ended (0.22.1).** At start a session records its
+- **A session that died without `session.end` is ended (0.23.0).** At start a session records its
   process and machine in its file (`session.pid`, `session.host`, from `whoAmI`: a spawned child's
   parent and `hostname` — `sh -c 'echo $PPID; ps -o comm= -p $PPID; hostname'`, PowerShell's
   `ParentProcessId` on Windows), but only when that parent is `claude`/`node`: a helper in between
@@ -125,7 +125,7 @@ user asked why the pane was empty (2026-11-09). `UserPromptSubmit` now closes th
 then — while the session's own file is still blank — a one-line `prompt.nudge`. The first report
 ends both.
 
-**…and in every subagent (0.21.5; 0.22.1 as it starts).** A subagent's system prompt is not
+**…and in every subagent (0.21.5; 0.23.0 as it starts).** A subagent's system prompt is not
 composed through this hook either: a fresh general-purpose subagent had the tool but never the
 rule, and never reported (2026-11-09). `classic.SubagentStart` (its `additionalContext`) hands it
 `prompt.subagent` as it starts; where that event does not fire, its FIRST tool call (`PostToolUse`
@@ -143,7 +143,7 @@ description is remembered (`promptFed`), and SubagentStart / the first-call fall
 whose `$.agent.list()` description is one of those. The rule says a job of about three tool calls
 may skip reporting; a longer one reports from its first call.
 
-**…and after a compaction (0.22.1).** A compaction keeps the system prompt but summarises the
+**…and after a compaction (0.23.0).** A compaction keeps the system prompt but summarises the
 conversation, so a rule that only rode a prompt (the mid-way case) can be summarised away. The
 session's own compaction fires `classic.SessionStart` with `source: "compact"` (no `agent_id`):
 when this module composed no prompt, its `additionalContext` carries `prompt.reporting` again. A
@@ -207,7 +207,7 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   remote-tracking ref is not the pushed sha (rejected) neither. The watches go through `applyWatch`
   under the same lock as the tool's, so the agent's own `watch` of that sha is the same key, one
   row; the result's `additionalContext` tells the agent it is watched. Label `<repo> <branch>`.
-  Hardened (0.22.1): `cd /d <dir>`, `pushd`, `git.exe` and drive / UNC paths (`resolvePath` keeps
+  Hardened (0.23.0): `cd /d <dir>`, `pushd`, `git.exe` and drive / UNC paths (`resolvePath` keeps
   `C:` as the root, backslashes read as slashes); a push to a KNOWN public forge of another kind
   than the repo's CI (`forgeMatches`: github.com / gitlab.com / codeberg.org) watches nothing — a
   GitLab-CI repo's GitHub mirror; a self-hosted host could be any forge, so it is trusted. No
@@ -415,7 +415,7 @@ a local plugin.)
   scan folds `$.agent.list()` into the session's own file (`syncAgents`): a running agent not yet
   known gets an entry labelled by its description (no steps), one the list says `completed` /
   `failed` / `killed` is finished; written only when something changed. (`classic.SubagentStart` delivers the
-  reporting rule since 0.22.1; the listing stays the scan's, which also sees agents without the tool.)
+  reporting rule since 0.23.0; the listing stays the scan's, which also sees agents without the tool.)
 - Every background step nobody awaits (timer ticks, the startup lookups) is `detached`: a failure
   or a step outliving its session is dropped, never an unhandled rejection.
 
@@ -444,6 +444,19 @@ line says so; a new title or id is a new task), a removed step stays as it was i
 (`removedHere`) before the fold. The engine has no call to stop a subagent: the whole-agent ✕ is the
 notice ("stop now: report what you have so far and end"). Every ✕ sits at the right of its row,
 which lights on hover like the task rows'.
+
+## The Settings view (0.23.0)
+
+Asked 2026-11-09 (item 9): settings without commands. A `view` atom (`main` | `settings`) — "⚙
+Settings" in the header corner and `/progress settings` open it, "← Back" leaves. Two sections:
+**This session** — the four switches (`setToggle`, `undefined` = reset to default), each labelled
+on/off and default / this session; **Defaults for new sessions** — the plugin's own rows from
+`$.config.list()` (key `progress-panel.<field>`: the engine's label, value and declared options):
+a `choice` row cycles on press (`cycleConfig`), a text row is the pane's `Input`, submitted on
+Enter; both write through `$.config.set` — the same store `/plugin configure` writes, so there is
+no second settings file and no precedence puzzle (a session's switch > the setting > the built-in
+default); a refusal (`{ deny }`) is toasted. The view reads `sessions` and a `configTick` atom
+(bumped after each write) so it redraws at once.
 
 ## Settings: one reader (0.23.0)
 
@@ -519,7 +532,7 @@ Agents section. With `autoStart` off a session does not open the pane by itself.
 `/progress on|off` (also enable/disable, resume/pause), `/progress <feature> on|off`,
 `/progress status`.
 
-## `/progress doctor` (0.22.1)
+## `/progress doctor` (0.23.0)
 
 `/progress doctor` (the `progress` command's argument, case and spaces ignored) answers one line per
 check, ✓ / ✗ / –, each ✗ with its fix beneath (`hooks/doctor.ts`: the classifiers + the format,

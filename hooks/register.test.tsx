@@ -3186,6 +3186,79 @@ test('a watched pipeline that finishes failed is toasted (failures only, the def
   expect(world.toasts.some(x => x.includes('green'))).toBe(false)
 })
 
+test("the Settings view: this session's switches with reset, defaults cycled or typed into the plugin's own config", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  const rows = [
+    {
+      key: 'progress-panel.palette',
+      label: 'Colours',
+      kind: 'choice',
+      value: 'default',
+      options: ['default', 'colorblind', 'none'],
+      provider: { kind: 'plugin' },
+    },
+    {
+      key: 'progress-panel.progressDir',
+      label: 'Progress folder',
+      kind: 'text',
+      value: '',
+      provider: { kind: 'plugin' },
+    },
+    {
+      key: 'theme',
+      label: 'Theme',
+      kind: 'choice',
+      value: 'dark',
+      options: ['dark', 'light'],
+      provider: { kind: 'engine' },
+    },
+  ]
+  const sets: { key: string; value: unknown }[] = []
+  on('config.list', () => ({ value: rows }) as never)
+  on('config.set', (_, e) => {
+    sets.push({ key: e.key, value: e.value })
+    if (e.key === 'progress-panel.progressDir' && e.value === '/forbidden')
+      return { deny: 'not allowed' } as never
+    const row = rows.find(r => r.key === e.key)
+    if (row) row.value = e.value as string
+    return { value: e.value } as never
+  })
+  await start($)
+  await update($, { now: 'n' })
+  const ui = await pane($)
+  await ui.press({ key: 'settings:open' })
+  const shown = (await ui.findAll({ type: 'Button' })).map(b => b.text ?? '')
+  expect(shown).toContain('reporting: on (default)')
+  expect(shown).toContain('Colours: default')
+  // Only this plugin's rows.
+  expect(shown.some(x => x.startsWith('Theme'))).toBe(false)
+  // A switch of this session: changed, then reset to its default.
+  await ui.press({ key: 'setting:session:pipelines' })
+  expect((await ui.find({ type: 'Button', key: 'setting:session:pipelines' }))?.text).toBe(
+    'pipelines: off (this session)',
+  )
+  await ui.press({ key: 'setting:reset:pipelines' })
+  expect((await ui.find({ type: 'Button', key: 'setting:session:pipelines' }))?.text).toBe(
+    'pipelines: on (default)',
+  )
+  // A choice cycles through its options, wrapping round.
+  await ui.press({ key: 'setting:progress-panel.palette' })
+  await ui.press({ key: 'setting:progress-panel.palette' })
+  await ui.press({ key: 'setting:progress-panel.palette' })
+  expect(sets.map(x => x.value)).toEqual(['colorblind', 'none', 'default'])
+  // A text field: typed and submitted; a refusal is shown.
+  await ui.input({ key: 'setting:input:progress-panel.progressDir', text: '~/status', kind: 'submit' })
+  expect(sets.at(-1)).toEqual({ key: 'progress-panel.progressDir', value: '~/status' })
+  await ui.input({ key: 'setting:input:progress-panel.progressDir', text: '/forbidden', kind: 'submit' })
+  expect(world.toasts).toContain('Setting not changed: not allowed')
+  await ui.press({ key: 'settings:back' })
+  expect(await ui.find({ type: 'Button', key: 'settings:back' })).toBeUndefined()
+  await ui.unmount()
+  // /progress settings opens it too.
+  expect(await cmd($, 'settings')).toContain('Settings opened')
+})
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)
