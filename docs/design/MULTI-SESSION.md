@@ -94,6 +94,10 @@ per session, `<session-id>.json`, written only whole:
   (`kill -0`, `tasklist`); gone → `endedAt` = its last `updatedAt` (its owner is gone, so the
   one-writer rule holds). A false "dead" heals itself: the owner's next write clears `endedAt`
   (`withProcess`). Can't tell → nothing changes. `/progress doctor` shows the recorded pid.
+  Proven live on macOS (2026-11-09): a real session's file carries its `claude` pid and host; a
+  headless session (stream-json input held open) reported, was killed with `kill -9` (no
+  `session.end`), and — its file aged past `DEAD_AFTER_MS` — another live session's pane checked the
+  real pid and ended it as of its last write within one scan.
 
 ## Writing: the `progress_update` tool
 
