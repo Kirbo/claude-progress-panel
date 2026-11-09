@@ -7,21 +7,29 @@ workflow:
 
 stages: [test, release]
 
-.mise:
-  # Debian with curl, git and the shared libraries mise's Node needs (libatomic); pinned by digest.
-  # (The jdxcode/mise image has no shell; buildpack-deps:bookworm-curl has no libatomic.)
-  image: node:26.13.0-bookworm@sha256:a546d3f8acd2af4382668a7e6acd3bc4418e6a27478373e3246f8162f5181509
+# What every OS's job shares: mise's version and the locked toolchain it installs.
+.mise-vars:
   variables:
     MISE_VERSION: v2026.11.2
-    # sha256 of mise-$MISE_VERSION-linux-x64 from the release's SHASUMS256.txt — update both together.
+    # sha256 of each OS's mise-$MISE_VERSION asset from the release's SHASUMS256.txt — update all
+    # three with the version.
     MISE_SHA256: 62cad463c1413f05398ca339168a8f655120b6f0b0b8adce3bc6758bafaf0602
+    MISE_SHA256_MACOS_ARM64: 90684d13d9125cf207c45b19dbdbf19baf8d5d0e3e10109f236b1b4d027416c0
+    MISE_SHA256_WINDOWS_X64: 07a552fd755664057bc58cd4fabb8a9fedde77d6b68fcbc81b23714ac0ca034a
     MISE_LOCKED: "1"
     MISE_YES: "1"
     MISE_DATA_DIR: $CI_PROJECT_DIR/.mise-cache
   cache:
     key:
+      prefix: $CI_JOB_NAME
       files: [mise.lock]
     paths: [.mise-cache/]
+
+.mise:
+  extends: .mise-vars
+  # Debian with curl, git and the shared libraries mise's Node needs (libatomic); pinned by digest.
+  # (The jdxcode/mise image has no shell; buildpack-deps:bookworm-curl has no libatomic.)
+  image: node:26.13.0-bookworm@sha256:a546d3f8acd2af4382668a7e6acd3bc4418e6a27478373e3246f8162f5181509
   before_script:
     - curl -fsSL -o /usr/local/bin/mise "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-x64"
     - echo "${MISE_SHA256}  /usr/local/bin/mise" | sha256sum -c -
@@ -40,13 +48,52 @@ check:
     - mise exec -- node --test scripts/
     - mise exec -- node scripts/check-audits.mjs
 
+# The plugin runs wherever Claude Code does: its tests run on macOS and Windows too (GitLab's hosted
+# runners). Lint stays on Linux — formatting does not depend on the OS.
+check:macos:
+  extends: .mise-vars
+  stage: test
+  tags: [saas-macos-medium-m1]
+  image: macos-15-xcode-16
+  before_script:
+    - mkdir -p "$CI_PROJECT_DIR/.mise-bin"
+    - curl -fsSL -o "$CI_PROJECT_DIR/.mise-bin/mise" "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-macos-arm64"
+    - echo "${MISE_SHA256_MACOS_ARM64}  $CI_PROJECT_DIR/.mise-bin/mise" | shasum -a 256 -c -
+    - chmod +x "$CI_PROJECT_DIR/.mise-bin/mise"
+    - export PATH="$CI_PROJECT_DIR/.mise-bin:$PATH"
+    - mise trust --yes .
+    - mise install
+  script:
+    - mise exec -- claude --version
+    - mise exec -- claude plugin validate .
+    - mise exec -- claude plugin test .
+    - mise exec -- node --test scripts/
+
+check:windows:
+  extends: .mise-vars
+  stage: test
+  tags: [saas-windows-medium-amd64]
+  before_script:
+    - $ErrorActionPreference = 'Stop'
+    - Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/jdx/mise/releases/download/$env:MISE_VERSION/mise-$env:MISE_VERSION-windows-x64.zip" -OutFile mise.zip
+    - if ((Get-FileHash mise.zip -Algorithm SHA256).Hash.ToLower() -ne $env:MISE_SHA256_WINDOWS_X64) { throw 'mise checksum mismatch' }
+    - Expand-Archive mise.zip -DestinationPath "$env:CI_PROJECT_DIR\.mise-bin"
+    - $env:PATH = "$env:CI_PROJECT_DIR\.mise-bin\mise\bin;$env:PATH"
+    - mise trust --yes .
+    - mise install
+  script:
+    - mise exec -- claude --version
+    - mise exec -- claude plugin validate .
+    - mise exec -- claude plugin test .
+    - mise exec -- node --test scripts/
+
 # Every plugin version without a Release yet gets one on main — tag `v<version>` at the commit that
 # first carried it, notes = git-cliff over the commits since the version before (scripts/release.mjs,
 # cliff.toml). The job token creates them; nothing else is needed.
 release:
   extends: .mise
   stage: release
-  needs: [check]
+  needs: [check, "check:macos", "check:windows"]
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   variables:
