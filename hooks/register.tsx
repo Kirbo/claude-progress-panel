@@ -2674,24 +2674,23 @@ export const register: Register = (on, options) => {
     // marks) and `reserved` after it (the right column). A cut title shows whole when unfolded.
     const wouldCut = (text: string, used: number, reserved: number) =>
       displayWidth(text) > e.props.bodyColumns - used - reserved
-    // A line with nothing on its right (a Now line, a Needs-you item): cut with "…" when it would not
-    // fit, and then a fold — ▸ opens the whole text beneath it.
+    // A line with nothing on its right (a Now line, a Needs-you item). Fits → the text, no fold.
+    // Too long → a fold: folded, ONE line cut with "…" (inside a shrinkable row, so the cut holds
+    // instead of the line wrapping); unfolded, the same header line shows the whole text wrapped —
+    // once, never repeated beneath it.
     const cutLine = (key: string, text: string, style: { bold?: boolean; color?: string }) => {
       if (!wouldCut(text, INDENT * 2, 0)) return <Text {...style}>{text}</Text>
       const foldKey = `full:${key}`
       const isOpen = folded[foldKey] ?? false
       return (
-        <Box key={`fullbox:${key}`} flexDirection="column">
-          <Button key={foldKey} label={text} plain onPress={() => void toggle($, foldKey, isOpen)}>
-            <Text {...style} wrap="truncate-end">
-              {`${isOpen ? '▾' : '▸'} ${text}`}
-            </Text>
-          </Button>
-          {isOpen ? (
-            <Box paddingLeft={INDENT}>
-              <Text dimColor>{text}</Text>
-            </Box>
-          ) : null}
+        <Box key={`fullbox:${key}`} flexDirection="row">
+          {leftSide(
+            <Button key={foldKey} label={text} plain onPress={() => void toggle($, foldKey, isOpen)}>
+              <Text {...style} {...(isOpen ? {} : { wrap: 'truncate-end' as const })}>
+                {`${isOpen ? '▾' : '▸'} ${text}`}
+              </Text>
+            </Button>,
+          )}
         </Box>
       )
     }
@@ -3262,13 +3261,16 @@ export const register: Register = (on, options) => {
                 plain
                 onPress={() => void toggle($, key, isOpen)}
               >
-                <Text wrap="truncate-end">
+                {/* Folded: one line cut with "…"; open: the whole title wraps here — shown once. */}
+                <Text {...(isOpen ? {} : { wrap: 'truncate-end' as const })}>
                   {filteringNow
                     ? t('pane.foldGlyph', { fold: isOpen ? '▾' : '▸' })
                     : t('pane.taskFold', { fold: isOpen ? '▾' : '▸', title: task.title })}
                 </Text>
               </Button>,
-              filteringNow ? <Text wrap="truncate-end">{hl(task.title)}</Text> : null,
+              filteringNow ? (
+                <Text {...(isOpen ? {} : { wrap: 'truncate-end' as const })}>{hl(task.title)}</Text>
+              ) : null,
             )}
             <Box flexDirection="row" flexShrink={0}>
               {steps.total > 0 ? (
@@ -3289,8 +3291,6 @@ export const register: Register = (on, options) => {
           {unconfirmedLine}
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT * 2}>
-              {/* A title the row cut with "…": whole here, wrapped. */}
-              {long ? <Text>{hl(task.title)}</Text> : null}
               {task.detail ? <Text dimColor>{hl(task.detail)}</Text> : null}
               {(task.steps ?? [])
                 // A step a pane removed hides at once, before its session folds the removal in.

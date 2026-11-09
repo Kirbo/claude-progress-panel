@@ -4085,9 +4085,12 @@ test('a long title is cut with an ellipsis and its right column stays put; unfol
   for (const width of [40, 60, 80]) {
     const ui = await pane($, width)
     const all = await ui.findAll({ type: 'Text' })
-    // The title truncates instead of wrapping: its Text says so…
-    const title = all.find(x => (x.text ?? '').includes('progress-panel: skipped'))
+    // A folded title truncates instead of wrapping: its Text says so… (t1 is `doing` with steps,
+    // so it starts open and its title wraps whole — shown once.)
+    const title = all.find(x => (x.text ?? '').includes('(no steps)'))
     expect(title?.props.wrap, `width ${width}`).toBe('truncate-end')
+    const openTitle = all.filter(x => (x.text ?? '').includes(long) && !(x.text ?? '').includes('(no steps)'))
+    expect(openTitle, `width ${width}`).toHaveLength(1)
     // …and its row keeps the bar and n/m in a column that does not shrink.
     const rows = await ui.findAll({ type: 'Box' })
     const row = rows.find(b => b.props.key === 'row:task:s-me:t1')
@@ -4097,11 +4100,15 @@ test('a long title is cut with an ellipsis and its right column stays put; unfol
     expect((await texts(ui)).some(l => l.endsWith('1/2'))).toBe(true)
     await ui.unmount()
   }
-  // A long one-line task folds, so its whole title is one press away.
+  // A long one-line task folds, so its whole title is one press away — and then shown ONCE.
   const ui = await pane($, 40)
   expect(await ui.find({ type: 'Button', key: 'task:s-me:t3' })).toBeDefined()
+  const occurrences = async () => (await texts(ui)).filter(l => l.includes(`${long} (no steps)`)).length
+  expect(await occurrences()).toBe(1)
   await ui.press({ key: 'task:s-me:t3' })
-  expect(await texts(ui)).toContain(`${long} (no steps)`)
+  expect(await occurrences()).toBe(1)
+  const open = (await ui.findAll({ type: 'Text' })).find(x => (x.text ?? '').includes(`${long} (no steps)`))
+  expect(open?.props.wrap).toBeUndefined()
   // A short one stays one plain line.
   expect(await ui.find({ type: 'Button', key: 'task:s-me:t2' })).toBeUndefined()
   await ui.unmount()
@@ -4118,8 +4125,16 @@ test('a Now line too long for the pane is cut and folds open to its whole text',
     String(b.props.key ?? '').startsWith('full:now:'),
   )
   expect(key).toBeDefined()
+  const line = `app · ${now}`
+  const shown = async () => (await ui.findAll({ type: 'Text' })).filter(x => (x.text ?? '').includes(line))
+  // Folded: one line, cut with "…" in a shrinkable row.
+  expect((await shown()).map(x => x.props.wrap)).toEqual(['truncate-end'])
   await ui.press({ key: String(key?.props.key) })
-  expect(await texts(ui)).toContain(`app · ${now}`)
+  // Unfolded: the whole text exactly once — the header wraps, nothing repeats beneath it.
+  const open = await shown()
+  expect(open).toHaveLength(1)
+  expect(open[0]?.props.wrap).toBeUndefined()
+  expect(open[0]?.text).toBe(`▾ ${line}`)
   await ui.unmount()
   // Wide enough: a plain line, no fold.
   const wide = await pane($, 200)
