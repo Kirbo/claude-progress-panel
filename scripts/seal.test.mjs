@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { classify, findIdentity, loadConfig, main, ruleFor, seal, unseal } from './seal.mjs'
 
 const cfg = {
@@ -19,7 +20,9 @@ test('ruleFor seals everything under docs/audits except the public half', () => 
 })
 
 test('the committed .sealed.json loads', () => {
-  assert.equal(loadConfig(new URL('..', import.meta.url).pathname).rules[0].root, 'docs/audits')
+  // fileURLToPath, never `.pathname`: on Windows a file URL's pathname is `/C:/…`, which resolve()
+  // turns into `C:\\C:\\…` (Windows CI, 2026-11-09).
+  assert.equal(loadConfig(fileURLToPath(new URL('..', import.meta.url))).rules[0].root, 'docs/audits')
 })
 
 // A fake cipher keeps the round trip free of any key material.
