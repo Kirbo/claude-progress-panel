@@ -48,6 +48,7 @@ import {
   mergeSidecar,
   needsLivenessCheck,
   newSession,
+  ownBackground,
   parseSessionFile,
   parseSidecar,
   pickedUp,
@@ -234,6 +235,19 @@ let settings: Settings = readSettings({})
 // prompt or main-loop tool call.
 let sessionToggles: Toggles | undefined
 const pendingNotes: string[] = []
+
+// Each subagent's own background tasks: the ids its Bash calls' results named (`backgroundTaskId`).
+// A SubagentStop lists the whole session's background work without owners; only these are its.
+const agentBackground = new Map<string, Set<string>>()
+
+function noteAgentBackground(e: unknown): void {
+  const call = e as { agent_id?: unknown; tool_response?: { backgroundTaskId?: unknown } }
+  const task = call.tool_response?.backgroundTaskId
+  if (typeof call.agent_id !== 'string' || !call.agent_id || typeof task !== 'string' || !task) return
+  const set = agentBackground.get(call.agent_id) ?? new Set<string>()
+  set.add(task)
+  agentBackground.set(call.agent_id, set)
+}
 
 // A task never stays in a state that is no longer true (0.23.2). When this turn began (the person's
 // prompt), the last list the end-of-turn check stopped on (the same list never stops a turn twice),
@@ -2482,9 +2496,14 @@ export const register: Register = (on, options) => {
       const at = await nowIso($)
       await exclusive(async () => {
         const own = await ownFile($, dir)
-        // Still running background work: it waits (and resumes on its own) — not finished.
-        const background = (e as { background_tasks?: unknown }).background_tasks
-        const waiting = Array.isArray(background) && background.length > 0
+        // Still running background work OF ITS OWN: it waits (and resumes on its own). The event lists
+        // the whole session's background work with no owner — the coordinator's watchers among it —
+        // so only tasks this agent's own calls started count; anything else is not its, and it ended.
+        const background = ownBackground(
+          (e as { background_tasks?: unknown }).background_tasks,
+          agentBackground.get(id) ?? new Set(),
+        )
+        const waiting = background.length > 0
         const ended = endAgent(own, id, at, waiting, waiting ? waitingOnFrom(background) : undefined)
         if (ended !== own) await save($, dir, ended)
         if (waiting) return
@@ -2500,6 +2519,7 @@ export const register: Register = (on, options) => {
   }).catch(() => undefined)
   // A subagent's first call instead carries the reporting rule it never got (`withSubagentRule`).
   on('classic.PostToolUse', async ($, e, next) => {
+    noteAgentBackground(e)
     await permissionAnswered($, options, e)
     const pushNotes: string[] = []
     const pushed = isOn(options, 'pipelines')
@@ -3490,7 +3510,7 @@ export const register: Register = (on, options) => {
                 {/* A label the row cut with "…": whole here, wrapped. */}
                 {wouldCut(a.label, INDENT * 3 + 2, AGENT_RIGHT_COLS) ? <Text>{a.label}</Text> : null}
                 {a.waiting && a.endedAt === null ? (
-                  <Text dimColor>
+                  <Text dimColor wrap="truncate-end">
                     {a.waitingOn ? t('pane.waitingOn', { what: a.waitingOn }) : t('pane.waitingOnUnknown')}
                   </Text>
                 ) : null}

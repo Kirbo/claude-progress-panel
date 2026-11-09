@@ -8,6 +8,7 @@ import {
   cancelDeeper,
   cancelTasks,
   capNewest,
+  commandHead,
   DEAD_AFTER_MS,
   dismissAgents,
   dismissTasks,
@@ -26,6 +27,7 @@ import {
   mergeSidecar,
   needsLivenessCheck,
   newSession,
+  ownBackground,
   parseSessionFile,
   parseSidecar,
   pruneDone,
@@ -932,4 +934,18 @@ test('the end-of-turn list: `doing` only, untouched since the turn began and for
   expect(
     applyUpdate(marked, { tasks: [{ id: 'd', status: 'done' }] }, at(22)).file.tasks[0]?.unconfirmed,
   ).toBeUndefined()
+})
+
+test("a stop's background list is the session's: only tasks the agent's own calls started are its", () => {
+  const list = [{ id: 'a', command: 'x' }, { id: 'b', command: 'y' }, 'loose']
+  expect(ownBackground(list, new Set(['b']))).toEqual([{ id: 'b', command: 'y' }])
+  expect(ownBackground(list, new Set())).toEqual([])
+  expect(ownBackground(undefined, new Set(['b']))).toEqual([])
+})
+
+test("what an agent waits on is one short name: the description's first line, else the command's first words", () => {
+  expect(commandHead('cd /w && FOO=1 cargo nextest run --workspace')).toBe('cargo nextest')
+  expect(commandHead('P=KirboDev%2Fx; for i in $(seq 1 3); do\n glab api x\ndone')).toBe('for i')
+  expect(waitingOnFrom([{ description: 'line one\nline two' }])).toBe('line one')
+  expect(waitingOnFrom([{ description: '', command: 'export X=1; pnpm test --run' }])).toBe('pnpm test')
 })

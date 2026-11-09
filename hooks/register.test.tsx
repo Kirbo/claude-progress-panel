@@ -3530,11 +3530,49 @@ test('a subagent that stopped and was resumed is running again; one that only st
     agent_id: 'sub-z',
   } as never)
   expect(entry('sub-z')?.endedAt).toBeNull()
-  // A stop with background work still running: waiting, not finished.
-  await stop('sub-z', { background_tasks: [{ id: 'b1', status: 'running' }] })
-  expect(entry('sub-z')).toMatchObject({ endedAt: null, waiting: true })
+  // The session's OTHER background work (the coordinator's watchers) listed at its stop: not its —
+  // the agent ended, never "waiting" on someone else's commands.
+  const watcher = {
+    id: 'coord-1',
+    type: 'shell',
+    status: 'running',
+    description: '',
+    command: 'P=KirboDev%2Fx; for i in $(seq 1 120); do\n  glab api x\ndone',
+  }
+  await stop('sub-z', { background_tasks: [watcher] })
+  expect(entry('sub-z')?.endedAt).not.toBeNull()
+  expect(entry('sub-z')?.waiting).toBeUndefined()
+  // Its OWN backgrounded command (its Bash call's result named the task): a stop waits on it.
+  await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: { command: 'cargo nextest run', run_in_background: true },
+    tool_response: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'own-1' },
+    tool_use_id: 'z2',
+    agent_id: 'sub-z',
+  } as never)
+  await stop('sub-z', {
+    background_tasks: [
+      watcher,
+      {
+        id: 'own-1',
+        type: 'shell',
+        status: 'running',
+        description: '',
+        command: 'cd /w && FOO=1 cargo nextest run --workspace',
+      },
+    ],
+  })
+  expect(entry('sub-z')).toMatchObject({ endedAt: null, waiting: true, waitingOn: 'cargo nextest' })
   const ui = await pane($)
-  expect((await texts(ui)).some(x => x.includes('waiting on background work'))).toBe(true)
+  const lines = await texts(ui)
+  expect(lines.some(x => x.includes('waiting on background work'))).toBe(true)
+  // One short line: never the coordinator's command, never a whole script.
+  const waitLine = lines.find(x => x.startsWith('waiting on:'))
+  expect(waitLine).toBe('waiting on: cargo nextest (background)')
+  expect(lines.some(x => x.includes('glab api') || x.includes('seq 1 120'))).toBe(false)
+  expect((await ui.find({ type: 'Text', text: 'waiting on: cargo nextest (background)' }))?.props.wrap).toBe(
+    'truncate-end',
+  )
   await ui.unmount()
 })
 

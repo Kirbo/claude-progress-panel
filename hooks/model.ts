@@ -643,18 +643,56 @@ function withoutWaiting(a: AgentEntry): AgentEntry {
  *  commands), joined; undefined when the event names nothing. */
 export function waitingOnFrom(background: unknown): string | undefined {
   if (!Array.isArray(background)) return undefined
+  // One short name per task: its description, else the command's first words — never a whole
+  // command (a multi-line script made one row a screenful, 2026-11-09). The pane cuts the line to its
+  // width with "…".
   const names = background
     .map(b => {
-      if (typeof b === 'string') return b
+      if (typeof b === 'string') return firstLine(b)
       if (b && typeof b === 'object') {
         const o = b as Record<string, unknown>
-        for (const k of ['description', 'command', 'name', 'id'])
-          if (typeof o[k] === 'string' && (o[k] as string).trim()) return (o[k] as string).trim()
+        if (typeof o.description === 'string' && o.description.trim()) return firstLine(o.description)
+        if (typeof o.command === 'string' && o.command.trim()) return commandHead(o.command)
+        for (const k of ['name', 'id'])
+          if (typeof o[k] === 'string' && (o[k] as string).trim()) return firstLine(o[k] as string)
       }
       return ''
     })
     .filter(Boolean)
   return names.length ? names.join(', ') : undefined
+}
+
+function firstLine(text: string): string {
+  return (text.trim().split(/\r?\n/)[0] ?? '').trim()
+}
+
+/** A shell command's first words: its program and first argument, past any `VAR=…` assignments,
+ *  `cd …&&` and `;`-chained setup — enough to say what it is ("cargo nextest", "glab ci"). */
+export function commandHead(command: string): string {
+  const parts = firstLine(command)
+    .split(/&&|;|\|\|/)
+    .map(p => p.trim())
+    .filter(Boolean)
+  // Setup is `cd …`, `export …`, `set …`, `source …` / `. …`, or only VAR=value assignments.
+  const isSetup = (p: string) =>
+    /^(cd|export|set|source|\.)(\s|$)/.test(p) || /^([A-Za-z_][A-Za-z0-9_]*=\S*\s*)+$/.test(p)
+  const main = parts.find(p => !isSetup(p)) ?? parts[0] ?? ''
+  const words = main.split(/\s+/).filter(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w))
+  return words.slice(0, 2).join(' ')
+}
+
+/** The background tasks a stopping subagent left running that are ITS OWN: the event lists the whole
+ *  session's, with no owner (its BackgroundTaskSummary has none), so only the ids its own tool calls
+ *  started count (`owned`, from their results' `backgroundTaskId`). */
+export function ownBackground(background: unknown, owned: ReadonlySet<string>): unknown[] {
+  if (!Array.isArray(background) || owned.size === 0) return []
+  return background.filter(
+    b =>
+      b &&
+      typeof b === 'object' &&
+      typeof (b as { id?: unknown }).id === 'string' &&
+      owned.has((b as { id: string }).id),
+  )
 }
 
 /** The agent stopped for good: ended, not waiting, and every step it left open (`todo`, `doing`,
