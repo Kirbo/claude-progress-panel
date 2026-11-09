@@ -57,6 +57,12 @@ test('the rule leaves out the bullets of what is off', () => {
   expect(lean).toContain('rule.needs')
   for (const gone of ['rule.plan', 'rule.steps', 'rule.push', 'rule.subagent'] as const)
     expect(lean).not.toContain(gone)
+  // The reporting effort: milestones swaps the step-by-step bullets for one; minimal keeps now only.
+  const on = { reporting: true, tasks: true, agents: true, pipelines: true }
+  expect(ruleKeys(on, 'milestones')).toContain('rule.milestones')
+  expect(ruleKeys(on, 'milestones')).not.toContain('rule.move')
+  expect(ruleKeys(on, 'minimal')).toContain('rule.nowOnly')
+  expect(ruleKeys(on, 'minimal')).not.toContain('rule.plan')
 })
 
 test('a change hands the agent one note; turning reporting on hands the rule instead', () => {

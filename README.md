@@ -197,6 +197,22 @@ folded "Finished" row.
 | `pipelinesDefault`      | on, off                                 | on                     |
 | `autoNeedsPermission`   | on, off                                 | on                     |
 | `autoNeedsIdle`         | on, off                                 | on                     |
+| `toastNeedsYou`         | on, off                                 | on                     |
+| `bell`                  | on, off (also notify via the terminal)  | off                    |
+| `pipelineNotify`        | never, failures, always                 | failures               |
+| `paneScope`             | all, repo, session                      | all                    |
+| `autoOpen`              | auto, never                             | auto                   |
+| `doneShown`             | 5, 10, 20, 50                           | 10                     |
+| `agentsShown`           | 3, 5, 10, 20                            | 5                      |
+| `successFoldHours`      | 0.5, 1, 3, 12, 24                       | 1                      |
+| `clock`                 | 24h, 12h, system                        | 24h                    |
+| `reportingEffort`       | detailed, milestones, minimal           | detailed               |
+| `pipelineRefreshSec`    | 10, 15, 30, 60                          | 15                     |
+| `updateCheck`           | on, off                                 | on                     |
+| `palette`               | default, colorblind, none               | default                |
+
+`autoOpen` has no "always": Claude Code itself places a pane the plugin opens unasked only from
+~144 columns, and a plugin cannot force it narrower.
 
 Change them with `/plugin configure progress-panel@claude-progress-panel` (or
 `claude plugin configure …`, or `--config KEY=VALUE` at install).

@@ -20,14 +20,12 @@ import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
 import { t, tn } from './i18n'
 import type { Dismissal, SessionFile, SidecarFile, SortBy, Task, UpdateInput } from './model'
 import {
-  AGENTS_SHOWN,
   addDismissals,
   applyAgentUpdate,
   applyUpdate,
   cancelDeeper,
   cancelTasks,
   capNewest,
-  DONE_SHOWN,
   endAgent,
   endDeadSession,
   formatClock,
@@ -80,6 +78,7 @@ import {
   visiblePipelines,
 } from './pipelines'
 import { ciProvider, parsePushes, pushedRef, resolvePath } from './push'
+import { notifiesFinish, readSettings, type Settings, tint } from './settings'
 import {
   active,
   changeNote,
@@ -113,7 +112,6 @@ const PIPELINE_POLL_MS = 15_000
 // killed without ending), any pane polls it instead, writing to that session's sidecar.
 const ORPHAN_AFTER_MS = 4 * PIPELINE_POLL_MS
 // A pipeline that succeeded longer ago than this moves into the folded "Finished" list.
-const ARCHIVE_AFTER_MS = 3_600_000
 // Similar-run estimates are cached in the plugin's store this long, per project + ref + source.
 const ESTIMATE_TTL_MS = 24 * 3_600_000
 const FINISHED_KEY = 'pipelines-finished'
@@ -178,6 +176,16 @@ let sessionTitle: string | undefined
 let ruleComposed = false
 let ruleSent = false
 
+// The subagent rule at each reporting effort.
+const SUBAGENT_RULE = {
+  detailed: 'prompt.subagent',
+  milestones: 'prompt.subagentMilestones',
+  minimal: 'prompt.subagentMinimal',
+} as const
+
+// The plugin's settings, read as the module loads (a changed setting reloads it).
+let settings: Settings = readSettings({})
+
 // This session's own feature switches (its file's `toggles`, read at start and kept in step with
 // every change), and the one-line notes a change owes the agent — handed over once, with the next
 // prompt or main-loop tool call.
@@ -196,7 +204,7 @@ function isOn(options: PluginOptions, feature: Feature): boolean {
 
 /** The reporting rule for what is on in this session. */
 function ruleText(options: PluginOptions): string {
-  return ruleKeys(switches(options))
+  return ruleKeys(switches(options), settings.effort)
     .map(k => t(k))
     .join('\n')
 }
@@ -595,7 +603,8 @@ async function checkRelease($: EngineInterface): Promise<void> {
   const cached = (await $.store.get(RELEASE_KEY)) as Cached | undefined
   const known =
     cached && typeof cached.version === 'string' ? { version: cached.version, url: cached.url } : null
-  if (await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')) return update($, releasing, () => known)
+  if (!settings.updateCheck || (await $.env.get('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC')))
+    return update($, releasing, () => known)
   const nowMs = await $.clock.now()
   if (cached && nowMs - cached.checkedAtMs < RELEASE_CHECK_MS) return update($, releasing, () => known)
   const url = latestReleaseUrl((await ownManifest($)).repository)
@@ -640,8 +649,10 @@ async function announce($: EngineInterface, all: Loaded, me: string): Promise<vo
   await $.ui.status(needs.length > 0 ? t('status.needsYou', { count: needs.length }) : undefined)
   if (seenNeeds) {
     for (const n of needs) {
-      if (!seenNeeds.has(n.key) && !n.key.startsWith(`${me}\u0000`)) {
-        await $.ui.toast(t('toast.needsYou', { project: n.project, item: n.item }))
+      if (!seenNeeds.has(n.key) && !n.key.startsWith(`${me}\u0000`) && settings.toastNeedsYou) {
+        const text = t('toast.needsYou', { project: n.project, item: n.item })
+        await $.ui.toast(text)
+        if (settings.bell) await $.ui.notify(text, { title: t('pane.title') }).catch(() => undefined)
       }
     }
   }
@@ -1168,6 +1179,20 @@ async function pollPipelines($: EngineInterface, options: PluginOptions): Promis
   // file as it is by then (a task, a watch or an unwatch sent meanwhile stays).
   const fresh: Pipeline[] = []
   for (const p of unfinished) fresh.push(await refreshPipeline($, options, p, at))
+  // A pipeline that finished in this round: a toast (and the person's own notification) by setting.
+  for (const p of fresh) {
+    const before = unfinished.find(u => u.key === p.key)
+    if (
+      !before ||
+      isFinished(before.state) ||
+      !isFinished(p.state) ||
+      !notifiesFinish(settings.pipelineNotify, p.state)
+    )
+      continue
+    const text = t('toast.pipelineFinished', { label: p.label ?? p.key, state: p.state })
+    await $.ui.toast(text)
+    if (settings.bell) await $.ui.notify(text, { title: t('pane.title') }).catch(() => undefined)
+  }
   // A watched commit that never got a pipeline (the 10-minute hint): its repo runs no CI on that
   // forge — remembered, so its next pushes are not watched for nothing.
   const none = fresh.filter(p => p.id === null && p.error === noneYet(p))
@@ -1277,7 +1302,7 @@ function feedAgentPrompt(
 ): string | undefined {
   if (!isOn(options, 'agents') || e.subagent_type === 'fork') return undefined
   if (typeof e.prompt !== 'string') return undefined
-  const rule = t('prompt.subagent')
+  const rule = t(SUBAGENT_RULE[settings.effort])
   if (e.prompt.includes(rule)) return undefined
   if (typeof e.description === 'string' && e.description) promptFed.add(e.description)
   return `${e.prompt}\n\n${rule}`
@@ -1308,7 +1333,10 @@ async function withSubagentRule<R extends { additionalContext?: string[] }>(
   if (own === 'nowhere') return result
   const entry = own?.agents?.find(a => a.id === agentId)
   if (entry && (entry.now || entry.tasks.length > 0)) return result
-  return { ...result, additionalContext: [...(result.additionalContext ?? []), t('prompt.subagent')] }
+  return {
+    ...result,
+    additionalContext: [...(result.additionalContext ?? []), t(SUBAGENT_RULE[settings.effort])],
+  }
 }
 
 // A `git push` the agent ran (main loop or subagent) watches the pipeline it starts, without the
@@ -1864,6 +1892,7 @@ function orderSessions(all: Loaded, me: string): SessionFile[] {
 }
 
 export const register: Register = (on, options) => {
+  settings = readSettings(options as Record<string, unknown>)
   on('session.start', async ($, e, next) => {
     ownProcess = await whoAmI($)
     await $.command.register({ name: 'progress', description: t('command.description') })
@@ -1884,12 +1913,12 @@ export const register: Register = (on, options) => {
       })
     await scan($, options)
     $.clock.every(REFRESH_MS, () => detached(tick($, options)))
-    $.clock.every(PIPELINE_POLL_MS, () => detached(pollAll($, options)))
+    $.clock.every(settings.pipelineRefreshMs, () => detached(pollAll($, options)))
     detached(ownManifest($))
     detached(checkRelease($))
     $.clock.every(3_600_000, () => detached(checkRelease($)))
     // A dormant session (autoStart off and not switched on) does not open the pane by itself.
-    if (isOn(options, 'reporting')) void $.ui.open(paneArgs(options))
+    if (isOn(options, 'reporting') && settings.autoOpen !== 'never') void $.ui.open(paneArgs(options))
     return next(e)
   })
 
@@ -2095,7 +2124,16 @@ export const register: Register = (on, options) => {
     }
     const release = await read($, releasing)
     const version = (await ownManifest($)).version
-    const ordered = orderSessions(all, me)
+    // The sessions this pane lists (a setting): all, the ones in this session's repo, or this one.
+    const myProject =
+      all[me]?.file.session.project ??
+      baseName((await $.session.repo().catch(() => null))?.root ?? (await $.session.cwd()))
+    const ordered = orderSessions(all, me).filter(
+      f =>
+        settings.paneScope === 'all' ||
+        f.session.id === me ||
+        (settings.paneScope === 'repo' && f.session.project === myProject),
+    )
     const live = ordered.filter(f => f.session.endedAt === null)
     const needs = liveNeeds(all)
     const newest = [...ordered].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
@@ -2118,7 +2156,7 @@ export const register: Register = (on, options) => {
     // Successes older than an hour step aside into the folded "Finished" list.
     const isArchived = (p: Pipeline) => {
       const ended = Date.parse(p.pipelineFinishedAt ?? p.finishedAt ?? '')
-      return p.state === 'success' && !Number.isNaN(ended) && ended < nowMs - ARCHIVE_AFTER_MS
+      return p.state === 'success' && !Number.isNaN(ended) && ended < nowMs - settings.successFoldMs
     }
     const currentRows = pipelineRows.filter(r => !isArchived(r.pipeline))
     const archivedRows = pipelineRows.filter(r => isArchived(r.pipeline))
@@ -2181,7 +2219,7 @@ export const register: Register = (on, options) => {
         })(pipelineDuration(p, nowMs)),
         // When it finished, like a done task's time: GitLab's own, else when this pane saw it end.
         ended: ((at: string | undefined) => {
-          const when = finished && at ? formatTime(at, nowMs) : ''
+          const when = finished && at ? formatTime(at, nowMs, settings.clock) : ''
           return when ? t('pipe.ended', { when }) : ''
         })(p.pipelineFinishedAt ?? p.finishedAt),
       })
@@ -2199,7 +2237,9 @@ export const register: Register = (on, options) => {
           >
             <Button key={key} label={label} plain onPress={() => void toggle($, foldKey, isOpen)}>
               {finished ? null : (
-                <Text color={PIPE_STATE_COLOR[p.state] ?? 'cyan'}>{PIPE_LIVE_MARK[p.state] ?? '● '}</Text>
+                <Text color={tint(settings.palette, PIPE_STATE_COLOR[p.state] ?? 'cyan')}>
+                  {PIPE_LIVE_MARK[p.state] ?? '● '}
+                </Text>
               )}
               <Text bold={!finished} dimColor={finished}>
                 {label}
@@ -2213,7 +2253,7 @@ export const register: Register = (on, options) => {
                 onPress={() => void toggle($, foldKey, isOpen)}
               >
                 <Text
-                  color={PIPE_STATE_COLOR[p.state]}
+                  color={tint(settings.palette, PIPE_STATE_COLOR[p.state])}
                   bold={!finished || p.state === 'failed'}
                   dimColor={p.state === 'canceled' || p.state === 'skipped'}
                 >
@@ -2237,14 +2277,16 @@ export const register: Register = (on, options) => {
             </Box>
           </Box>
           <Box flexDirection="column" paddingLeft={INDENT * 2}>
-            {p.error && shownError(p.error) ? <Text color="red">{shownError(p.error)}</Text> : null}
+            {p.error && shownError(p.error) ? (
+              <Text color={tint(settings.palette, 'red')}>{shownError(p.error)}</Text>
+            ) : null}
             {/* A success folds to its one header line; anything else keeps its counts line. */}
             {counts.total > 0 && (isOpen || p.state !== 'success') ? (
               <Text>
                 {countParts.flatMap((state, i) => [
                   i > 0 ? <Text dimColor>{' · '}</Text> : null,
                   <Text
-                    color={counts[state] > 0 ? COUNT_COLOR[state] : undefined}
+                    color={tint(settings.palette, counts[state] > 0 ? COUNT_COLOR[state] : undefined)}
                     dimColor={counts[state] === 0}
                   >
                     {t(`pipe.count.${state}`, { n: counts[state] })}
@@ -2276,7 +2318,7 @@ export const register: Register = (on, options) => {
                                 ? formatEstimate(est)
                                 : ''
                         const line = (
-                          <Text color={jm.color} hover={{ underline: true }}>
+                          <Text color={tint(settings.palette, jm.color)} hover={{ underline: true }}>
                             {t(duration ? 'pipe.jobTimed' : 'pipe.job', {
                               glyph: jm.sign,
                               name: duration ? j.name.padEnd(width) : j.name,
@@ -2331,7 +2373,7 @@ export const register: Register = (on, options) => {
         return (
           <Box flexDirection="column">
             <Box flexDirection="row" justifyContent="space-between" gap={2}>
-              <Text color={mark.color} bold>
+              <Text color={tint(settings.palette, mark.color)} bold>
                 {`${mark.sign} `}
                 {hl(task.title)}
               </Text>
@@ -2359,7 +2401,7 @@ export const register: Register = (on, options) => {
             hover={ROW_HOVER}
           >
             <Box flexDirection="row" gap={1}>
-              <Text color={mark.color} bold>
+              <Text color={tint(settings.palette, mark.color)} bold>
                 {mark.sign}
               </Text>
               {/* A Button label cannot be styled: while filtering, the title moves beside the fold
@@ -2410,7 +2452,7 @@ export const register: Register = (on, options) => {
                       gap={2}
                       hover={ROW_HOVER}
                     >
-                      <Text color={m.color}>
+                      <Text color={tint(settings.palette, m.color)}>
                         {`${m.sign} `}
                         {hl(step.title)}
                       </Text>
@@ -2438,7 +2480,7 @@ export const register: Register = (on, options) => {
           {hlTitle(
             t(task.status === 'done' ? 'pane.doneItem' : 'pane.skippedItem', {
               title: task.title,
-              when: formatTime(task.doneAt ?? task.updatedAt, nowMs),
+              when: formatTime(task.doneAt ?? task.updatedAt, nowMs, settings.clock),
             }),
             task.title,
           )}
@@ -2532,7 +2574,7 @@ export const register: Register = (on, options) => {
                           gap={2}
                           hover={ROW_HOVER}
                         >
-                          <Text color={m.color}>{`${m.sign} ${step.title}`}</Text>
+                          <Text color={tint(settings.palette, m.color)}>{`${m.sign} ${step.title}`}</Text>
                           {isClosed(step.status) ? null : (
                             <Button
                               key={`cancel:${id}:${stepKey}`}
@@ -2582,7 +2624,7 @@ export const register: Register = (on, options) => {
       const isOpen = folded[key] ?? false
       const olderKey = `agentsolder:${id}`
       const isOlderOpen = folded[olderKey] ?? false
-      const capped = capNewest(finished, AGENTS_SHOWN, a => a.endedAt ?? a.updatedAt)
+      const capped = capNewest(finished, settings.agentsShown, a => a.endedAt ?? a.updatedAt)
       const listed = isOlderOpen ? finished : capped.shown
       return (
         <Box flexDirection="column">
@@ -2599,7 +2641,7 @@ export const register: Register = (on, options) => {
                 <Text dimColor>
                   {t('pane.agentFinished', {
                     label: a.label,
-                    when: formatTime(a.endedAt ?? a.updatedAt, nowMs),
+                    when: formatTime(a.endedAt ?? a.updatedAt, nowMs, settings.clock),
                   })}
                 </Text>
               ))}
@@ -2645,10 +2687,10 @@ export const register: Register = (on, options) => {
         ),
         file.session.project,
       )
-      // An open Done lists the newest DONE_SHOWN; the rest fold behind "N older" (capNewest).
+      // An open Done lists the newest `doneShown` (a setting); the rest fold behind "N older" (capNewest).
       const doneOlderKey = `doneolder:${id}`
       const isDoneOlderOpen = folded[doneOlderKey] ?? false
-      const doneCapped = capNewest(done, DONE_SHOWN, x => x.doneAt ?? x.updatedAt)
+      const doneCapped = capNewest(done, settings.doneShown, x => x.doneAt ?? x.updatedAt)
       const doneListed = isDoneOlderOpen ? done : doneCapped.shown
       const doneRepos = groupByRepo(doneListed, file.session.project)
       const finishedCount = (file.agents ?? []).filter(a => a.endedAt !== null).length
@@ -2661,7 +2703,7 @@ export const register: Register = (on, options) => {
         t(ended === null ? 'pane.groupLive' : 'pane.groupEnded', {
           fold: isOpen ? '▾' : '▸',
           name,
-          when: formatTime(ended ?? file.updatedAt, nowMs),
+          when: formatTime(ended ?? file.updatedAt, nowMs, settings.clock),
           open: open.length,
           done: done.length,
         }) + (ended === null && !sw.reporting ? t('pane.paused') : '')
@@ -2795,18 +2837,22 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" gap={2}>
           <Text dimColor>
-            {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs), project: sessionName(newest) })} · `}
+            {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs, settings.clock), project: sessionName(newest) })} · `}
             {nowMs - lastCheck > STALE_AFTER_MS ? (
-              <Text color="yellow">{t('pane.checkedStale', { when: formatClock(lastCheck) })}</Text>
+              <Text color={tint(settings.palette, 'yellow')}>
+                {t('pane.checkedStale', { when: formatClock(lastCheck, settings.clock) })}
+              </Text>
             ) : (
-              t('pane.checked', { when: formatClock(lastCheck) })
+              t('pane.checked', { when: formatClock(lastCheck, settings.clock) })
             )}
           </Text>
           {/* The corner: this copy's version, and a newer release with a link to its notes. */}
           <Box flexDirection="row" gap={1}>
             {release && version && isNewer(release.version, version) ? (
               <Box flexDirection="row">
-                <Text color="yellow">{t('pane.newerVersion', { version: release.version })}</Text>
+                <Text color={tint(settings.palette, 'yellow')}>
+                  {t('pane.newerVersion', { version: release.version })}
+                </Text>
                 {openLink(release.url)}
               </Box>
             ) : null}
@@ -2815,12 +2861,12 @@ export const register: Register = (on, options) => {
         </Box>
         {needs.length > 0 ? (
           <Box flexDirection="column" marginTop={1}>
-            <Text bold inverse color="magenta">
+            <Text bold inverse color={tint(settings.palette, 'magenta')}>
               {t('pane.needsYou', { count: needs.length })}
             </Text>
             <Box flexDirection="column" paddingLeft={INDENT}>
               {needs.map(n => (
-                <Text bold color="magenta">
+                <Text bold color={tint(settings.palette, 'magenta')}>
                   {t('pane.needsYouItem', { project: n.project, item: n.item })}
                 </Text>
               ))}
@@ -2850,7 +2896,10 @@ export const register: Register = (on, options) => {
             >
               <Text>{t('pane.pipelinesTitle', sectionParts)}</Text>
               {/* What is running now stands out, even with the section folded. */}
-              <Text color={sectionParts.watching > 0 ? 'yellow' : undefined} bold={sectionParts.watching > 0}>
+              <Text
+                color={tint(settings.palette, sectionParts.watching > 0 ? 'yellow' : undefined)}
+                bold={sectionParts.watching > 0}
+              >
                 {t('pane.pipelinesWatching', sectionParts)}
               </Text>
               <Text>{t('pane.pipelinesTally', sectionParts)}</Text>

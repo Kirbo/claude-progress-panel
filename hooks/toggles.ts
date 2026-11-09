@@ -79,11 +79,17 @@ export function parseProgressCommand(args: string | undefined): ProgressCommand 
   return { kind: 'unknown' }
 }
 
-/** The reporting rule for what is on: the bullets of the features that are off are left out. */
-export function ruleKeys(eff: Effective): MessageKey[] {
+/** The reporting rule for what is on, at a reporting effort: the bullets of the features that are
+ *  off are left out; `milestones` asks only for the plan and its turning points, `minimal` only for
+ *  `now` and what needs the person. */
+export function ruleKeys(
+  eff: Effective,
+  effort: 'detailed' | 'milestones' | 'minimal' = 'detailed',
+): MessageKey[] {
   const keys: MessageKey[] = ['rule.title', 'rule.intro']
-  if (eff.tasks) keys.push('rule.plan', 'rule.repo', 'rule.steps', 'rule.move')
-  else keys.push('rule.nowOnly')
+  if (!eff.tasks || effort === 'minimal') keys.push('rule.nowOnly')
+  else if (effort === 'milestones') keys.push('rule.milestones', 'rule.repo')
+  else keys.push('rule.plan', 'rule.repo', 'rule.steps', 'rule.move')
   keys.push('rule.needs')
   if (eff.pipelines) keys.push('rule.push')
   keys.push('rule.oneReply')

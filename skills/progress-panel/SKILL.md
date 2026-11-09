@@ -90,6 +90,12 @@ it"; a subagent is told about its own). Do not do it, and do not send it again: 
 skipped whatever a later report says — only a new title or id is a new task. A cancelled subagent
 reports what it has and ends.
 
+## Reporting effort
+
+The person may have set a lower reporting effort: the rule you were given says which — **milestones**
+(the plan, each task done or blocked, Needs you; no step-by-step updates) or **minimal** (only
+`now` and `needsYou`). Follow the rule as given; it wins over the routine below.
+
 ## Estimates
 
 Every estimate you report — a subagent's `eta`, a step's `~N min` note — is YOUR OWN wall-clock

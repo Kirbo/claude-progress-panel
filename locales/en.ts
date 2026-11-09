@@ -161,8 +161,10 @@ export const en = {
   'rule.oneReply': '- A question answered in one reply needs no entry.',
   'rule.subagent':
     "- A subagent reports too, under its coordinator's session (never as the session's tasks): every few steps — and when its plan changes — call progress_update with `now`, its steps as `tasks` (statuses moving; each open step's `note` its own estimate, e.g. ~10 min) and `eta` (minutes it expects the rest to take). Its coordinator sees them in its own progress_update answers and in the pane. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
+  'rule.milestones':
+    '- Report at the milestones only, to keep your calls few: your plan when multi-step work starts (`now` + the task list, in order), each task as it is done (with a one-line outcome) or blocked (with why), and `now` when what you are on changes. No step-by-step updates.',
   'rule.nowOnly':
-    '- This session keeps no task list in the pane (tasks are off): report only `now` (what you are doing, kept true) and `needsYou`; send no `tasks`, `order` or `remove`.',
+    '- Keep no task list in the pane (tasks are off, or the reporting effort is minimal): report only `now` (what you are doing, kept true) and `needsYou`; send no `tasks`, `order` or `remove`.',
   'toggle.feature.reporting': 'reporting',
   'toggle.feature.tasks': 'tasks',
   'toggle.feature.agents': 'agents',
@@ -207,6 +209,11 @@ export const en = {
   'tool.pipelinesOff': 'Pipelines are off for this session: `watch` was ignored.',
   'prompt.subagent':
     "Progress pane: you are a subagent, and your coordinator's session shows you in the Progress pane. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta` (minutes left); then again every few steps and when your plan changes. It lands under your coordinator's session, never as its tasks. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
+  'prompt.subagentMilestones':
+    "Progress pane: you are a subagent, shown under your coordinator's session. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` and `eta` (minutes left); then only when a step is done or blocked. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
+  'prompt.subagentMinimal':
+    "Progress pane: you are a subagent, shown under your coordinator's session. Unless your job is done in about three tool calls, call mcp__progress-panel__progress_update with `now` (what you are doing) when you start and when that changes — nothing more.",
+  'toast.pipelineFinished': 'Pipeline {label} {state}',
   'prompt.nudge':
     'Progress pane: this session has not reported yet. If this request takes more than one step, your first tool call is mcp__progress-panel__progress_update with `now` and the task list (progress-panel skill); a question answered in one reply needs none.',
   'tool.description':

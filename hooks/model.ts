@@ -590,19 +590,40 @@ export function parseSessionFile(text: string): SessionFile | undefined {
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
-/** Local `HH:MM:SS` of a time in milliseconds. */
-export function formatClock(ms: number): string {
+/** How times read: 24-hour, 12-hour, or as the system's locale says. */
+export type ClockStyle = '24h' | '12h' | 'system'
+
+// Whether the system's locale reads time in 12 hours (Intl), else 24.
+function systemIs12h(): boolean {
+  try {
+    return new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hour12 === true
+  } catch {
+    return false
+  }
+}
+
+function hourOf(d: Date, clock: ClockStyle): { h: string; suffix: string } {
+  const twelve = clock === '12h' || (clock === 'system' && systemIs12h())
+  if (!twelve) return { h: pad(d.getHours()), suffix: '' }
+  const h = d.getHours() % 12 || 12
+  return { h: String(h), suffix: d.getHours() < 12 ? ' am' : ' pm' }
+}
+
+/** Local `HH:MM:SS` (or `h:MM:SS pm`) of a time in milliseconds. */
+export function formatClock(ms: number, clock: ClockStyle = '24h'): string {
   const d = new Date(ms)
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  const { h, suffix } = hourOf(d, clock)
+  return `${h}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${suffix}`
 }
 
 /** Local `HH:MM` for today, `YYYY-MM-DD HH:MM` otherwise; '' for an unreadable time. */
-export function formatTime(iso: string, nowMs: number): string {
+export function formatTime(iso: string, nowMs: number, clock: ClockStyle = '24h'): string {
   const ms = Date.parse(iso)
   if (Number.isNaN(ms)) return ''
   const d = new Date(ms)
   const now = new Date(nowMs)
-  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  const { h, suffix } = hourOf(d, clock)
+  const hm = `${h}:${pad(d.getMinutes())}${suffix}`
   const sameDay =
     d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate()
   return sameDay ? hm : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`

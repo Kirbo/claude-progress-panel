@@ -3127,6 +3127,65 @@ test('a task removed in a pane stays skipped when the agent upserts it again by 
   expect(read(disk, `${DIR}/s-me.json`).tasks[0]?.status).toBe('skipped')
 })
 
+test(
+  "paneScope repo: the pane lists only the sessions in this session's repo",
+  { options: { paneScope: 'repo' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    engine(on, disk)
+    put(disk, `${DIR}/s-same.json`, other('s-same', 'app', T0, { now: 'same repo' }))
+    put(disk, `${DIR}/s-else.json`, other('s-else', 'elsewhere', T0, { now: 'other repo' }))
+    await start($)
+    await update($, { now: 'mine' })
+    const ui = await pane($)
+    const shown = (await texts(ui)).join('\n')
+    expect(shown).toContain('same repo')
+    expect(shown).not.toContain('other repo')
+    await ui.unmount()
+  },
+)
+
+test('a watched pipeline that finishes failed is toasted (failures only, the default); a success is not', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk, { remote: 'git@gitlab.com:team/app.git' })
+  await start($)
+  world.gitlab.set('projects/team%2Fapp/pipelines/41', {
+    id: 41,
+    status: 'running',
+    ref: 'main',
+    web_url: 'u',
+  })
+  world.gitlab.set('projects/team%2Fapp/pipelines/41/jobs?per_page=100', [])
+  world.gitlab.set('projects/team%2Fapp/pipelines/42', {
+    id: 42,
+    status: 'running',
+    ref: 'main',
+    web_url: 'u',
+  })
+  world.gitlab.set('projects/team%2Fapp/pipelines/42/jobs?per_page=100', [])
+  await update($, {
+    watch: [
+      { project: 'team/app', pipeline: 41, label: 'red' },
+      { project: 'team/app', pipeline: 42, label: 'green' },
+    ],
+  })
+  world.gitlab.set('projects/team%2Fapp/pipelines/41', {
+    id: 41,
+    status: 'failed',
+    ref: 'main',
+    web_url: 'u',
+  })
+  world.gitlab.set('projects/team%2Fapp/pipelines/42', {
+    id: 42,
+    status: 'success',
+    ref: 'main',
+    web_url: 'u',
+  })
+  await world.clock.advance(15_100)
+  expect(world.toasts).toContain('Pipeline red failed')
+  expect(world.toasts.some(x => x.includes('green'))).toBe(false)
+})
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)

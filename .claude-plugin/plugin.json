@@ -111,6 +111,110 @@
       "options": ["on", "off"],
       "default": "on",
       "required": false
+    },
+    "toastNeedsYou": {
+      "type": "string",
+      "title": "Toast other sessions' asks",
+      "description": "on: a new Needs-you ask of another session is toasted.",
+      "options": ["on", "off"],
+      "default": "on",
+      "required": false
+    },
+    "bell": {
+      "type": "string",
+      "title": "Also notify through the terminal",
+      "description": "on: a toast is also sent through your terminal's notification channel (its bell or banner — Claude Code's preferredNotifChannel).",
+      "options": ["on", "off"],
+      "default": "off",
+      "required": false
+    },
+    "pipelineNotify": {
+      "type": "string",
+      "title": "A watched pipeline finishing",
+      "description": "Toast it never, only when it failed, or always.",
+      "options": ["never", "failures", "always"],
+      "default": "failures",
+      "required": false
+    },
+    "paneScope": {
+      "type": "string",
+      "title": "Sessions the pane lists",
+      "description": "all; only the sessions in this session's repo; or this session only.",
+      "options": ["all", "repo", "session"],
+      "default": "all",
+      "required": false
+    },
+    "autoOpen": {
+      "type": "string",
+      "title": "Open the pane by itself",
+      "description": "auto: a session opens it (Claude Code shows it from ~144 columns); never: only /progress or the pane's command opens it.",
+      "options": ["auto", "never"],
+      "default": "auto",
+      "required": false
+    },
+    "doneShown": {
+      "type": "string",
+      "title": "Finished tasks shown",
+      "description": "How many finished tasks an open Done lists before folding the rest behind 'N older'.",
+      "options": ["5", "10", "20", "50"],
+      "default": "10",
+      "required": false
+    },
+    "agentsShown": {
+      "type": "string",
+      "title": "Finished agents shown",
+      "description": "How many finished subagents an open Done lists before 'N older'.",
+      "options": ["3", "5", "10", "20"],
+      "default": "5",
+      "required": false
+    },
+    "successFoldHours": {
+      "type": "string",
+      "title": "Fold successful pipelines after (hours)",
+      "description": "A successful pipeline older than this moves into the folded 'Finished' row.",
+      "options": ["0.5", "1", "3", "12", "24"],
+      "default": "1",
+      "required": false
+    },
+    "clock": {
+      "type": "string",
+      "title": "Clock",
+      "description": "How times read: 24-hour, 12-hour, or as your system's locale says.",
+      "options": ["24h", "12h", "system"],
+      "default": "24h",
+      "required": false
+    },
+    "reportingEffort": {
+      "type": "string",
+      "title": "Reporting effort",
+      "description": "detailed: every step (today's rule); milestones: the plan, each task done or blocked, Needs you — fewer calls; minimal: only what it is doing and Needs you. Subagents follow it too.",
+      "options": ["detailed", "milestones", "minimal"],
+      "default": "detailed",
+      "required": false
+    },
+    "pipelineRefreshSec": {
+      "type": "string",
+      "title": "Pipeline refresh (seconds)",
+      "description": "How often watched pipelines are asked after (through your own glab / gh / tea).",
+      "options": ["10", "15", "30", "60"],
+      "default": "15",
+      "required": false
+    },
+    "updateCheck": {
+      "type": "string",
+      "title": "Check for a newer release",
+      "description": "on: the pane looks for a newer release at most every 6 h (CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC turns it off regardless).",
+      "options": ["on", "off"],
+      "default": "on",
+      "required": false
+    },
+    "palette": {
+      "type": "string",
+      "title": "Colours",
+      "description": "default; colour-blind safe (blue for success, orange for failure); or no colour.",
+      "options": ["default", "colorblind", "none"],
+      "default": "default",
+      "required": false
     }
   }
 }

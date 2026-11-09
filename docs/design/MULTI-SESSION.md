@@ -445,6 +445,22 @@ line says so; a new title or id is a new task), a removed step stays as it was i
 notice ("stop now: report what you have so far and end"). Every ✕ sits at the right of its row,
 which lights on hover like the task rows'.
 
+## Settings: one reader (0.23.0)
+
+Asked 2026-11-09 (item 8). Every option is read once per module load by `readSettings`
+(`hooks/settings.ts`, each with its built-in default; a value outside its options falls back) into
+`settings` — the one place a value and its default live (the switches' defaults stay
+`defaultsFrom`'s). Their effects: `toastNeedsYou` + `bell` (`$.ui.notify`, the person's own
+channel) on Needs-you toasts; `pipelineNotify` (never / failures / always) on a watched pipeline
+that finishes in a poll round (`notifiesFinish`); `paneScope` filters the listed sessions (this one
+always stays); `autoOpen` never = no open at start (`always` is not offered: the engine seats an
+unasked pane only from ~144 columns); `doneShown` / `agentsShown` / `successFoldHours` replace the
+old constants; `clock` (`formatClock` / `formatTime`: 24h default, 12h, or the locale's via Intl);
+`reportingEffort` picks the rule's bullets (`ruleKeys(eff, effort)`: `rule.milestones`, or
+`rule.nowOnly` for minimal) and the subagent rule (`prompt.subagent*`); `pipelineRefreshSec` the
+poll timer; `updateCheck` the release lookup (the env var still wins); `palette` passes every
+drawn colour through `tint` (Okabe–Ito blue / orange for colour-blind safe, or none).
+
 ## Claude Code's waits as Needs you (0.23.0)
 
 Asked 2026-11-09 (item 13). `classic.Notification` (`notification_type` `permission_prompt` /
