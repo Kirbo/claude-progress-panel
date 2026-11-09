@@ -8,6 +8,7 @@ import {
   capNewest,
   DEAD_AFTER_MS,
   dismissTasks,
+  displayWidth,
   endAgent,
   endDeadSession,
   formatClock,
@@ -650,4 +651,13 @@ test('an agent that stops for good leaves its open steps unfinished; a pause or 
     iso(T0 + 4000),
   )
   expect(synced.agents?.[0]?.tasks[0]?.status).toBe('unfinished')
+})
+
+test('displayWidth counts terminal cells: wide CJK and emoji 2, marks and joiners 0', () => {
+  expect(displayWidth('abc')).toBe(3)
+  expect(displayWidth('日本')).toBe(4)
+  expect(displayWidth('ok ✅')).toBe(5)
+  expect(displayWidth('é')).toBe(1) // e + combining acute
+  expect(displayWidth('👩‍💻')).toBe(4) // two pictographs, the joiner counts 0
+  expect(displayWidth('')).toBe(0)
 })

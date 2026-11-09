@@ -29,6 +29,7 @@ import {
   cancelTasks,
   capNewest,
   crossLinks,
+  displayWidth,
   dropReplacedAutoTasks,
   endAgent,
   endDeadSession,
@@ -268,6 +269,10 @@ const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> =
 // One indent step (columns) per level: section → item → details → jobs. Rows with an action (✕,
 // Clear all) are full-width, the label left and the action on the pane's right edge.
 const INDENT = 2
+// Cells a task row keeps on its right (`██████░░ 12/14  ✕`): what a title is measured against.
+const TASK_RIGHT_COLS = 18
+// …and an agent row's (`██░░ 12/14 · 1h 2m · ~3 min left  ✕`).
+const AGENT_RIGHT_COLS = 36
 const COUNT_ORDER: JobState[] = ['running', 'queued', 'skipped', 'success', 'failed', 'canceled', 'manual']
 const COUNT_COLOR: Partial<Record<JobState, string>> = { running: 'yellow', success: 'green', failed: 'red' }
 // A pipeline's own state on its row: a live one in the running / queued colour behind its mark and
@@ -2380,6 +2385,44 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text, Button, Input, Link } = $.ui.resolve(e)
+    // A row keeps its right-hand parts (bar, counts, time, ✕, ↗) in a fixed column: the left side
+    // shrinks and its text is cut with "…" at the room left — the engine measures display width
+    // (wide characters count 2) and lays it out again on every resize.
+    const leftSide = (...nodes: unknown[]) => (
+      <Box flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0} gap={1}>
+        {nodes}
+      </Box>
+    )
+    const rightSide = (...nodes: unknown[]) => (
+      <Box flexDirection="row" flexShrink={0} gap={1}>
+        {nodes}
+      </Box>
+    )
+    // Whether `text` would be cut: wider than the pane's body less `used` cells before it (indents,
+    // marks) and `reserved` after it (the right column). A cut title shows whole when unfolded.
+    const wouldCut = (text: string, used: number, reserved: number) =>
+      displayWidth(text) > e.props.bodyColumns - used - reserved
+    // A line with nothing on its right (a Now line, a Needs-you item): cut with "…" when it would not
+    // fit, and then a fold — ▸ opens the whole text beneath it.
+    const cutLine = (key: string, text: string, style: { bold?: boolean; color?: string }) => {
+      if (!wouldCut(text, INDENT * 2, 0)) return <Text {...style}>{text}</Text>
+      const foldKey = `full:${key}`
+      const isOpen = folded[foldKey] ?? false
+      return (
+        <Box key={`fullbox:${key}`} flexDirection="column">
+          <Button key={foldKey} label={text} plain onPress={() => void toggle($, foldKey, isOpen)}>
+            <Text {...style} wrap="truncate-end">
+              {`${isOpen ? '▾' : '▸'} ${text}`}
+            </Text>
+          </Button>
+          {isOpen ? (
+            <Box paddingLeft={INDENT}>
+              <Text dimColor>{text}</Text>
+            </Box>
+          ) : null}
+        </Box>
+      )
+    }
     if ((await read($, viewing)) === 'settings') {
       // Settings: this session's switches, and the defaults for new sessions — the plugin's own
       // userConfig rows as the engine lists them (their labels, values and options), written back
@@ -2603,17 +2646,19 @@ export const register: Register = (on, options) => {
             gap={2}
             hover={ROW_HOVER}
           >
-            <Button key={key} label={label} plain onPress={() => void toggle($, foldKey, isOpen)}>
-              {finished ? null : (
-                <Text color={tint(settings.palette, PIPE_STATE_COLOR[p.state] ?? 'cyan')}>
-                  {PIPE_LIVE_MARK[p.state] ?? '● '}
+            {leftSide(
+              <Button key={key} label={label} plain onPress={() => void toggle($, foldKey, isOpen)}>
+                {finished ? null : (
+                  <Text color={tint(settings.palette, PIPE_STATE_COLOR[p.state] ?? 'cyan')}>
+                    {PIPE_LIVE_MARK[p.state] ?? '● '}
+                  </Text>
+                )}
+                <Text bold={!finished} dimColor={finished} wrap="truncate-end">
+                  {label}
                 </Text>
-              )}
-              <Text bold={!finished} dimColor={finished}>
-                {label}
-              </Text>
-            </Button>
-            <Box flexDirection="row">
+              </Button>,
+            )}
+            <Box flexDirection="row" flexShrink={0}>
               <Button
                 key={`pipestate:${key}`}
                 label={status}
@@ -2703,7 +2748,11 @@ export const register: Register = (on, options) => {
                                 ? formatEstimate(est)
                                 : ''
                         const line = (
-                          <Text color={tint(settings.palette, jm.color)} hover={{ underline: true }}>
+                          <Text
+                            color={tint(settings.palette, jm.color)}
+                            hover={{ underline: true }}
+                            wrap="truncate-end"
+                          >
                             {t(duration ? 'pipe.jobTimed' : 'pipe.job', {
                               glyph: jm.sign,
                               name: duration ? j.name.padEnd(width) : j.name,
@@ -2721,8 +2770,8 @@ export const register: Register = (on, options) => {
                             gap={2}
                             hover={ROW_HOVER}
                           >
-                            {line}
-                            {openLink(j.url)}
+                            {leftSide(line)}
+                            {rightSide(openLink(j.url))}
                           </Box>
                         )
                       })}
@@ -2777,15 +2826,24 @@ export const register: Register = (on, options) => {
           onPress={() => void cancelTask($, options, sessionId, task.id)}
         />
       ) : null
-      if (!task.detail && !task.steps?.length)
+      // A title too long for its line is cut with "…" and the task folds, so it shows whole when open.
+      const long = wouldCut(task.title, INDENT * 3 + 4, TASK_RIGHT_COLS)
+      if (!task.detail && !task.steps?.length && !long)
         return (
           <Box flexDirection="column">
             <Box flexDirection="row" justifyContent="space-between" gap={2}>
-              <Text color={tint(settings.palette, mark.color)} bold={!mark.dim} dimColor={mark.dim}>
-                {`${mark.sign} `}
-                {hl(task.title)}
-              </Text>
-              {remove}
+              {leftSide(
+                <Text
+                  color={tint(settings.palette, mark.color)}
+                  bold={!mark.dim}
+                  dimColor={mark.dim}
+                  wrap="truncate-end"
+                >
+                  {`${mark.sign} `}
+                  {hl(task.title)}
+                </Text>,
+              )}
+              {rightSide(remove)}
             </Box>
             {note}
             {linkLine}
@@ -2809,12 +2867,12 @@ export const register: Register = (on, options) => {
             gap={2}
             hover={ROW_HOVER}
           >
-            <Box flexDirection="row" gap={1}>
+            {leftSide(
               <Text color={tint(settings.palette, mark.color)} bold={!mark.dim} dimColor={mark.dim}>
                 {mark.sign}
-              </Text>
-              {/* A Button label cannot be styled: while filtering, the title moves beside the fold
-                  arrow as text, so its hit can be highlighted. */}
+              </Text>,
+              /* A Button label cannot be styled: while filtering, the title moves beside the fold
+                 arrow as text, so its hit can be highlighted. */
               <Button
                 key={key}
                 label={
@@ -2824,10 +2882,16 @@ export const register: Register = (on, options) => {
                 }
                 plain
                 onPress={() => void toggle($, key, isOpen)}
-              />
-              {filteringNow ? <Text>{hl(task.title)}</Text> : null}
-            </Box>
-            <Box flexDirection="row">
+              >
+                <Text wrap="truncate-end">
+                  {filteringNow
+                    ? t('pane.foldGlyph', { fold: isOpen ? '▾' : '▸' })
+                    : t('pane.taskFold', { fold: isOpen ? '▾' : '▸', title: task.title })}
+                </Text>
+              </Button>,
+              filteringNow ? <Text wrap="truncate-end">{hl(task.title)}</Text> : null,
+            )}
+            <Box flexDirection="row" flexShrink={0}>
               {steps.total > 0 ? (
                 <Text dimColor>
                   {t('pane.taskSteps', {
@@ -2844,6 +2908,8 @@ export const register: Register = (on, options) => {
           {linkLine}
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT * 2}>
+              {/* A title the row cut with "…": whole here, wrapped. */}
+              {long ? <Text>{hl(task.title)}</Text> : null}
               {task.detail ? <Text dimColor>{hl(task.detail)}</Text> : null}
               {(task.steps ?? [])
                 // A step a pane removed hides at once, before its session folds the removal in.
@@ -2864,19 +2930,23 @@ export const register: Register = (on, options) => {
                         gap={2}
                         hover={ROW_HOVER}
                       >
-                        <Text color={tint(settings.palette, m.color)} dimColor={m.dim}>
-                          {`${m.sign} `}
-                          {hl(step.title)}
-                        </Text>
-                        {live && !isClosed(step.status) ? (
-                          <Button
-                            key={`cancel:${sessionId}:${stepKey}`}
-                            label={t('pane.cancel')}
-                            plain
-                            dimColor
-                            onPress={() => void cancelTask($, options, sessionId, stepKey)}
-                          />
-                        ) : null}
+                        {leftSide(
+                          <Text color={tint(settings.palette, m.color)} dimColor={m.dim} wrap="truncate-end">
+                            {`${m.sign} `}
+                            {hl(step.title)}
+                          </Text>,
+                        )}
+                        {rightSide(
+                          live && !isClosed(step.status) ? (
+                            <Button
+                              key={`cancel:${sessionId}:${stepKey}`}
+                              label={t('pane.cancel')}
+                              plain
+                              dimColor
+                              onPress={() => void cancelTask($, options, sessionId, stepKey)}
+                            />
+                          ) : null,
+                        )}
                       </Box>
                       {why ? (
                         <Box paddingLeft={INDENT}>
@@ -2899,32 +2969,37 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" gap={2}>
-            <Text
-              dimColor={task.status !== 'failed'}
-              color={task.status === 'failed' ? tint(settings.palette, 'red') : undefined}
-            >
-              {hlTitle(
-                t(
-                  task.status === 'done'
-                    ? 'pane.doneItem'
-                    : task.status === 'failed'
-                      ? 'pane.failedItem'
-                      : 'pane.skippedItem',
-                  {
-                    title: task.title,
-                    when: formatTime(task.doneAt ?? task.updatedAt, nowMs, settings.clock),
-                  },
-                ),
-                task.title,
-              )}
-            </Text>
-            <Button
-              key={`dismiss:${sessionId}:${task.id}`}
-              label={t('pane.dismiss')}
-              plain
-              dimColor
-              onPress={() => void dismiss($, options, sessionId, [task])}
-            />
+            {leftSide(
+              <Text
+                dimColor={task.status !== 'failed'}
+                color={task.status === 'failed' ? tint(settings.palette, 'red') : undefined}
+                wrap="truncate-end"
+              >
+                {hlTitle(
+                  t(
+                    task.status === 'done'
+                      ? 'pane.doneItem'
+                      : task.status === 'failed'
+                        ? 'pane.failedItem'
+                        : 'pane.skippedItem',
+                    {
+                      title: task.title,
+                      when: formatTime(task.doneAt ?? task.updatedAt, nowMs, settings.clock),
+                    },
+                  ),
+                  task.title,
+                )}
+              </Text>,
+            )}
+            {rightSide(
+              <Button
+                key={`dismiss:${sessionId}:${task.id}`}
+                label={t('pane.dismiss')}
+                plain
+                dimColor
+                onPress={() => void dismiss($, options, sessionId, [task])}
+              />,
+            )}
           </Box>
           {why ? (
             <Box paddingLeft={INDENT}>
@@ -2956,18 +3031,22 @@ export const register: Register = (on, options) => {
                 gap={2}
                 hover={ROW_HOVER}
               >
-                <Text color={tint(settings.palette, m.color)} dimColor={m.dim}>
-                  {`${m.sign} ${step.title}`}
-                </Text>
-                {live && !isClosed(step.status) ? (
-                  <Button
-                    key={`cancel:${id}:${stepKey}`}
-                    label={t('pane.cancel')}
-                    plain
-                    dimColor
-                    onPress={() => void cancelTask($, options, id, stepKey)}
-                  />
-                ) : null}
+                {leftSide(
+                  <Text color={tint(settings.palette, m.color)} dimColor={m.dim} wrap="truncate-end">
+                    {`${m.sign} ${step.title}`}
+                  </Text>,
+                )}
+                {rightSide(
+                  live && !isClosed(step.status) ? (
+                    <Button
+                      key={`cancel:${id}:${stepKey}`}
+                      label={t('pane.cancel')}
+                      plain
+                      dimColor
+                      onPress={() => void cancelTask($, options, id, stepKey)}
+                    />
+                  ) : null,
+                )}
               </Box>
               {why ? (
                 <Box paddingLeft={INDENT}>
@@ -3012,13 +3091,19 @@ export const register: Register = (on, options) => {
               gap={2}
               hover={ROW_HOVER}
             >
-              <Button
-                key={key}
-                label={t('pane.agentFold', { fold: isOpen ? '▾' : '▸', label: a.label })}
-                plain
-                onPress={() => void toggle($, key, isOpen)}
-              />
-              <Box flexDirection="row" gap={1}>
+              {leftSide(
+                <Button
+                  key={key}
+                  label={t('pane.agentFold', { fold: isOpen ? '▾' : '▸', label: a.label })}
+                  plain
+                  onPress={() => void toggle($, key, isOpen)}
+                >
+                  <Text wrap="truncate-end">
+                    {t('pane.agentFold', { fold: isOpen ? '▾' : '▸', label: a.label })}
+                  </Text>
+                </Button>,
+              )}
+              <Box flexDirection="row" flexShrink={0} gap={1}>
                 <Text dimColor>
                   {`${steps}${elapsed}${a.waiting ? t('pane.agentWaiting') : eta}`.replace(/^ · /, '')}
                 </Text>
@@ -3038,6 +3123,8 @@ export const register: Register = (on, options) => {
             </Box>
             {isOpen ? (
               <Box flexDirection="column" paddingLeft={INDENT}>
+                {/* A label the row cut with "…": whole here, wrapped. */}
+                {wouldCut(a.label, INDENT * 3 + 2, AGENT_RIGHT_COLS) ? <Text>{a.label}</Text> : null}
                 {a.now ? <Text dimColor>{a.now}</Text> : null}
                 {(a.queued ?? []).map(q => (
                   <Text dimColor>{t('pane.agentQueued', { text: q })}</Text>
@@ -3178,22 +3265,30 @@ export const register: Register = (on, options) => {
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" gap={2}>
-            <Button
-              key={groupKey}
-              label={label}
-              plain
-              dimColor={ended !== null || !sw.reporting}
-              onPress={() => void toggle($, groupKey, isOpen)}
-            />
-            {ended !== null ? (
+            {leftSide(
               <Button
-                key={`forget:${id}`}
-                label={t('pane.forget')}
+                key={groupKey}
+                label={label}
                 plain
-                dimColor
-                onPress={() => void forgetSession($, options, id)}
-              />
-            ) : null}
+                dimColor={ended !== null || !sw.reporting}
+                onPress={() => void toggle($, groupKey, isOpen)}
+              >
+                <Text wrap="truncate-end" dimColor={ended !== null || !sw.reporting}>
+                  {label}
+                </Text>
+              </Button>,
+            )}
+            {rightSide(
+              ended !== null ? (
+                <Button
+                  key={`forget:${id}`}
+                  label={t('pane.forget')}
+                  plain
+                  dimColor
+                  onPress={() => void forgetSession($, options, id)}
+                />
+              ) : null,
+            )}
           </Box>
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT}>
@@ -3304,18 +3399,20 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" gap={2}>
-          <Text dimColor>
-            {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs, settings.clock), project: sessionName(newest) })} · `}
-            {nowMs - lastCheck > STALE_AFTER_MS ? (
-              <Text color={tint(settings.palette, 'yellow')}>
-                {t('pane.checkedStale', { when: formatClock(lastCheck, settings.clock) })}
-              </Text>
-            ) : (
-              t('pane.checked', { when: formatClock(lastCheck, settings.clock) })
-            )}
-          </Text>
+          <Box flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0}>
+            <Text dimColor wrap="truncate-end">
+              {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs, settings.clock), project: sessionName(newest) })} · `}
+              {nowMs - lastCheck > STALE_AFTER_MS ? (
+                <Text color={tint(settings.palette, 'yellow')}>
+                  {t('pane.checkedStale', { when: formatClock(lastCheck, settings.clock) })}
+                </Text>
+              ) : (
+                t('pane.checked', { when: formatClock(lastCheck, settings.clock) })
+              )}
+            </Text>
+          </Box>
           {/* The corner: this copy's version, and a newer release with a link to its notes. */}
-          <Box flexDirection="row" gap={1}>
+          <Box flexDirection="row" flexShrink={0} gap={1}>
             {release && version && isNewer(release.version, version) ? (
               <Box flexDirection="row">
                 <Text color={tint(settings.palette, 'yellow')}>
@@ -3340,11 +3437,16 @@ export const register: Register = (on, options) => {
               {t('pane.needsYou', { count: needs.length })}
             </Text>
             <Box flexDirection="column" paddingLeft={INDENT}>
-              {needs.map(n => (
-                <Text bold color={tint(settings.palette, 'magenta')}>
-                  {t('pane.needsYouItem', { project: n.project, item: n.item })}
-                </Text>
-              ))}
+              {needs.map(n =>
+                cutLine(
+                  `needs:${n.project}:${n.item}`,
+                  t('pane.needsYouItem', { project: n.project, item: n.item }),
+                  {
+                    bold: true,
+                    color: tint(settings.palette, 'magenta'),
+                  },
+                ),
+              )}
             </Box>
           </Box>
         ) : null}
@@ -3355,9 +3457,13 @@ export const register: Register = (on, options) => {
               {live
                 .filter(f => f.now)
                 .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-                .map(f => (
-                  <Text>{t('pane.nowItem', { project: sessionName(f), now: f.now ?? '' })}</Text>
-                ))}
+                .map(f =>
+                  cutLine(
+                    `now:${f.session.id}`,
+                    t('pane.nowItem', { project: sessionName(f), now: f.now ?? '' }),
+                    {},
+                  ),
+                )}
             </Box>
           </Box>
         ) : null}

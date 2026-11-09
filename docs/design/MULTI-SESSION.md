@@ -626,3 +626,14 @@ rule asks subagents to put each open step's own estimate in its `note` — besid
 (`startedAt` → now) and `~N min left`. The **Agents** section lists only running agents; a finished one
 moves under the session's **Done** into a folded **Agents** heading (Done's count includes them; *Clear
 all* still clears tasks only — agents are never cleaned up automatically).
+
+## Long lines (0.23.0)
+
+Every row with something on its right (task, step, agent, agent step, pipeline, job, Done item,
+session header, the pane's own header) keeps that right part — bar, n/m, time, eta, ✕, ↗ — in a
+column that never shrinks (`flexShrink: 0`), and cuts its text with "…" (`wrap="truncate-end"`)
+at the room left; the engine measures display width and lays it out again on every resize. Nothing
+is lost: a task whose title would be cut folds, and unfolded shows the whole title wrapped beneath;
+an agent's cut label shows whole when open; a Now line or Needs-you item too long for the pane
+folds open to its whole text. `displayWidth` (wide CJK / emoji 2 cells, marks and joiners 0)
+decides whether a text would be cut. Notes, details and reasons beneath a row wrap, never cut.

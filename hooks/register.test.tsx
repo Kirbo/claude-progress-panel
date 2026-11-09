@@ -275,8 +275,8 @@ function other(
   return applyUpdate(newSession({ id, project, cwd: `/w/${project}` }, iso), patch, iso).file
 }
 
-async function pane($: $Test) {
-  return $.ui.mount({ ...PANE, surface: 'terminal' })
+async function pane($: $Test, bodyColumns = 80) {
+  return $.ui.mount({ ...PANE, props: { ...PANE.props, bodyColumns }, surface: 'terminal' })
 }
 
 // A pipeline's line as read across the row: the header button (left), then its status button
@@ -3937,4 +3937,64 @@ test("a push the agent also watches by hand is one row; a subagent's push is wat
   const note = await bash($, 'git push', { agent_id: 'sub-push' })
   expect(keys(disk)).toEqual([`team/app@${sha}`, `team/app@${'e'.repeat(40)}`])
   expect(note).toContain('watched automatically')
+})
+
+test('a long title is cut with an ellipsis and its right column stays put; unfolded, it shows whole', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  const long =
+    'progress-panel: skipped/failed/unfinished shown with their reason; item 4 dead sessions proven live'
+  await update($, {
+    tasks: [
+      { title: long, status: 'doing', steps: [{ title: 'a', status: 'done' }, { title: 'b' }] },
+      { title: 'short', status: 'todo' },
+      { title: `${long} (no steps)`, status: 'todo' },
+    ],
+  })
+  for (const width of [40, 60, 80]) {
+    const ui = await pane($, width)
+    const all = await ui.findAll({ type: 'Text' })
+    // The title truncates instead of wrapping: its Text says so…
+    const title = all.find(x => (x.text ?? '').includes('progress-panel: skipped'))
+    expect(title?.props.wrap, `width ${width}`).toBe('truncate-end')
+    // …and its row keeps the bar and n/m in a column that does not shrink.
+    const rows = await ui.findAll({ type: 'Box' })
+    const row = rows.find(b => b.props.key === 'row:task:s-me:t1')
+    expect(row?.props.justifyContent).toBe('space-between')
+    const sides = rows.filter(b => b.props.flexShrink === 0)
+    expect(sides.length).toBeGreaterThan(0)
+    expect((await texts(ui)).some(l => l.endsWith('1/2'))).toBe(true)
+    await ui.unmount()
+  }
+  // A long one-line task folds, so its whole title is one press away.
+  const ui = await pane($, 40)
+  expect(await ui.find({ type: 'Button', key: 'task:s-me:t3' })).toBeDefined()
+  await ui.press({ key: 'task:s-me:t3' })
+  expect(await texts(ui)).toContain(`${long} (no steps)`)
+  // A short one stays one plain line.
+  expect(await ui.find({ type: 'Button', key: 'task:s-me:t2' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a Now line too long for the pane is cut and folds open to its whole text', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  const now = 'running the full check suite across every platform, then pushing the branch and watching CI'
+  await update($, { now })
+  const ui = await pane($, 40)
+  const key = (await ui.findAll({ type: 'Button' })).find(b =>
+    String(b.props.key ?? '').startsWith('full:now:'),
+  )
+  expect(key).toBeDefined()
+  await ui.press({ key: String(key?.props.key) })
+  expect(await texts(ui)).toContain(`app · ${now}`)
+  await ui.unmount()
+  // Wide enough: a plain line, no fold.
+  const wide = await pane($, 200)
+  expect(
+    (await wide.findAll({ type: 'Button' })).some(b => String(b.props.key ?? '').startsWith('full:now:')),
+  ).toBe(false)
+  await wide.unmount()
 })
