@@ -19,6 +19,10 @@ stages: [test, release]
     MISE_LOCKED: "1"
     MISE_YES: "1"
     MISE_DATA_DIR: $CI_PROJECT_DIR/.mise-cache
+    # Only this repo's mise.toml: a hosted image's own global/system mise config (the macOS one
+    # lists dotnet, go, java, python, ruby, rust) is not in our lockfile and fails a locked install.
+    MISE_GLOBAL_CONFIG_FILE: $CI_PROJECT_DIR/.mise-none.toml
+    MISE_SYSTEM_CONFIG_FILE: $CI_PROJECT_DIR/.mise-none.toml
   cache:
     key:
       prefix: $CI_JOB_NAME
