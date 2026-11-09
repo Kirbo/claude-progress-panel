@@ -67,6 +67,19 @@ import {
   visiblePipelines,
 } from './pipelines'
 import { ciProvider, parsePushes, pushedRef, resolvePath } from './push'
+import {
+  active,
+  changeNote,
+  defaultsFrom,
+  type Effective,
+  effective,
+  FEATURES,
+  type Feature,
+  parseProgressCommand,
+  ruleKeys,
+  type Toggles,
+  withToggle,
+} from './toggles'
 import { isNewer, latestReleaseUrl, parseLatestRelease } from './update'
 
 const PANE = 'progress'
@@ -151,6 +164,33 @@ let sessionTitle: string | undefined
 // on never reaches that agent — which then never reports. The next prompt carries it instead.
 let ruleComposed = false
 let ruleSent = false
+
+// This session's own feature switches (its file's `toggles`, read at start and kept in step with
+// every change), and the one-line notes a change owes the agent — handed over once, with the next
+// prompt or main-loop tool call.
+let sessionToggles: Toggles | undefined
+const pendingNotes: string[] = []
+
+function switches(options: PluginOptions): Effective {
+  return effective(defaultsFrom(options as Record<string, unknown>), sessionToggles)
+}
+
+function isOn(options: PluginOptions, feature: Feature): boolean {
+  return active(switches(options), feature)
+}
+
+/** The reporting rule for what is on in this session. */
+function ruleText(options: PluginOptions): string {
+  return ruleKeys(switches(options))
+    .map(k => t(k))
+    .join('\n')
+}
+
+function withPendingNotes<R extends { additionalContext?: string[] }>(result: R): R {
+  if (pendingNotes.length === 0) return result
+  const notes = pendingNotes.splice(0)
+  return { ...result, additionalContext: [...(result.additionalContext ?? []), ...notes] }
+}
 function exclusive<T>(work: () => Promise<T>): Promise<T> {
   const run = ownChain.then(work, work)
   ownChain = run.catch(() => undefined)
@@ -602,7 +642,7 @@ const LIVENESS_EVERY_MS = 60_000
 async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
-  await syncOwnAgents($, dir)
+  if (isOn(options, 'agents')) await syncOwnAgents($, dir)
   const entries = await $.fs.list(dir).catch(() => undefined)
   // A failed listing keeps what the pane knows; its `checked` stamp then ages into "stale".
   if (!entries) return
@@ -1157,10 +1197,11 @@ async function withReportingNudge<R extends { additionalContext?: string[] }>(
   options: PluginOptions,
   result: R,
 ): Promise<R> {
+  if (!isOn(options, 'reporting')) return result
   const notes: string[] = []
   if (!ruleComposed && !ruleSent) {
     ruleSent = true
-    notes.push(t('prompt.reporting'))
+    notes.push(ruleText(options))
   }
   if (notes.length === 0 && !(await hasReported($, options))) notes.push(t('prompt.nudge'))
   return notes.length
@@ -1200,7 +1241,7 @@ async function withSubagentRule<R extends { additionalContext?: string[] }>(
   agentId: string,
   result: R,
 ): Promise<R> {
-  if (subagentRuleSent.has(agentId)) return result
+  if (subagentRuleSent.has(agentId) || !isOn(options, 'agents')) return result
   subagentRuleSent.add(agentId)
   const own = await readOwnPlain($, options)
   if (own === 'nowhere') return result
@@ -1272,6 +1313,48 @@ async function repoCi(
     },
     optionString(options, 'ciCommand').trim() !== '',
   )
+}
+
+// One of this session's switches set (or, with `undefined`, reset to its default): kept in its own
+// file (a reload or a resume keeps it), and the agent told once — a note for what changed, the whole
+// rule when reporting comes back on.
+async function setToggle(
+  $: EngineInterface,
+  options: PluginOptions,
+  feature: Feature,
+  value: boolean | undefined,
+): Promise<void> {
+  const before = switches(options)
+  sessionToggles = withToggle(sessionToggles, feature, value)
+  const after = switches(options)
+  const dir = await progressDir($, options)
+  if (dir)
+    await exclusive(async () => {
+      const own = await ownFile($, dir)
+      await save($, dir, { ...own, toggles: sessionToggles })
+    })
+  if (before[feature] === after[feature]) return
+  if (feature === 'reporting' && after.reporting) {
+    pendingNotes.push(ruleText(options))
+    ruleSent = true
+  } else if (feature === 'reporting' || after.reporting) {
+    const note = changeNote(feature, after[feature])
+    if (note) pendingNotes.push(t(note))
+  }
+  if (feature === 'reporting' && after.reporting) void $.ui.open(paneArgs(options))
+}
+
+// `/progress status`: each switch for this session, and whether it is its own or the default.
+function toggleStatus(options: PluginOptions): string {
+  const eff = switches(options)
+  const list = FEATURES.map(f =>
+    t('toggle.statusItem', {
+      feature: t(`toggle.feature.${f}`),
+      state: t(eff[f] ? 'toggle.on' : 'toggle.off'),
+      source: t(typeof sessionToggles?.[f] === 'boolean' ? 'toggle.overridden' : 'toggle.default'),
+    }),
+  ).join(', ')
+  return t('toggle.status', { list })
 }
 
 // `/progress doctor`: one line per check, each failed one with its fix. Cheap and read-only: one
@@ -1592,6 +1675,7 @@ export const register: Register = (on, options) => {
     if (dir)
       await exclusive(async () => {
         const own = await ownFile($, dir)
+        sessionToggles = own.toggles
         if (!isBlank(own)) await save($, dir, own)
       })
     await scan($, options)
@@ -1600,7 +1684,8 @@ export const register: Register = (on, options) => {
     detached(ownManifest($))
     detached(checkRelease($))
     $.clock.every(3_600_000, () => detached(checkRelease($)))
-    void $.ui.open(paneArgs(options))
+    // A dormant session (autoStart off and not switched on) does not open the pane by itself.
+    if (isOn(options, 'reporting')) void $.ui.open(paneArgs(options))
     return next(e)
   })
 
@@ -1610,12 +1695,10 @@ export const register: Register = (on, options) => {
   on('prompt.compose', async (_$, e, next) => {
     const composed = await next(e)
     if (!e.tools.includes(TOOL_ID) || e.traits.includes('teammate')) return composed
+    if (!isOn(options, 'reporting')) return composed
     ruleComposed = true
     return {
-      sections: [
-        ...composed.sections,
-        { id: REPORTING_SECTION, text: t('prompt.reporting'), scope: 'session' },
-      ],
+      sections: [...composed.sections, { id: REPORTING_SECTION, text: ruleText(options), scope: 'session' }],
     }
   })
 
@@ -1628,9 +1711,10 @@ export const register: Register = (on, options) => {
     const start = e as { session_title?: unknown; source?: unknown; agent_id?: unknown }
     await noteTitle($, options, start.session_title)
     const result = await next(e)
-    if (start.source !== 'compact' || start.agent_id || ruleComposed) return result
+    if (start.source !== 'compact' || start.agent_id || ruleComposed || !isOn(options, 'reporting'))
+      return result
     ruleSent = true
-    return { ...result, additionalContext: [...(result.additionalContext ?? []), t('prompt.reporting')] }
+    return { ...result, additionalContext: [...(result.additionalContext ?? []), ruleText(options)] }
   })
   // A subagent starts: the subagent part of the rule, once (its tool calls then carry none).
   on('classic.SubagentStart', async ($, e, next) => {
@@ -1640,7 +1724,8 @@ export const register: Register = (on, options) => {
   }).catch(() => undefined) // a failure here never holds a subagent up: the hook counts as absent
   on('classic.UserPromptSubmit', async ($, e, next) => {
     await noteTitle($, options, (e as { session_title?: unknown }).session_title)
-    return withReportingNudge($, options, withRemovalNotice(await next(e)))
+    const result = withPendingNotes(await next(e))
+    return withReportingNudge($, options, isOn(options, 'reporting') ? withRemovalNotice(result) : result)
   })
   // After every main-loop tool call: a task the person removed reaches the agent at its next step
   // (a subagent's calls never take the note — it is the coordinator's).
@@ -1661,11 +1746,15 @@ export const register: Register = (on, options) => {
   })
   // A subagent's first call instead carries the reporting rule it never got (`withSubagentRule`).
   on('classic.PostToolUse', async ($, e, next) => {
-    const pushed = await watchPushes($, options, e).catch(() => [] as string[])
+    const pushed = isOn(options, 'pipelines')
+      ? await watchPushes($, options, e).catch(() => [] as string[])
+      : []
     const result = withPushNote(pushed, await next(e))
     const agentId = (e as { agent_id?: unknown }).agent_id
     if (typeof agentId === 'string' && agentId) return withSubagentRule($, options, agentId, result)
-    return agentId ? result : withRemovalNotice(result)
+    if (agentId) return result
+    const noted = withPendingNotes(result)
+    return isOn(options, 'reporting') ? withRemovalNotice(noted) : noted
   })
 
   on('session.end', async ($, e, next) => {
@@ -1674,8 +1763,19 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'progress' }, async ($, e) => {
-    const verb = (e.args ?? '').trim().split(/\s+/)[0]?.toLowerCase() ?? ''
-    if (verb === 'doctor') return { text: await doctor($, options) }
+    const command = parseProgressCommand(e.args)
+    if (command.kind === 'doctor') return { text: await doctor($, options) }
+    if (command.kind === 'status') return { text: toggleStatus(options) }
+    if (command.kind === 'set') {
+      await setToggle($, options, command.feature, command.on)
+      return {
+        text: t('toggle.set', {
+          feature: t(`toggle.feature.${command.feature}`),
+          state: t(command.on ? 'toggle.on' : 'toggle.off'),
+        }),
+      }
+    }
+    if (command.kind === 'unknown') return { text: t('toggle.usage') }
     await scan($, options)
     await $.ui.open(paneArgs(options))
     return { text: t('command.opened') }
@@ -1685,21 +1785,31 @@ export const register: Register = (on, options) => {
     // One entry per session, kept by its main loop: a subagent's report would mix into it.
     // A subagent's report goes to ITS entry under the session (its steps, what it is on, its
     // estimate) — never the session's own tasks, which its coordinator keeps.
+    if (!isOn(options, 'reporting')) return { result: t('tool.reportingOff') }
     const agentId = (e as { agentId?: unknown }).agentId
-    if (typeof agentId === 'string' && agentId)
+    if (typeof agentId === 'string' && agentId) {
+      if (!isOn(options, 'agents')) return { result: t('tool.agentsOff') }
       return { result: await runAgentUpdate($, options, agentId, e as unknown as ToolInput) }
+    }
     const input = e as unknown as ToolInput
+    // A switched-off part of the call is dropped, and the answer says so.
+    const tasksOn = isOn(options, 'tasks')
+    const pipelinesOn = isOn(options, 'pipelines')
+    const dropped: string[] = []
+    if (!tasksOn && (input.tasks?.length || input.order?.length || input.remove?.length))
+      dropped.push(t('tool.tasksOff'))
+    if (!pipelinesOn && input.watch?.length) dropped.push(t('tool.pipelinesOff'))
     const text = await runUpdate($, options, {
       now: input.now,
       needsYou: input.needsYou,
-      tasks: input.tasks,
-      remove: input.remove,
-      order: input.order,
+      tasks: tasksOn ? input.tasks : undefined,
+      remove: tasksOn ? input.remove : undefined,
+      order: tasksOn ? input.order : undefined,
       eta: input.eta,
-      watch: input.watch,
+      watch: pipelinesOn ? input.watch : undefined,
       unwatch: input.unwatch,
     })
-    return { result: text }
+    return { result: dropped.length ? `${dropped.join('\n')}\n${text}` : text }
   }).catch(() => ({ result: t('tool.failed') }))
 
   // The transcript: a progress_update call is bookkeeping, not work — one quiet line instead of its
@@ -1726,6 +1836,8 @@ export const register: Register = (on, options) => {
     const nowMs = await $.clock.now()
     const by = await sortBy($, options)
     const query = await read($, filtering)
+    const defaults = defaultsFrom(options as Record<string, unknown>)
+    const mine = switches(options)
     const filteringNow = query.trim() !== ''
     // The filter's hits, inverted (readable on dark and light themes); the text as is without a filter.
     const hl = (text: string) =>
@@ -2078,6 +2190,8 @@ export const register: Register = (on, options) => {
     // (status + note — a step's own estimate) beside its progress, run time and estimate; the finished
     // ones in a second section, folded by default.
     const agentsBlock = (file: SessionFile) => {
+      // A session that switched agent reporting off shows no Agents section.
+      if (!effective(defaults, file.toggles).agents) return null
       const agents = file.agents ?? []
       const id = file.session.id
       const running = agents.filter(a => a.endedAt === null)
@@ -2202,10 +2316,11 @@ export const register: Register = (on, options) => {
     const group = (file: SessionFile) => {
       const id = file.session.id
       const ended = file.session.endedAt
-      const shown = visibleTasks(
-        file,
-        all[id]?.sidecar?.entries ?? [],
-        all[id]?.sidecar?.cancelled ?? [],
+      // The session's own switches (its file's, over this pane's defaults): paused = reporting off;
+      // tasks off hides its task list.
+      const sw = effective(defaults, file.toggles)
+      const shown = (
+        sw.tasks ? visibleTasks(file, all[id]?.sidecar?.entries ?? [], all[id]?.sidecar?.cancelled ?? []) : []
       ).filter(x => matchesTask(x, query))
       const open = sortTasks(
         shown.filter(x => !isClosed(x.status)),
@@ -2237,13 +2352,14 @@ export const register: Register = (on, options) => {
       const isOpen = folded[groupKey] ?? ended === null
       const isDoneOpen = folded[doneKey] ?? false
       const name = id === me ? t('pane.thisSession', { project: sessionName(file) }) : sessionName(file)
-      const label = t(ended === null ? 'pane.groupLive' : 'pane.groupEnded', {
-        fold: isOpen ? '▾' : '▸',
-        name,
-        when: formatTime(ended ?? file.updatedAt, nowMs),
-        open: open.length,
-        done: done.length,
-      })
+      const label =
+        t(ended === null ? 'pane.groupLive' : 'pane.groupEnded', {
+          fold: isOpen ? '▾' : '▸',
+          name,
+          when: formatTime(ended ?? file.updatedAt, nowMs),
+          open: open.length,
+          done: done.length,
+        }) + (ended === null && !sw.reporting ? t('pane.paused') : '')
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" gap={2}>
@@ -2251,7 +2367,7 @@ export const register: Register = (on, options) => {
               key={groupKey}
               label={label}
               plain
-              dimColor={ended !== null}
+              dimColor={ended !== null || !sw.reporting}
               onPress={() => void toggle($, groupKey, isOpen)}
             />
             {ended !== null ? (
@@ -2458,6 +2574,19 @@ export const register: Register = (on, options) => {
             ) : null}
           </Box>
         ) : null}
+        {/* This session's switches: always here, also while it is dormant or has reported nothing. */}
+        <Box flexDirection="row" gap={1} marginTop={1} flexWrap="wrap">
+          <Text dimColor>{t('pane.switches')}</Text>
+          {FEATURES.map(f => (
+            <Button
+              key={`switch:${f}`}
+              label={t('pane.switch', { mark: mine[f] ? '●' : '○', feature: t(`toggle.feature.${f}`) })}
+              plain
+              dimColor={!mine[f]}
+              onPress={() => void setToggle($, options, f, !mine[f])}
+            />
+          ))}
+        </Box>
         <Box flexDirection="row" gap={2} marginTop={1}>
           <Text bold>{t('pane.sessions')}</Text>
           <Input

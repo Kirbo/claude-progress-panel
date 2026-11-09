@@ -122,6 +122,9 @@ export const en = {
   'pane.repoDoneGroup': '{fold} {repo}  {done} done',
   'pane.taskSteps': '{bar} {closed}/{total}',
   'pane.thisSession': '{project} (this session)',
+  'pane.paused': ' · paused',
+  'pane.switches': 'This session:',
+  'pane.switch': '{mark} {feature}',
   'pane.groupLive': '{fold} {name} · {when} · {open} open · {done} done',
   'pane.groupEnded': '{fold} {name} · ended {when} · {open} open · {done} done',
   'pane.doneSection': '{fold} Done ({count})',
@@ -138,18 +141,55 @@ export const en = {
   'sort.title': 'title',
   'sort.created': 'created',
   'sort.done': 'done',
-  'prompt.reporting': [
-    '# Progress pane',
+  'rule.title': '# Progress pane',
+  'rule.intro':
     "A Progress pane beside every Claude Code session on this machine shows what each session is doing. This session's entry is written only through the `mcp__progress-panel__progress_update` tool. Keep it current on your own, without being asked:",
+  'rule.plan':
     '- As soon as a task takes more than one step, your first tool call is progress_update with `now` and the task list (one task per unit of work: diagnose, fix, verify, push…), listed in the order you will do them. When that order changes (a new ask goes first, you reshuffle), send `order` with the task ids in the new order — the pane lists tasks in that order by default.',
+  'rule.repo':
     "- A session that works in more than one repo gives every task its `repo` (the repo's name, e.g. its folder): the pane groups the tasks by repo. Keep the repo out of the title.",
+  'rule.steps':
     '- A task with parts gets `steps` (its subtasks, each with a status; send the whole list each time) and, when a line is not enough, a `detail`: the person unfolds it in the pane and sees n/m of its steps done.',
+  'rule.move':
     '- Move each task as it changes: `doing` when you start it, `done` with a one-line outcome (commit, pipeline) once verified, `blocked` with the reason. Keep `now` true.',
+  'rule.needs':
     '- Everything only the user can do or decide (an approval, a push OK, a login, a choice) goes in `needsYou` the moment it comes up; send `[]` once it is answered.',
+  'rule.push':
     "- A `git push` you run is watched automatically (the repo's CI, forge and host detected; its result tells you). `watch` yourself only what the plugin cannot see: a run by id, another repo's pipeline, a push made outside this session.",
-    '- A question answered in one reply needs no entry.',
+  'rule.oneReply': '- A question answered in one reply needs no entry.',
+  'rule.subagent':
     "- A subagent reports too, under its coordinator's session (never as the session's tasks): every few steps — and when its plan changes — call progress_update with `now`, its steps as `tasks` (statuses moving; each open step's `note` its own estimate, e.g. ~10 min) and `eta` (minutes it expects the rest to take). Its coordinator sees them in its own progress_update answers and in the pane.",
-  ].join('\n'),
+  'rule.nowOnly':
+    '- This session keeps no task list in the pane (tasks are off): report only `now` (what you are doing, kept true) and `needsYou`; send no `tasks`, `order` or `remove`.',
+  'toggle.feature.reporting': 'reporting',
+  'toggle.feature.tasks': 'tasks',
+  'toggle.feature.agents': 'agents',
+  'toggle.feature.pipelines': 'pipelines',
+  'toggle.on': 'on',
+  'toggle.off': 'off',
+  'toggle.default': 'default',
+  'toggle.overridden': 'this session',
+  'toggle.status': 'Progress panel for this session: {list}',
+  'toggle.statusItem': '{feature} {state} ({source})',
+  'toggle.set': 'Progress panel: {feature} is {state} for this session.',
+  'toggle.usage':
+    'Usage: /progress [on|off|status|doctor] · /progress <reporting|tasks|agents|pipelines> <on|off>',
+  'toggle.note.reportingOff':
+    'Progress pane: reporting is off for this session — do not call mcp__progress-panel__progress_update (the person turned it off; /progress on resumes).',
+  'toggle.note.tasksOff':
+    'Progress pane: tasks are off for this session — report only `now` and `needsYou`; send no `tasks`, `order` or `remove`.',
+  'toggle.note.tasksOn':
+    'Progress pane: tasks are on again for this session — keep the task list current as before.',
+  'toggle.note.agentsOff':
+    "Progress pane: agent reporting is off for this session — subagents' progress_update calls are ignored; do not ask them to report.",
+  'toggle.note.agentsOn': 'Progress pane: agent reporting is on again — subagents report every few steps.',
+  'toggle.note.pipelinesOff':
+    'Progress pane: pipelines are off for this session — pushes are not watched and `watch` is ignored; do not send it.',
+  'toggle.note.pipelinesOn': 'Progress pane: pipelines are on again — pushes are watched automatically.',
+  'tool.reportingOff': 'Reporting is off for this session (/progress on to resume): nothing was written.',
+  'tool.agentsOff': 'Agent reporting is off for this session: nothing was written.',
+  'tool.tasksOff': 'Tasks are off for this session: `tasks`, `order` and `remove` were ignored.',
+  'tool.pipelinesOff': 'Pipelines are off for this session: `watch` was ignored.',
   'prompt.subagent':
     "Progress pane: you are a subagent, and your coordinator's session shows you in the Progress pane. Your next call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta` (minutes left); then again every few steps and when your plan changes. It lands under your coordinator's session, never as its tasks.",
   'prompt.nudge':

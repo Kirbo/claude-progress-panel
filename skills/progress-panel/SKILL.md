@@ -79,6 +79,14 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
 - **Resume:** a resumed session keeps its entry while its session id is unchanged (a `/clear`
   starts a new entry); the tool's answer lists your tasks and ids.
 
+## When the person switched parts off
+
+The person can switch this session's reporting, tasks, agents and pipelines off (`/progress …`,
+the pane's switches). Each change reaches you once as a one-line note. While **reporting** is off,
+do not call `progress_update` (it writes nothing); **tasks** off: send only `now` and `needsYou`;
+**agents** off: subagents do not report; **pipelines** off: send no `watch`. A switch turned back
+on hands you the rule again.
+
 ## When the pane is not visible
 
 - `/progress` opens it (a session opens it by itself only on a terminal ~144 columns wide).

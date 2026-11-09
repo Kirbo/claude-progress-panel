@@ -63,6 +63,38 @@
       "options": ["plan", "status", "title", "created", "done"],
       "default": "plan",
       "required": false
+    },
+    "autoStart": {
+      "type": "string",
+      "title": "Start in every new session",
+      "description": "on: every new session reports to the pane from the start. off: the panel loads but stays dormant (no reporting rule, no reminders, no automatic watches, the pane does not open by itself) until /progress on or the pane's switch turns it on for that session.",
+      "options": ["on", "off"],
+      "default": "on",
+      "required": false
+    },
+    "tasksDefault": {
+      "type": "string",
+      "title": "Task lists in new sessions",
+      "description": "off: sessions report only what they are doing (now) and what needs you, no task list. /progress tasks on|off overrides it per session.",
+      "options": ["on", "off"],
+      "default": "on",
+      "required": false
+    },
+    "agentsDefault": {
+      "type": "string",
+      "title": "Subagent reporting in new sessions",
+      "description": "off: subagents are not asked to report and their reports are ignored. /progress agents on|off overrides it per session.",
+      "options": ["on", "off"],
+      "default": "on",
+      "required": false
+    },
+    "pipelinesDefault": {
+      "type": "string",
+      "title": "Pipelines in new sessions",
+      "description": "off: pushes are not watched and the agent's watch is ignored. /progress pipelines on|off overrides it per session.",
+      "options": ["on", "off"],
+      "default": "on",
+      "required": false
     }
   }
 }

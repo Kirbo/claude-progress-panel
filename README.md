@@ -174,6 +174,29 @@ folded "Finished" row.
 | `ciCommand`             | a command line (see Pipelines)          | (off)                  |
 | `paneColumns`           | sidebar width: 0 (Claude Code's), 48–110 | 84                     |
 | `paneRows`              | height above the prompt: 0 (a third), 12–40 | 20                 |
+| `autoStart`             | on, off (dormant until switched on)     | on                     |
+| `tasksDefault`          | on, off                                 | on                     |
+| `agentsDefault`         | on, off                                 | on                     |
+| `pipelinesDefault`      | on, off                                 | on                     |
+
+Change them with `/plugin configure progress-panel@claude-progress-panel` (or
+`claude plugin configure …`, or `--config KEY=VALUE` at install).
+
+**Per session**, four switches override those defaults for the rest of that session — kept in its
+own file, so a `/reload-plugins` or a resume keeps them; a new session starts from the defaults:
+
+- **reporting** — the master switch: off = no reporting rule, no reminders, no automatic watches,
+  and `progress_update` writes nothing; the entry stays, shown *paused* in every pane.
+- **tasks** — off = the session reports only `now` and *Needs you*; its task list is hidden.
+- **agents** — off = subagents are not asked to report, their reports are ignored and the
+  session's Agents section is hidden.
+- **pipelines** — off = no automatic watches, and the agent's `watch` is ignored.
+
+Switch them with the pane's **This session:** row (● on, ○ off — press one), or
+`/progress on` / `/progress off` (reporting), `/progress <reporting|tasks|agents|pipelines> on|off`,
+and see them with `/progress status`. Each change reaches the agent once: a one-line note for what
+went off, the matching part of the rule when it comes back on. With `autoStart` off a new session
+stays dormant (the pane does not open by itself) until switched on.
 
 The environment variable `PROGRESS_PANEL_DIR` overrides `progressDir` for one session (a demo
 or test folder) without moving everyone else's.

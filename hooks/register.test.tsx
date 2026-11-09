@@ -2768,6 +2768,115 @@ test('a parent process that is not Claude Code records no pid — nothing is eve
   expect(read(disk, `${DIR}/s-me.json`).session.pid).toBeUndefined()
 })
 
+const ctx = (r: unknown) => ((r as { additionalContext?: string[] }).additionalContext ?? []).join('\n')
+const cmd = async ($: $Test, args: string) =>
+  ((await $.command.run({ command: 'progress', args } as never)) as { text: string }).text
+
+test(
+  'autoStart off: a new session stays dormant until /progress on — then the whole rule, once',
+  { options: { autoStart: 'off' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    await start($)
+    // Dormant: the pane does not open by itself, no rule rides the prompt, the tool writes nothing.
+    expect(world.opened).toHaveLength(0)
+    expect(ctx(await $.classic.UserPromptSubmit({ prompt: 'go' } as never))).toBe('')
+    expect(JSON.stringify(await update($, { now: 'x' }))).toContain('Reporting is off for this session')
+    expect(disk.files.has(`${DIR}/s-me.json`)).toBe(false)
+    expect(await cmd($, 'status')).toContain('reporting off (default)')
+
+    expect(await cmd($, 'on')).toContain('reporting is on')
+    expect(world.opened.length).toBeGreaterThan(0)
+    const first = ctx(await $.classic.UserPromptSubmit({ prompt: 'go' } as never))
+    expect(first).toContain('# Progress pane')
+    expect(first.split('# Progress pane')).toHaveLength(2)
+    expect(await cmd($, 'status')).toContain('reporting on (this session)')
+    // Kept in the session's own file: a reload or resume reads it back.
+    expect(read(disk, `${DIR}/s-me.json`).toggles).toEqual({ reporting: true })
+  },
+)
+
+test('/progress off: one note, then nothing — no nudge, no removal note, the tool refuses', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, { now: 'working', tasks: [{ title: 'A' }] })
+  await cmd($, 'off')
+  expect(ctx(await $.classic.UserPromptSubmit({ prompt: 'go' } as never))).toContain(
+    'reporting is off for this session',
+  )
+  expect(ctx(await $.classic.UserPromptSubmit({ prompt: 'go' } as never))).toBe('')
+  expect(JSON.stringify(await update($, { now: 'more' }))).toContain('Reporting is off')
+  // Its entry is kept, shown paused.
+  expect(read(disk, `${DIR}/s-me.json`).now).toBe('working')
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toContain('· paused')
+  await ui.unmount()
+})
+
+test(
+  'tasks off: progress_update keeps now and needsYou, drops tasks, and says so; the rule says now-only',
+  { options: { tasksDefault: 'off' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    engine(on, disk)
+    await start($)
+    const answer = JSON.stringify(await update($, { now: 'n', needsYou: ['OK?'], tasks: [{ title: 'A' }] }))
+    expect(answer).toContain('Tasks are off')
+    const file = read(disk, `${DIR}/s-me.json`)
+    expect(file.tasks).toEqual([])
+    expect(file.needsYou).toEqual(['OK?'])
+    const rule = ctx(await $.classic.UserPromptSubmit({ prompt: 'go' } as never))
+    expect(rule).toContain('tasks are off')
+    expect(rule).not.toContain('one task per unit of work')
+  },
+)
+
+test('agents off: a subagent gets no rule and its report is refused; pipelines off: no watch, by hand or by push', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'coordinating' })
+  await cmd($, 'agents off')
+  const sub = (await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'q1',
+    agent_id: 'sub-x',
+  } as never)) as { additionalContext?: string[] }
+  expect((sub.additionalContext ?? []).join(' ')).not.toContain('you are a subagent')
+  expect(JSON.stringify(await $.tool.call({ tool: TOOL, agentId: 'sub-x', now: 'r' } as never))).toContain(
+    'Agent reporting is off',
+  )
+  await cmd($, 'pipelines off')
+  expect(JSON.stringify(await update($, { watch: [{ project: 'team/app', pipeline: 7 }] }))).toContain(
+    'Pipelines are off',
+  )
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
+  await bash($, 'git push')
+  expect(read(disk, `${DIR}/s-me.json`).pipelines ?? []).toEqual([])
+  expect(await cmd($, 'status')).toContain('agents off (this session)')
+  expect(await cmd($, 'pipelines maybe')).toContain('Usage')
+})
+
+test("the pane's switches row turns this session's features off and on", async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, { now: 'n', tasks: [{ title: 'Visible task' }] })
+  const ui = await pane($)
+  expect((await texts(ui)).join('\n')).toContain('Visible task')
+  await ui.press({ key: 'switch:tasks' })
+  expect(read(disk, `${DIR}/s-me.json`).toggles).toEqual({ tasks: false })
+  expect((await texts(ui)).join('\n')).not.toContain('Visible task')
+  await ui.press({ key: 'switch:tasks' })
+  expect((await texts(ui)).join('\n')).toContain('Visible task')
+  await ui.unmount()
+})
+
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())
   await start($)

@@ -114,6 +114,9 @@ export type Pipeline = {
 export type SessionFile = {
   version: 2
   session: SessionInfo
+  /** This session's own feature switches (0.23.0), over the plugin's defaults: `/progress <feature>
+   *  on|off` or the pane's buttons. Absent = the defaults. */
+  toggles?: { reporting?: boolean; tasks?: boolean; agents?: boolean; pipelines?: boolean }
   now?: string
   needsYou: string[]
   updatedAt: string

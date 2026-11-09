@@ -418,6 +418,27 @@ prompt) from the settings `paneColumns` (default 84 — the content's natural wi
 the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when it opens unasked
 (from 144 columns) are Claude Code's — a plugin cannot open itself narrower.
 
+## Switches: per-session features over plugin defaults (0.23.0)
+
+Asked 2026-11-09 (items 5–7): turn the panel's agent-facing parts off per session, with defaults
+for new sessions. ONE model (`hooks/toggles.ts`, pure): four features — `reporting` (the master
+switch), `tasks`, `agents`, `pipelines`. Defaults from userConfig (`autoStart` is reporting's;
+`tasksDefault`, `agentsDefault`, `pipelinesDefault`; all `on`); a session's overrides live in ITS
+OWN file (`toggles`, written by that session only — the one-writer rule holds), read back at
+`session.start` (a reload or resume keeps them; a new session = the defaults). `active(f)` =
+reporting && f. What each gates: the composed rule (`ruleKeys`: a feature off drops its bullets;
+tasks off swaps in `rule.nowOnly`), the prompt reminder, the subagent rule, the removal notices,
+the automatic watch, `syncOwnAgents`, and `progress_update` (reporting off: nothing written;
+agents off: a subagent's call refused; tasks off: `tasks`/`order`/`remove` dropped; pipelines off:
+`watch` dropped — each with a one-line note in the answer). A change queues ONE note for the agent
+(`changeNote`; reporting back on queues the whole rule), handed over with the next prompt or
+main-loop tool call. The pane: a "This session:" row of ● / ○ buttons (always drawn, so a dormant
+session can switch itself on); every session's group reads its file's switches over this pane's
+defaults — reporting off adds "· paused" and dims it, tasks off hides its tasks, agents off its
+Agents section. With `autoStart` off a session does not open the pane by itself. Commands:
+`/progress on|off` (also enable/disable, resume/pause), `/progress <feature> on|off`,
+`/progress status`.
+
 ## `/progress doctor` (0.22.1)
 
 `/progress doctor` (the `progress` command's argument, case and spaces ignored) answers one line per
