@@ -1,6 +1,11 @@
 # Lint, validate and test the plugin with the toolchain mise.lock pins.
 # Tags come from the release job's Releases: they start no pipeline of their own.
 workflow:
+  # Fail fast: a failed job cancels the rest of the pipeline, and a newer commit cancels an older
+  # pipeline's checks (`interruptible`) — never the release job.
+  auto_cancel:
+    on_new_commit: interruptible
+    on_job_failure: all
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH
@@ -19,8 +24,12 @@ stages: [test, release]
     MISE_LOCKED: "1"
     MISE_YES: "1"
     MISE_DATA_DIR: $CI_PROJECT_DIR/.mise-cache
-    # Only this repo's mise.toml: a hosted image's own global/system mise config (the macOS one
-    # lists dotnet, go, java, python, ruby, rust) is not in our lockfile and fails a locked install.
+    # Only this repo's mise.toml. The hosted macOS image ships a `~/.tool-versions` (maven, gradle,
+    # dotnet, go, java, python, ruby, rust…); the build dir is under $HOME, so mise read it as a
+    # parent config and the locked install refused every tool in it. The search stops at the builds
+    # dir (and each job's shell also ignores that file by its expanded path — a CI variable cannot
+    # expand $HOME); a global/system mise config of the image is not read either.
+    MISE_CEILING_PATHS: $CI_BUILDS_DIR
     MISE_GLOBAL_CONFIG_FILE: $CI_PROJECT_DIR/.mise-none.toml
     MISE_SYSTEM_CONFIG_FILE: $CI_PROJECT_DIR/.mise-none.toml
   cache:
@@ -44,6 +53,7 @@ stages: [test, release]
 check:
   extends: .mise
   stage: test
+  interruptible: true
   script:
     - mise exec -- biome ci .
     - mise exec -- claude --version
@@ -57,9 +67,11 @@ check:
 check:macos:
   extends: .mise-vars
   stage: test
+  interruptible: true
   tags: [saas-macos-medium-m1]
   image: macos-15-xcode-16
   before_script:
+    - export MISE_IGNORED_CONFIG_PATHS="$HOME/.tool-versions"
     - mkdir -p "$CI_PROJECT_DIR/.mise-bin"
     - curl -fsSL -o "$CI_PROJECT_DIR/.mise-bin/mise" "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-macos-arm64"
     - echo "${MISE_SHA256_MACOS_ARM64}  $CI_PROJECT_DIR/.mise-bin/mise" | shasum -a 256 -c -
@@ -76,9 +88,11 @@ check:macos:
 check:windows:
   extends: .mise-vars
   stage: test
+  interruptible: true
   tags: [saas-windows-medium-amd64]
   before_script:
     - $ErrorActionPreference = 'Stop'
+    - $env:MISE_IGNORED_CONFIG_PATHS = "$env:USERPROFILE\.tool-versions"
     - Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/jdx/mise/releases/download/$env:MISE_VERSION/mise-$env:MISE_VERSION-windows-x64.zip" -OutFile mise.zip
     - if ((Get-FileHash mise.zip -Algorithm SHA256).Hash.ToLower() -ne $env:MISE_SHA256_WINDOWS_X64) { throw 'mise checksum mismatch' }
     - Expand-Archive mise.zip -DestinationPath "$env:CI_PROJECT_DIR\.mise-bin"
