@@ -100,6 +100,22 @@ export function ruleKeys(
   return keys
 }
 
+/**
+ * What the agent is owed between what it was last told (`told`) and the switches now: the net
+ * change, however many presses lay between (user, 2026-11-09: several toggles between two prompts
+ * stacked a note per press, the rule twice). Reporting back on → the whole rule once (it already
+ * says what is on); reporting still off → nothing more; else one note per switch that differs. A
+ * switch toggled back is no change.
+ */
+export function netChange(told: Effective, now: Effective): { rule: boolean; notes: MessageKey[] } {
+  if (!told.reporting && now.reporting) return { rule: true, notes: [] }
+  if (!now.reporting) return { rule: false, notes: told.reporting ? ['toggle.note.reportingOff'] : [] }
+  const notes = FEATURES.filter(f => f !== 'reporting' && told[f] !== now[f])
+    .map(f => changeNote(f, now[f]))
+    .filter((k): k is MessageKey => k !== undefined)
+  return { rule: false, notes }
+}
+
 /** The one-line note a change of a feature hands the agent, once; undefined when none is due. */
 export function changeNote(feature: Feature, on: boolean): MessageKey | undefined {
   switch (feature) {

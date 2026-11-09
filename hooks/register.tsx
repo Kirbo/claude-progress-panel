@@ -92,12 +92,12 @@ import { ciProvider, parsePushes, pushedRef, resolvePath } from './push'
 import { notifiesFinish, readSettings, type Settings, tint } from './settings'
 import {
   active,
-  changeNote,
   defaultsFrom,
   type Effective,
   effective,
   FEATURES,
   type Feature,
+  netChange,
   parseProgressCommand,
   ruleKeys,
   type Toggles,
@@ -241,7 +241,26 @@ function ruleText(options: PluginOptions): string {
     .join('\n')
 }
 
+// The switches as the agent last heard of them, while a change since is not handed over yet
+// (undefined: nothing owed), and the options to read them with then.
+let toldSwitches: Effective | undefined
+let togglesOptions: PluginOptions | undefined
+
+/** The net switch change owed to the agent, as notes; the told state moves to now. */
+function takeToggleNotes(): string[] {
+  if (!toldSwitches || !togglesOptions) return []
+  const { rule, notes } = netChange(toldSwitches, switches(togglesOptions))
+  const options = togglesOptions
+  toldSwitches = undefined
+  if (rule) {
+    ruleSent = true
+    return [ruleText(options)]
+  }
+  return notes.map(k => t(k))
+}
+
 function withPendingNotes<R extends { additionalContext?: string[] }>(result: R): R {
+  pendingNotes.push(...takeToggleNotes())
   if (pendingNotes.length === 0) return result
   const notes = pendingNotes.splice(0)
   return { ...result, additionalContext: [...(result.additionalContext ?? []), ...notes] }
@@ -1596,13 +1615,10 @@ async function setToggle(
       await save($, dir, { ...own, toggles: sessionToggles })
     })
   if (before[feature] === after[feature]) return
-  if (feature === 'reporting' && after.reporting) {
-    pendingNotes.push(ruleText(options))
-    ruleSent = true
-  } else if (feature === 'reporting' || after.reporting) {
-    const note = changeNote(feature, after[feature])
-    if (note) pendingNotes.push(t(note))
-  }
+  // What the agent was told is the state before the first change since its last hand-over: the
+  // note is worked out then, from the NET change (`netChange`), never one per press.
+  toldSwitches ??= before
+  togglesOptions = options
   if (feature === 'reporting' && after.reporting) void $.ui.open(paneArgs(options))
 }
 

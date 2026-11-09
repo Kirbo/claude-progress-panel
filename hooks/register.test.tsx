@@ -4051,3 +4051,61 @@ test('the switches sit under the header, say their state, and reporting off take
   expect(lines.some(l => l.startsWith('● agents'))).toBe(true)
   await ui.unmount()
 })
+
+test('many presses between two prompts reach the agent as the net change: one line each, the rule at most once', async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  await update($, { now: 'working' })
+  const ctx = async () =>
+    ((await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)) as { additionalContext?: string[] })
+      .additionalContext ?? []
+  await ctx() // whatever the start owed
+  const ui = await pane($)
+  // The user's run: agents off/on, pipelines off/on, tasks off, reporting off, on, tasks on, off,
+  // reporting off, on, tasks on — net: nothing changed.
+  const press = (k: string) => ui.press({ key: `switch:${k}` })
+  await press('agents')
+  await press('agents')
+  await press('pipelines')
+  await press('pipelines')
+  await press('tasks')
+  await press('reporting')
+  await press('reporting') // second press: off
+  await press('reporting') // on again
+  await press('tasks')
+  await press('tasks')
+  await press('reporting')
+  await press('reporting') // off
+  await press('reporting') // on
+  await press('tasks')
+  expect(await ctx()).toEqual([])
+  // Net change: tasks off (after off → on → off) and pipelines off → one line each.
+  await press('tasks')
+  await press('tasks')
+  await press('tasks')
+  await press('pipelines')
+  const notes = await ctx()
+  expect(notes).toHaveLength(2)
+  expect(notes.join('\n')).not.toContain('# Progress pane')
+  // Reporting off and on again between two prompts, tasks back on: the agent never heard of the
+  // pause, so only the net change — tasks on.
+  await press('reporting')
+  await press('reporting')
+  await press('tasks')
+  await press('reporting')
+  expect(await ctx()).toEqual([
+    'Progress pane: tasks are on again for this session — keep the task list current as before.',
+  ])
+  // Reporting off, told; then on with pipelines back too: the rule once, nothing else.
+  await press('reporting')
+  await press('reporting')
+  expect((await ctx()).join('')).toContain('reporting is off for this session')
+  await press('pipelines')
+  await press('reporting')
+  const back = await ctx()
+  expect(back).toHaveLength(1)
+  expect(back[0]).toContain('# Progress pane')
+  // Said once: the next prompt carries nothing.
+  expect(await ctx()).toEqual([])
+  await ui.unmount()
+})

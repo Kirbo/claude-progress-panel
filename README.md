@@ -265,8 +265,9 @@ Switch them with the pane's **Switches:** row under its header (`● tasks on` /
 one; turning reporting off asks for a second press, since it silences the whole session; a session
 with something off says so in its header in every pane), or
 `/progress on` / `/progress off` (reporting), `/progress <reporting|tasks|agents|pipelines> on|off`,
-and see them with `/progress status`. Each change reaches the agent once: a one-line note for what
-went off, the matching part of the rule when it comes back on. With `autoStart` off a new session
+and see them with `/progress status`. The agent hears the net change at its next step, however many
+presses lay between: one line per switch that really changed (none for one toggled back), and the
+reporting rule at most once, when reporting comes back on. With `autoStart` off a new session
 stays dormant (the pane does not open by itself) until switched on.
 
 The environment variable `PROGRESS_PANEL_DIR` overrides `progressDir` for one session (a demo

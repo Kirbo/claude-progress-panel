@@ -5,6 +5,7 @@ import {
   changeNote,
   defaultsFrom,
   effective,
+  netChange,
   parseProgressCommand,
   ruleKeys,
   withToggle,
@@ -71,4 +72,27 @@ test('a change hands the agent one note; turning reporting on hands the rule ins
   expect(changeNote('reporting', true)).toBeUndefined()
   expect(changeNote('pipelines', false)).toBe('toggle.note.pipelinesOff')
   expect(changeNote('tasks', true)).toBe('toggle.note.tasksOn')
+})
+
+test('the agent hears the NET change since it was last told, however many presses lay between', () => {
+  const on = { reporting: true, tasks: true, agents: true, pipelines: true }
+  // Toggled back and forth: nothing changed, nothing to say.
+  expect(netChange(on, { ...on })).toEqual({ rule: false, notes: [] })
+  // off → on → off for tasks, net off: one "off" line.
+  expect(netChange(on, { ...on, tasks: false })).toEqual({ rule: false, notes: ['toggle.note.tasksOff'] })
+  // Two switches really changed: a line each.
+  expect(netChange(on, { ...on, agents: false, pipelines: false })).toEqual({
+    rule: false,
+    notes: ['toggle.note.agentsOff', 'toggle.note.pipelinesOff'],
+  })
+  // Reporting off (whatever else moved): one line — the rest no longer matters.
+  expect(netChange(on, { ...on, reporting: false, tasks: false })).toEqual({
+    rule: false,
+    notes: ['toggle.note.reportingOff'],
+  })
+  // Reporting back on: the rule, once — it already says what else is on.
+  const off = { ...on, reporting: false }
+  expect(netChange(off, { ...on, tasks: false })).toEqual({ rule: true, notes: [] })
+  // Off, and still off: nothing.
+  expect(netChange(off, { ...off, tasks: false })).toEqual({ rule: false, notes: [] })
 })

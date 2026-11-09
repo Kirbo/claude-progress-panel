@@ -589,9 +589,10 @@ reporting && f. What each gates: the composed rule (`ruleKeys`: a feature off dr
 tasks off swaps in `rule.nowOnly`), the prompt reminder, the subagent rule, the removal notices,
 the automatic watch, `syncOwnAgents`, and `progress_update` (reporting off: nothing written;
 agents off: a subagent's call refused; tasks off: `tasks`/`order`/`remove` dropped; pipelines off:
-`watch` dropped — each with a one-line note in the answer). A change queues ONE note for the agent
-(`changeNote`; reporting back on queues the whole rule), handed over with the next prompt or
-main-loop tool call. The pane: a "Switches:" row right under the header (0.23.0, always drawn, so
+`watch` dropped — each with a one-line note in the answer). What the agent hears is the NET change since it was last told (0.23.0, `netChange`):
+presses between two hand-overs coalesce — a switch toggled back says nothing, one that really
+changed one line (`changeNote`), reporting off one line, reporting back on the whole rule once
+(it already says what else is on) — handed over with the next prompt or main-loop tool call. The pane: a "Switches:" row right under the header (0.23.0, always drawn, so
 a dormant session can switch itself on). They read as switches, not filters (people pressed the
 old "This session: ● tasks" row as a list filter): each names its state ("● tasks on" / "○ tasks
 OFF", OFF in yellow, bold), a hover explains what turning it changes, and turning REPORTING off —
