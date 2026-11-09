@@ -20,7 +20,6 @@ stages: [test, release]
     # three with the version.
     MISE_SHA256: 62cad463c1413f05398ca339168a8f655120b6f0b0b8adce3bc6758bafaf0602
     MISE_SHA256_MACOS_ARM64: 90684d13d9125cf207c45b19dbdbf19baf8d5d0e3e10109f236b1b4d027416c0
-    MISE_SHA256_WINDOWS_X64: 07a552fd755664057bc58cd4fabb8a9fedde77d6b68fcbc81b23714ac0ca034a
     MISE_LOCKED: "1"
     MISE_YES: "1"
     MISE_DATA_DIR: $CI_PROJECT_DIR/.mise-cache
@@ -62,8 +61,10 @@ check:
     - mise exec -- node --test scripts/
     - mise exec -- node scripts/check-audits.mjs
 
-# The plugin runs wherever Claude Code does: its tests run on macOS and Windows too (GitLab's hosted
-# runners). Lint stays on Linux — formatting does not depend on the OS.
+# The tests also run on macOS (GitLab's hosted runner). No Windows job (user decision 2026-11-09):
+# the panel's only user never runs Windows, and GitLab's Windows runner made every pipeline ~9 min
+# instead of ~1.5 (a fresh VM per job). The Windows code paths and their tests stay and run here.
+# Lint stays on Linux — formatting does not depend on the OS.
 check:macos:
   extends: .mise-vars
   stage: test
@@ -85,33 +86,13 @@ check:macos:
     - mise exec -- claude plugin test .
     - mise exec -- node --test scripts/
 
-check:windows:
-  extends: .mise-vars
-  stage: test
-  interruptible: true
-  tags: [saas-windows-medium-amd64]
-  before_script:
-    - $ErrorActionPreference = 'Stop'
-    - $env:MISE_IGNORED_CONFIG_PATHS = "$env:USERPROFILE\.tool-versions"
-    - Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/jdx/mise/releases/download/$env:MISE_VERSION/mise-$env:MISE_VERSION-windows-x64.zip" -OutFile mise.zip
-    - if ((Get-FileHash mise.zip -Algorithm SHA256).Hash.ToLower() -ne $env:MISE_SHA256_WINDOWS_X64) { throw 'mise checksum mismatch' }
-    - Expand-Archive mise.zip -DestinationPath "$env:CI_PROJECT_DIR\.mise-bin"
-    - $env:PATH = "$env:CI_PROJECT_DIR\.mise-bin\mise\bin;$env:PATH"
-    - mise trust --yes .
-    - mise install
-  script:
-    - mise exec -- claude --version
-    - mise exec -- claude plugin validate .
-    - mise exec -- claude plugin test .
-    - mise exec -- node --test scripts/
-
 # Every plugin version without a Release yet gets one on main — tag `v<version>` at the commit that
 # first carried it, notes = git-cliff over the commits since the version before (scripts/release.mjs,
 # cliff.toml). The job token creates them; nothing else is needed.
 release:
   extends: .mise
   stage: release
-  needs: [check, "check:macos", "check:windows"]
+  needs: [check, "check:macos"]
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
   variables:

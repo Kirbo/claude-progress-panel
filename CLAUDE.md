@@ -56,6 +56,10 @@ How to _use_ the panel during a task is the bundled skill:
 - **State shape:** the pane's values are the `sessions`, `folds` and `sort` atoms; change an
   atom's `shape` tag whenever its stored type changes, so an old value from before a reload is
   declined. `types/index.d.ts` is the contract and must stay self-contained (no imports).
+- **CI runs Linux and macOS only — no Windows job** (user decision 2026-11-09: the only user never
+  runs Windows; GitLab's Windows runner made every pipeline ~6× slower). Windows-specific code paths
+  (`cd /d`, `del`, Windows file URLs, process lookup) keep their tests, which run on Linux/macOS;
+  don't re-add a Windows job without asking.
 - **The design** (store format, tool semantics, refresh, retention) is
   `docs/design/MULTI-SESSION.md` — keep it in step with the code.
 - **Done = green:** `biome check .`, `claude plugin test .`, `claude plugin validate .`,
