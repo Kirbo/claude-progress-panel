@@ -110,6 +110,8 @@ export const en = {
     '- A question answered in one reply needs no entry.',
     "- A subagent reports too, under its coordinator's session (never as the session's tasks): every few steps — and when its plan changes — call progress_update with `now`, its steps as `tasks` (statuses moving; each open step's `note` its own estimate, e.g. ~10 min) and `eta` (minutes it expects the rest to take). Its coordinator sees them in its own progress_update answers and in the pane.",
   ].join('\n'),
+  'prompt.subagent':
+    "Progress pane: you are a subagent, and your coordinator's session shows you in the Progress pane. Your next call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta` (minutes left); then again every few steps and when your plan changes. It lands under your coordinator's session, never as its tasks.",
   'prompt.nudge':
     'Progress pane: this session has not reported yet. If this request takes more than one step, your first tool call is mcp__progress-panel__progress_update with `now` and the task list (progress-panel skill); a question answered in one reply needs none.',
   'tool.description':

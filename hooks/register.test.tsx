@@ -479,9 +479,11 @@ test('the owning session marks a removed task skipped and tells its agent once, 
     tool_input: {},
     tool_response: {},
     tool_use_id: 'x1',
-    agent_id: 'sub-1',
+    agent_id: 'sub-removal',
   } as never)
-  expect((sub as { additionalContext?: string[] }).additionalContext ?? []).toEqual([])
+  expect(((sub as { additionalContext?: string[] }).additionalContext ?? []).join(' ')).not.toContain(
+    'Write the docs',
+  )
   const main = await $.classic.PostToolUse({
     tool_name: 'Bash',
     tool_input: {},
@@ -598,6 +600,43 @@ test('a subagent that never reports (no progress tool) still shows under Agents 
   world.agents[0] = { ...world.agents[0], status: 'completed' } as (typeof world.agents)[number]
   await world.clock.advance(2100)
   expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.endedAt).not.toBeNull()
+})
+
+test("a subagent's first tool call carries the reporting rule once; one that reported is never told", async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, { now: 'coordinating' })
+  const call = async (agent: string | undefined, id: string) =>
+    (
+      (
+        (await $.classic.PostToolUse({
+          tool_name: 'Bash',
+          tool_input: {},
+          tool_response: {},
+          tool_use_id: id,
+          ...(agent ? { agent_id: agent } : {}),
+        } as never)) as { additionalContext?: string[] }
+      ).additionalContext ?? []
+    ).join(' ')
+
+  // Its system prompt never carried the rule: the first call's result does — once.
+  const first = await call('sub-rule-1', 'y1')
+  expect(first).toContain('you are a subagent')
+  expect(first).toContain('progress_update')
+  expect(await call('sub-rule-1', 'y2')).toBe('')
+
+  // A subagent that already reported is not told again.
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-rule-2',
+    now: 'reading',
+    tasks: [{ title: 'read' }],
+  } as never)
+  expect(await call('sub-rule-2', 'y3')).toBe('')
+
+  // The main loop never gets the subagent rule.
+  expect(await call(undefined, 'y4')).not.toContain('you are a subagent')
 })
 
 test('a subagent that stops is marked finished and folded under Agents — and stays, never cleaned up', async ($, on) => {

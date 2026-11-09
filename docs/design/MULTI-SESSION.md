@@ -116,6 +116,13 @@ user asked why the pane was empty (2026-11-09). `UserPromptSubmit` now closes th
 then — while the session's own file is still blank — a one-line `prompt.nudge`. The first report
 ends both.
 
+**…and in every subagent (0.21.5).** A subagent's system prompt is not composed through this hook
+either, and the engine has no `SubagentStart`: a fresh general-purpose subagent had the tool but
+never the rule, and never reported (2026-11-09). So a subagent's FIRST tool call (`PostToolUse`
+with an `agent_id`) carries `prompt.subagent` in its `additionalContext` — once per agent id
+(process-wide set), and not at all to one whose entry already holds a `now` or tasks. The main
+loop's `PostToolUse` keeps only the removal notice.
+
 Status values: `todo`, `doing`, `blocked`, `done`, `skipped`. The plugin stamps `createdAt`,
 `updatedAt` and `doneAt` (set on entering done/skipped, cleared on re-opening). The tool answers
 with the session's task list (ids, statuses) so the agent can address tasks by id.

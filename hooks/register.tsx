@@ -1100,11 +1100,42 @@ async function withReportingNudge<R extends { additionalContext?: string[] }>(
 
 // Whether this session's own file holds anything yet — a plain read, nothing folded or queued.
 async function hasReported($: EngineInterface, options: PluginOptions): Promise<boolean> {
+  const own = await readOwnPlain($, options)
+  if (own === 'nowhere') return true // nowhere to report to: nothing to remind of
+  return own !== undefined && !isBlank(own)
+}
+
+// This session's file as it is on disk (`undefined` before its first write), or 'nowhere' when no
+// progress folder resolves — a plain read, nothing folded or queued.
+async function readOwnPlain(
+  $: EngineInterface,
+  options: PluginOptions,
+): Promise<SessionFile | undefined | 'nowhere'> {
   const dir = await progressDir($, options)
-  if (!dir) return true // nowhere to report to: nothing to remind of
+  if (!dir) return 'nowhere'
   const text = await $.fs.read(`${dir}/${await $.session.id()}.json`).catch(() => undefined)
-  const file = text === undefined ? undefined : parseSessionFile(text)
-  return file !== undefined && !isBlank(file)
+  return text === undefined ? undefined : parseSessionFile(text)
+}
+
+// Subagents told the reporting rule (once each, process-wide).
+const subagentRuleSent = new Set<string>()
+
+// A subagent's system prompt never carries the reporting rule (`prompt.compose` builds only the
+// session's) and the engine has no SubagentStart: so its FIRST tool call's result carries the
+// subagent part of the rule — once per agent, and never to one that already reported.
+async function withSubagentRule<R extends { additionalContext?: string[] }>(
+  $: EngineInterface,
+  options: PluginOptions,
+  agentId: string,
+  result: R,
+): Promise<R> {
+  if (subagentRuleSent.has(agentId)) return result
+  subagentRuleSent.add(agentId)
+  const own = await readOwnPlain($, options)
+  if (own === 'nowhere') return result
+  const entry = own?.agents?.find(a => a.id === agentId)
+  if (entry && (entry.now || entry.tasks.length > 0)) return result
+  return { ...result, additionalContext: [...(result.additionalContext ?? []), t('prompt.subagent')] }
 }
 
 function withRemovalNotice<R extends { additionalContext?: string[] }>(result: R): R {
@@ -1262,9 +1293,12 @@ export const register: Register = (on, options) => {
     }
     return next(e)
   })
-  on('classic.PostToolUse', async (_$, e, next) => {
+  // A subagent's first call instead carries the reporting rule it never got (`withSubagentRule`).
+  on('classic.PostToolUse', async ($, e, next) => {
     const result = await next(e)
-    return (e as { agent_id?: unknown }).agent_id ? result : withRemovalNotice(result)
+    const agentId = (e as { agent_id?: unknown }).agent_id
+    if (typeof agentId === 'string' && agentId) return withSubagentRule($, options, agentId, result)
+    return agentId ? result : withRemovalNotice(result)
   })
 
   on('session.end', async ($, e, next) => {
