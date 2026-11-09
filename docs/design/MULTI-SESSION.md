@@ -108,6 +108,14 @@ one-reply questions and subagents report nothing. Left out where the tool is not
 `teammate` render (its lead reports). The text is a fixed catalog string (`prompt.reporting`), so
 it never breaks the prompt cache.
 
+**…and in a session the plugin joined mid-way (0.21.4).** A plugin installed, reloaded
+(`/reload-plugins`) or resumed into a running session is not asked to compose until that session's
+prompt is rebuilt, so the section above never reached it — and the agent did not report until the
+user asked why the pane was empty (2026-11-09). `UserPromptSubmit` now closes the gap through its
+`additionalContext`: the same `prompt.reporting` text once, when this module composed no prompt,
+then — while the session's own file is still blank — a one-line `prompt.nudge`. The first report
+ends both.
+
 Status values: `todo`, `doing`, `blocked`, `done`, `skipped`. The plugin stamps `createdAt`,
 `updatedAt` and `doneAt` (set on entering done/skipped, cleared on re-opening). The tool answers
 with the session's task list (ids, statuses) so the agent can address tasks by id.

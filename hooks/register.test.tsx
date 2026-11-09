@@ -2548,3 +2548,45 @@ test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, â†
   expect(await texts(ui)).not.toContain('')
   await ui.unmount()
 })
+
+test('a session the plugin joined mid-way gets the reporting rule with its next prompt, then a reminder until it reports', async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  const context = async () =>
+    ((await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)) as { additionalContext?: string[] })
+      .additionalContext ?? []
+  // No system prompt was composed since the plugin loaded (installed, reloaded or resumed mid-way):
+  // the rule itself rides the first prompt, once.
+  const first = (await context()).join('\n')
+  expect(first).toContain('# Progress pane')
+  expect(first).toMatch(/first tool call/i)
+  // Then only a one-line reminder while the session has reported nothing.
+  const second = await context()
+  expect(second).toHaveLength(1)
+  expect(second[0]).not.toContain('# Progress pane')
+  expect(second[0]).toContain(TOOL)
+  // The first report ends it.
+  await update($, { now: 'Fixing it', tasks: [{ title: 'Fix' }] })
+  expect(await context()).toEqual([])
+})
+
+test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  await $.prompt.compose({
+    model: 'claude-opus-5-5',
+    promptModel: 'claude-opus-5-5',
+    surfaces: ['terminal'],
+    tools: ['Bash', TOOL],
+    outputStyle: null,
+    traits: ['skills'],
+  })
+  const context = async () =>
+    ((await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)) as { additionalContext?: string[] })
+      .additionalContext ?? []
+  const first = await context()
+  expect(first).toHaveLength(1)
+  expect(first[0]).not.toContain('# Progress pane')
+  await update($, { now: 'Fixing it', tasks: [{ title: 'Fix' }] })
+  expect(await context()).toEqual([])
+})

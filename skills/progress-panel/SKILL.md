@@ -62,7 +62,8 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
 - **Start of multi-step work:** your FIRST tool call is one call with `now` and the planned tasks
   (`todo`), listed in the order you will do them — on your own, never waiting to be asked. The
   pane's default sort is that plan order: when it changes, send `order`. The plugin adds this rule to every session's
-  system prompt (section `progress-panel:reporting`), so it holds without loading this skill.
+  system prompt (section `progress-panel:reporting`) — or, in a session it joined mid-way, to the next
+  prompt, with a short reminder until the first report — so it holds without loading this skill.
 - **Each change:** mark the task `doing` when you start it, `done` (with a one-line outcome in
   `note`: commit hash, pipeline id) when verified, `blocked` with the reason when stuck.
 - **Asks:** put a blocker in `needsYou` the moment you need the user, and clear it (`[]` or the

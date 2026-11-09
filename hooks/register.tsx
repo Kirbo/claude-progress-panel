@@ -140,6 +140,13 @@ function takeRemovalNotice(): string | undefined {
 // The name Claude Code gives this session (`/rename`, a resumed session's title), as the classic
 // SessionStart / UserPromptSubmit events last carried it; the plugin API has no call for it.
 let sessionTitle: string | undefined
+
+// Whether this module put the reporting rule into a composed system prompt, and whether it has
+// handed it to the agent another way. A plugin installed, reloaded (`/reload-plugins`) or resumed
+// mid-session is not asked to compose until the session's prompt is rebuilt, so the rule it relies
+// on never reaches that agent — which then never reports. The next prompt carries it instead.
+let ruleComposed = false
+let ruleSent = false
 function exclusive<T>(work: () => Promise<T>): Promise<T> {
   const run = ownChain.then(work, work)
   ownChain = run.catch(() => undefined)
@@ -1071,6 +1078,35 @@ function detached(work: Promise<unknown>): void {
   work.catch(() => undefined)
 }
 
+// With a prompt: the reporting rule itself, once, when no composed system prompt carried it (see
+// `ruleComposed`); then, while this session has reported nothing yet, a one-line reminder — so a
+// session the plugin joined mid-way starts reporting without being told to. Short and steady, and
+// gone with the first report.
+async function withReportingNudge<R extends { additionalContext?: string[] }>(
+  $: EngineInterface,
+  options: PluginOptions,
+  result: R,
+): Promise<R> {
+  const notes: string[] = []
+  if (!ruleComposed && !ruleSent) {
+    ruleSent = true
+    notes.push(t('prompt.reporting'))
+  }
+  if (notes.length === 0 && !(await hasReported($, options))) notes.push(t('prompt.nudge'))
+  return notes.length
+    ? { ...result, additionalContext: [...(result.additionalContext ?? []), ...notes] }
+    : result
+}
+
+// Whether this session's own file holds anything yet — a plain read, nothing folded or queued.
+async function hasReported($: EngineInterface, options: PluginOptions): Promise<boolean> {
+  const dir = await progressDir($, options)
+  if (!dir) return true // nowhere to report to: nothing to remind of
+  const text = await $.fs.read(`${dir}/${await $.session.id()}.json`).catch(() => undefined)
+  const file = text === undefined ? undefined : parseSessionFile(text)
+  return file !== undefined && !isBlank(file)
+}
+
 function withRemovalNotice<R extends { additionalContext?: string[] }>(result: R): R {
   const note = takeRemovalNotice()
   return note ? { ...result, additionalContext: [...(result.additionalContext ?? []), note] } : result
@@ -1190,6 +1226,7 @@ export const register: Register = (on, options) => {
   on('prompt.compose', async (_$, e, next) => {
     const composed = await next(e)
     if (!e.tools.includes(TOOL_ID) || e.traits.includes('teammate')) return composed
+    ruleComposed = true
     return {
       sections: [
         ...composed.sections,
@@ -1206,7 +1243,7 @@ export const register: Register = (on, options) => {
   })
   on('classic.UserPromptSubmit', async ($, e, next) => {
     await noteTitle($, options, (e as { session_title?: unknown }).session_title)
-    return withRemovalNotice(await next(e))
+    return withReportingNudge($, options, withRemovalNotice(await next(e)))
   })
   // After every main-loop tool call: a task the person removed reaches the agent at its next step
   // (a subagent's calls never take the note — it is the coordinator's).
