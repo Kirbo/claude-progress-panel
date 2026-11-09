@@ -301,10 +301,13 @@ export function applyWatch(
 
 /** The pipelines a pane shows: minus finished ones a sidecar entry dismissed for that same finish. */
 export function visiblePipelines(list: readonly Pipeline[], entries: readonly Dismissal[]): Pipeline[] {
+  // A finished one hides for that finish; one hidden while it ran (`doneAt: null`, 0.23.2) stays hidden.
   return list.filter(
     p =>
       !entries.some(
-        d => d.id === `pipeline:${p.key}` && p.finishedAt !== undefined && d.doneAt === p.finishedAt,
+        d =>
+          d.id === `pipeline:${p.key}` &&
+          (d.doneAt === null || (p.finishedAt !== undefined && d.doneAt === p.finishedAt)),
       ),
   )
 }

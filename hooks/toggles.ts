@@ -90,8 +90,8 @@ export function ruleKeys(
 ): MessageKey[] {
   const keys: MessageKey[] = ['rule.title', 'rule.intro']
   if (!eff.tasks || effort === 'minimal') keys.push('rule.nowOnly')
-  else if (effort === 'milestones') keys.push('rule.milestones', 'rule.repo')
-  else keys.push('rule.plan', 'rule.repo', 'rule.steps', 'rule.move')
+  else if (effort === 'milestones') keys.push('rule.milestones', 'rule.repo', 'rule.done')
+  else keys.push('rule.plan', 'rule.repo', 'rule.steps', 'rule.move', 'rule.done')
   keys.push('rule.needs')
   if (eff.pipelines) keys.push('rule.push')
   keys.push('rule.oneReply')

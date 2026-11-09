@@ -78,3 +78,81 @@ export function notifiesFinish(setting: Settings['pipelineNotify'], state: strin
   if (setting === 'never') return false
   return setting === 'always' || state === 'failed'
 }
+
+// --- The Settings view's layout (0.23.2) ----------------------------------------------------------
+
+/** The defaults list, grouped under small headings, each group in this order (locale keys). A field
+ *  no group names lands in a last "Other" group, so a new setting is never hidden. */
+export const SETTING_GROUPS = [
+  {
+    heading: 'settings.group.reporting',
+    fields: ['autoStart', 'tasksDefault', 'agentsDefault', 'reportingEffort'],
+  },
+  {
+    heading: 'settings.group.pipelines',
+    fields: [
+      'pipelinesDefault',
+      'pipelineNotify',
+      'pipelineRefreshSec',
+      'successFoldHours',
+      'runningPipelineX',
+    ],
+  },
+  {
+    heading: 'settings.group.notifications',
+    fields: ['autoNeedsPermission', 'autoNeedsIdle', 'toastNeedsYou', 'bell'],
+  },
+  {
+    heading: 'settings.group.pane',
+    fields: [
+      'paneScope',
+      'autoOpen',
+      'doneShown',
+      'agentsShown',
+      'paneColumns',
+      'paneRows',
+      'sortTasksBy',
+      'clock',
+      'palette',
+    ],
+  },
+  {
+    heading: 'settings.group.storage',
+    fields: ['progressDir', 'autoClearDoneHours', 'keepEndedSessionsDays', 'ciCommand', 'updateCheck'],
+  },
+] as const
+
+export type SettingGroupHeading = (typeof SETTING_GROUPS)[number]['heading'] | 'settings.group.other'
+
+/** The plugin's rows (`progress-panel.<field>`) in their groups and the groups' order; empty groups
+ *  are left out. */
+export function groupSettings<R extends { key: string }>(
+  rows: readonly R[],
+): { heading: SettingGroupHeading; rows: R[] }[] {
+  const field = (r: R) => r.key.slice(r.key.indexOf('.') + 1)
+  const placed = new Set<string>()
+  const out: { heading: SettingGroupHeading; rows: R[] }[] = []
+  for (const group of SETTING_GROUPS) {
+    const fields: readonly string[] = group.fields
+    const inGroup = fields.map(f => rows.find(r => field(r) === f)).filter((r): r is R => r !== undefined)
+    for (const r of inGroup) placed.add(r.key)
+    if (inGroup.length > 0) out.push({ heading: group.heading, rows: inGroup })
+  }
+  const rest = rows.filter(r => !placed.has(r.key))
+  if (rest.length > 0) out.push({ heading: 'settings.group.other', rows: rest })
+  return out
+}
+
+/** How a value is drawn: on (green), off (yellow), empty (dim, "empty = default"), any other choice
+ *  or number (cyan). */
+export function valueTone(value: string): 'on' | 'off' | 'empty' | 'choice' {
+  if (value === '') return 'empty'
+  if (value === 'on') return 'on'
+  if (value === 'off') return 'off'
+  return 'choice'
+}
+
+/** Whether a setting differs from its built-in default (drawn bold, so a changed one stands out). */
+export function isChangedSetting(value: string, fallback: string | undefined): boolean {
+  return value !== (fallback ?? '')
+}

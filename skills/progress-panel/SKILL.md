@@ -79,6 +79,10 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
   first call.
 - **Each change:** mark the task `doing` when you start it, `done` (with a one-line outcome in
   `note`: commit hash, pipeline id) when verified, `blocked` with the reason when stuck.
+- **Never keep a task open to wait for CI:** a push links its pipeline to your `doing` task of that
+  repo (or set `pipeline` yourself) and the task closes with it — done on green, failed on red. A
+  `doing` task you did not touch in a turn stops that turn once with the list: update each to its
+  true state. A task untouched for 20 min is asked about once.
 - **Asks:** put a blocker in `needsYou` the moment you need the user, and clear it (`[]` or the
   remaining list) as soon as it is answered. Keep it honest — every session shows it.
 - **Keep `now` true:** what is actually running right now.

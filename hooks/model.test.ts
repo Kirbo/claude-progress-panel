@@ -18,6 +18,9 @@ import {
   formatTime,
   isBlank,
   isClosed,
+  linkPushedPipeline,
+  listSignature,
+  markUnconfirmed,
   matchesTask,
   mergeScan,
   mergeSidecar,
@@ -29,10 +32,13 @@ import {
   removalKey,
   reopenAgent,
   sameTitle,
+  settleLinkedTasks,
   sortTasks,
   splitMatches,
+  staleTasks,
   syncAgents,
   timeLeft,
+  untouchedDoing,
   visibleTasks,
   waitingOnFrom,
 } from './model'
@@ -795,4 +801,135 @@ test('a step re-added under a reworded title is refused and pointed at its id; u
   const renamed = applyUpdate(base, { tasks: [{ id: 't1', title: 'D: switches row (final)' }] }, iso(T0 + 4))
   expect(renamed.errors).toEqual([])
   expect(renamed.file.tasks[0]?.title).toBe('D: switches row (final)')
+})
+
+// --- 0.23.2: tasks never stay in a state that is no longer true -----------------------------------
+
+const at = (min: number) => new Date(Date.UTC(2026, 10, 9, 12, min)).toISOString()
+const pipe = (key: string, state: string, extra: Record<string, unknown> = {}) => ({
+  key,
+  project: 'team/app',
+  id: 7,
+  label: 'app main',
+  state,
+  jobs: [],
+  addedAt: at(0),
+  checkedAt: at(5),
+  ...extra,
+})
+function withTasks(tasks: Record<string, unknown>[], pipelines: Record<string, unknown>[] = []): SessionFile {
+  const base = newSession({ id: 's', project: 'app', cwd: '/w/app' }, at(0))
+  const file = applyUpdate(base, { tasks: tasks as never }, at(0)).file
+  return { ...file, pipelines: pipelines as never }
+}
+const NOTES = {
+  green: (id: string) => `pipeline ${id} green`,
+  red: (id: string, jobs: string) => `pipeline ${id} failed: ${jobs}`,
+  canceled: (id: string) => `pipeline ${id} canceled`,
+}
+
+test('a pushed pipeline links to the one `doing` task of its repo — none or several link nothing', () => {
+  const one = withTasks([
+    { id: 'a', title: 'Ship', status: 'doing' },
+    { id: 'b', title: 'Later', status: 'todo' },
+  ])
+  const linked = linkPushedPipeline(one, 'team/app@x', 'app', at(1))
+  expect(linked.linked?.id).toBe('a')
+  expect(linked.file.tasks[0]?.pipeline).toBe('team/app@x')
+  // The same key again: nothing changes.
+  expect(linkPushedPipeline(linked.file, 'team/app@x', 'app', at(2)).linked).toBeUndefined()
+  const two = withTasks([
+    { id: 'a', title: 'One', status: 'doing' },
+    { id: 'b', title: 'Two', status: 'doing' },
+  ])
+  expect(linkPushedPipeline(two, 'k', 'app', at(1)).linked).toBeUndefined()
+  // Another repo's task is never a candidate.
+  const elsewhere = withTasks([{ id: 'a', title: 'Ship', status: 'doing', repo: 'site' }])
+  expect(linkPushedPipeline(elsewhere, 'k', 'app', at(1)).linked).toBeUndefined()
+  // A task already waiting on a running pipeline is not taken again.
+  const busy = withTasks(
+    [{ id: 'a', title: 'Ship', status: 'doing', pipeline: 'p1' }],
+    [pipe('p1', 'running')],
+  )
+  expect(linkPushedPipeline(busy, 'p2', 'app', at(1)).linked).toBeUndefined()
+})
+
+test('a finished linked pipeline closes its task: green done, red failed with the job, canceled failed', () => {
+  const file = withTasks(
+    [
+      { id: 'g', title: 'G', status: 'doing', pipeline: 'pg' },
+      { id: 'r', title: 'R', status: 'doing', pipeline: 'pr' },
+      { id: 'c', title: 'C', status: 'blocked', pipeline: 'pc' },
+      { id: 'run', title: 'Run', status: 'doing', pipeline: 'prun' },
+    ],
+    [
+      pipe('pg', 'success', { id: 1 }),
+      pipe('pr', 'failed', { id: 2, jobs: [{ name: 'lint', stage: 't', state: 'failed', durationS: 1 }] }),
+      pipe('pc', 'canceled', { id: 3 }),
+      pipe('prun', 'running', { id: 4 }),
+    ],
+  )
+  const { file: out, settled } = settleLinkedTasks(file, at(6), NOTES)
+  const by = (id: string) => out.tasks.find(t => t.id === id)
+  expect(by('g')).toMatchObject({ status: 'done', note: 'pipeline 1 green' })
+  expect(by('r')).toMatchObject({ status: 'failed', note: 'pipeline 2 failed: lint' })
+  expect(by('c')).toMatchObject({ status: 'failed', note: 'pipeline 3 canceled' })
+  expect(by('run')?.status).toBe('doing')
+  expect(settled.map(s => s.task.id)).toEqual(['g', 'r', 'c'])
+  // Settled again: nothing more.
+  expect(settleLinkedTasks(out, at(7), NOTES).settled).toEqual([])
+})
+
+test("the agent's own status, set after the pipeline finished, wins", () => {
+  const file = withTasks(
+    [{ id: 'g', title: 'G', status: 'doing', pipeline: 'pg' }],
+    [pipe('pg', 'success', { pipelineFinishedAt: at(3) })],
+  )
+  const later = applyUpdate(
+    file,
+    { tasks: [{ id: 'g', status: 'blocked', note: 'needs a manual check' }] },
+    at(4),
+  ).file
+  expect(settleLinkedTasks(later, at(5), NOTES).file.tasks[0]?.status).toBe('blocked')
+})
+
+test('stale tasks: open, untouched for the window, nothing tracking them, asked about once per state', () => {
+  const file = withTasks(
+    [
+      { id: 'd', title: 'D', status: 'doing' },
+      { id: 'x', title: 'X', status: 'done' },
+      { id: 't', title: 'T', status: 'todo', pipeline: 'p' },
+    ],
+    [pipe('p', 'running')],
+  )
+  const now = Date.parse(at(25))
+  const tracked = (task: Task) => task.id === 't'
+  const stale = staleTasks(file, now, 20 * 60_000, new Map(), tracked)
+  expect(stale.map(t => t.id)).toEqual(['d'])
+  expect(staleTasks(file, now, 20 * 60_000, new Map([['d', at(0)]]), tracked)).toEqual([])
+  expect(staleTasks(file, Date.parse(at(10)), 20 * 60_000, new Map(), tracked)).toEqual([])
+})
+
+test('the end-of-turn list: `doing` only, untouched since the turn began and for 10 min; a signature per list', () => {
+  const file = withTasks([
+    { id: 'd', title: 'D', status: 'doing' },
+    { id: 'b', title: 'B', status: 'blocked' },
+    { id: 't', title: 'T', status: 'todo' },
+  ])
+  const list = untouchedDoing(file, Date.parse(at(20)), Date.parse(at(21)), 10 * 60_000, () => false)
+  expect(list.map(t => t.id)).toEqual(['d'])
+  // Touched in this turn: not listed.
+  const touched = applyUpdate(file, { tasks: [{ id: 'd', note: 'still on it' }] }, at(20)).file
+  expect(untouchedDoing(touched, Date.parse(at(19)), Date.parse(at(21)), 10 * 60_000, () => false)).toEqual(
+    [],
+  )
+  // Tracked (a running pipeline / agent): not listed.
+  expect(untouchedDoing(file, Date.parse(at(20)), Date.parse(at(21)), 10 * 60_000, () => true)).toEqual([])
+  expect(listSignature(list)).toBe(`d@${at(0)}`)
+  const marked = markUnconfirmed(file, ['d'])
+  expect(marked.tasks[0]?.unconfirmed).toBe(true)
+  expect(markUnconfirmed(marked, ['d'])).toBe(marked)
+  expect(
+    applyUpdate(marked, { tasks: [{ id: 'd', status: 'done' }] }, at(22)).file.tasks[0]?.unconfirmed,
+  ).toBeUndefined()
 })

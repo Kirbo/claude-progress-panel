@@ -529,6 +529,35 @@ line says so; a new title or id is a new task), a removed step stays as it was i
 notice ("stop now: report what you have so far and end"). Every ✕ sits at the right of its row,
 which lights on hover like the task rows'.
 
+## Tasks never stay in a state that is no longer true (0.23.2)
+
+Asked three times (2026-11-09): the coordinator kept a task `doing` ~30 min after its work was done
+and pushed, only to wait for CI. Three mechanisms, each closing a path:
+1. **Task ↔ pipeline.** `Task.pipeline` (a watch key; the tool's `pipeline` field) — and the push
+   watch sets it itself (`linkPushedPipeline`): the session's single open `doing` task of the pushed
+   repo (`task.repo ?? session.project` = the repo root's folder name) waiting on no running pipeline;
+   none or several → no link. `pollPipelines` writes each refresh through `settleLinkedTasks`: green →
+   `done` ("pipeline <id> green"), failed → `failed` (the failed jobs), canceled → `failed`; a status
+   the agent set after the pipeline finished (`updatedAt` > its finish) wins. The main loop is told
+   through `pendingNotes`. The pane shows the pipeline's state on the task.
+2. **End of turn** (`classic.Stop`, main loop): `doing` tasks with `updatedAt` before the turn's start
+   (the last UserPromptSubmit) and ≥ 10 min old, nothing tracking them (a running linked pipeline or
+   agent), return `{ block }` once with the list. No loop: `stop_hook_active` (the stop right after a
+   block) or the same list signature (`listSignature`: ids + `updatedAt`) passes and marks them
+   `unconfirmed` (cleared by their next update). `todo` (not started) and `blocked` (its reason
+   given) never block a turn — they get (3). Off when reporting or tasks is off. Subagents: an agent
+   that stops ends its open steps `unfinished` (0.23.0), so they need no stop check.
+3. **Staleness nudge** (UserPromptSubmit): open tasks untouched ≥ 20 min, untracked, get one
+   additionalContext line each, remembered per `updatedAt` so a task is asked about once per state.
+
+Running pipelines (same release): ✕ only hides the row (the own session's is unwatched; another
+session's is dismissed with `doneAt: null`, which `visiblePipelines` hides for good); the separate red
+"⊘ stop" (two presses; setting "Pipeline ⊘ stop button", key `runningPipelineX`) cancels / deletes in
+CI — the two were one ✕ before, and a hide-meant press deleted a release pipeline.
+
+The Settings view (same release): rows grouped (`SETTING_GROUPS`), values in the right column,
+coloured by `valueTone`, bold when `isChangedSetting` against the manifest's own defaults.
+
 ## The Settings view (0.23.0)
 
 Asked 2026-11-09 (item 9): settings without commands. A `view` atom (`main` | `settings`) — "⚙

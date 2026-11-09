@@ -45,6 +45,8 @@ export type TaskInput = {
   steps?: StepInput[]
   /** The subagent working on it (its Agent call's description or id); '' clears it. */
   agent?: string
+  /** The pipeline it waits on (a watch key); '' clears it. Closes the task when it finishes. */
+  pipeline?: string
 }
 export type UpdateInput = {
   now?: string
@@ -170,7 +172,7 @@ export function applyUpdate(
     const old = tasks[at] as Task
     const next = status ?? old.status
     const doneAt = isClosed(next) ? (isClosed(old.status) ? old.doneAt : nowIso) : null
-    const { detail: _d, steps: _s, repo: _r, agent: _a, ...kept } = old
+    const { detail: _d, steps: _s, repo: _r, agent: _a, pipeline: _p, unconfirmed: _u, ...kept } = old
     tasks[at] = {
       ...kept,
       ...extras(old, patch, i, errors, nowIso),
@@ -364,13 +366,14 @@ export function groupByRepo(tasks: readonly Task[], own: string): { repo: string
 
 /** A task's detail and steps after a patch: given ones replace, '' / [] clear, absent ones stay. */
 function extras(
-  old: Pick<Task, 'detail' | 'steps' | 'repo' | 'agent'>,
+  old: Pick<Task, 'detail' | 'steps' | 'repo' | 'agent' | 'pipeline'>,
   patch: TaskInput,
   i: number,
   errors: string[],
   nowIso: string,
-): Pick<Task, 'detail' | 'steps' | 'repo' | 'agent'> {
+): Pick<Task, 'detail' | 'steps' | 'repo' | 'agent' | 'pipeline'> {
   const detail = patch.detail !== undefined ? patch.detail : old.detail
+  const pipeline = patch.pipeline !== undefined ? patch.pipeline.trim() : old.pipeline
   const agent = patch.agent !== undefined ? patch.agent.trim() : old.agent
   const repo = patch.repo !== undefined ? patch.repo.trim() : old.repo
   let steps = old.steps
@@ -412,6 +415,7 @@ function extras(
     ...(steps && steps.length > 0 ? { steps } : {}),
     ...(repo ? { repo } : {}),
     ...(agent ? { agent } : {}),
+    ...(pipeline ? { pipeline } : {}),
   }
 }
 
@@ -1229,4 +1233,137 @@ function isWide(cp: number): boolean {
     (cp >= 0xffe0 && cp <= 0xffe6) ||
     (cp >= 0x20000 && cp <= 0x3fffd) // CJK extensions B+
   )
+}
+
+// --- Tasks never stay in a state that is no longer true (0.23.2) ---------------------------------
+
+const OPEN: readonly Status[] = ['todo', 'doing', 'blocked']
+const PIPELINE_DONE = new Set(['success', 'failed', 'canceled'])
+
+/** The pipeline a task waits on, when the session still watches it. */
+export function taskPipeline(file: SessionFile, task: Task): Pipeline | undefined {
+  return task.pipeline ? (file.pipelines ?? []).find(p => p.key === task.pipeline) : undefined
+}
+
+/** Whether something live tracks an open task: a linked pipeline still running. (A linked agent is
+ *  the caller's to judge — it knows which agents run.) */
+export function trackedByPipeline(file: SessionFile, task: Task): boolean {
+  const p = taskPipeline(file, task)
+  return p !== undefined && !PIPELINE_DONE.has(p.state)
+}
+
+/**
+ * A push's pipeline links itself to the one task it closes: the session's single open `doing`
+ * task of that repo (its `repo`, or the session's own project when it names none) that waits on no
+ * running pipeline yet. None or several → no link (never a guess).
+ */
+export function linkPushedPipeline(
+  file: SessionFile,
+  key: string,
+  repo: string,
+  nowIso: string,
+): { file: SessionFile; linked?: Task } {
+  if (file.tasks.some(t => t.pipeline === key)) return { file }
+  const ownRepo = file.session.project
+  const candidates = file.tasks.filter(
+    t => t.status === 'doing' && (t.repo ?? ownRepo) === repo && !trackedByPipeline(file, t),
+  )
+  if (candidates.length !== 1) return { file }
+  const target = candidates[0] as Task
+  const linked: Task = { ...target, pipeline: key, updatedAt: nowIso }
+  return {
+    file: { ...file, tasks: file.tasks.map(t => (t.id === target.id ? linked : t)), updatedAt: nowIso },
+    linked,
+  }
+}
+
+export type Settled = { task: Task; outcome: 'done' | 'failed'; pipeline: Pipeline }
+
+/**
+ * Open tasks whose linked pipeline finished close by themselves: green → `done` ("pipeline <id>
+ * green"), red or canceled → `failed` (the failing jobs named). A status the agent set AFTER the
+ * pipeline finished wins — the task is left as the agent put it.
+ */
+export function settleLinkedTasks(
+  file: SessionFile,
+  nowIso: string,
+  notes: {
+    green: (id: string) => string
+    red: (id: string, jobs: string) => string
+    canceled: (id: string) => string
+  },
+): { file: SessionFile; settled: Settled[] } {
+  const settled: Settled[] = []
+  const tasks = file.tasks.map(task => {
+    if (!OPEN.includes(task.status)) return task
+    const p = taskPipeline(file, task)
+    if (!p || !PIPELINE_DONE.has(p.state)) return task
+    const finished = Date.parse(p.pipelineFinishedAt ?? p.finishedAt ?? p.checkedAt ?? nowIso)
+    if (Number.isFinite(finished) && Date.parse(task.updatedAt) > finished) return task
+    const id = p.id !== null ? String(p.id) : p.key
+    const green = p.state === 'success'
+    const failedJobs = p.jobs.filter(j => j.state === 'failed').map(j => j.name)
+    const note = green
+      ? notes.green(id)
+      : p.state === 'canceled'
+        ? notes.canceled(id)
+        : notes.red(id, failedJobs.join(', ') || '?')
+    const { unconfirmed: _u, ...rest } = task
+    const next: Task = { ...rest, status: green ? 'done' : 'failed', note, updatedAt: nowIso, doneAt: nowIso }
+    settled.push({ task: next, outcome: green ? 'done' : 'failed', pipeline: p })
+    return next
+  })
+  if (settled.length === 0) return { file, settled }
+  return { file: { ...file, tasks, updatedAt: nowIso }, settled }
+}
+
+/** Open tasks not updated for `minAgeMs`, nothing live tracking them, not already asked about in
+ *  this state (`told`: task id → the `updatedAt` it was asked about). */
+export function staleTasks(
+  file: SessionFile,
+  nowMs: number,
+  minAgeMs: number,
+  told: ReadonlyMap<string, string>,
+  tracked: (task: Task) => boolean,
+): Task[] {
+  return file.tasks.filter(
+    t =>
+      OPEN.includes(t.status) &&
+      nowMs - Date.parse(t.updatedAt) >= minAgeMs &&
+      told.get(t.id) !== t.updatedAt &&
+      !tracked(t),
+  )
+}
+
+/** The end-of-turn check's list: `doing` tasks (they claim active work) not updated since the turn
+ *  began and for at least `minAgeMs`, nothing live tracking them. `todo` has not started and
+ *  `blocked` carries its reason: those get the staleness nudge, never a blocked stop. */
+export function untouchedDoing(
+  file: SessionFile,
+  turnStartMs: number,
+  nowMs: number,
+  minAgeMs: number,
+  tracked: (task: Task) => boolean,
+): Task[] {
+  return file.tasks.filter(t => {
+    const at = Date.parse(t.updatedAt)
+    return t.status === 'doing' && at < turnStartMs && nowMs - at >= minAgeMs && !tracked(t)
+  })
+}
+
+/** A turn ended past the check with these still untouched: marked until their next update. */
+export function markUnconfirmed(file: SessionFile, ids: readonly string[]): SessionFile {
+  if (!file.tasks.some(t => ids.includes(t.id) && !t.unconfirmed)) return file
+  return {
+    ...file,
+    tasks: file.tasks.map(t => (ids.includes(t.id) ? { ...t, unconfirmed: true as const } : t)),
+  }
+}
+
+/** One signature per list (ids and the state they were seen in): the same list never blocks twice. */
+export function listSignature(tasks: readonly Task[]): string {
+  return tasks
+    .map(t => `${t.id}@${t.updatedAt}`)
+    .sort()
+    .join('|')
 }

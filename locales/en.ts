@@ -175,6 +175,8 @@ export const en = {
     '- A task with parts gets `steps` (its subtasks, each with a status; send the whole list each time) and, when a line is not enough, a `detail`: the person unfolds it in the pane and sees n/m of its steps done.',
   'rule.move':
     '- Move each task as it changes: `doing` when you start it, `done` with a one-line outcome (commit, pipeline) once verified, `blocked` with the reason, `skipped` (it will not be done) or `failed` (tried and could not be done) with WHY in its `note` — the pane shows that reason beneath it. Steps take a `note` the same way. Update a task by its `id` (rename it by sending the new title with that id) — never re-add it under a new title. Keep `now` true.',
+  'rule.done':
+    "- A task is `done` when its work is done and verified. A push's CI is tracked by its pipeline, linked to the task automatically (done on green, failed on red) — never keep a task open only to wait for CI. A `doing` task left untouched at the end of a turn stops that turn once, so you update it to its true state.",
   'rule.needs':
     '- Everything only the user can do or decide (an approval, a push OK, a login, a choice) goes in `needsYou` the moment it comes up; send `[]` once it is answered.',
   'rule.push':
@@ -236,6 +238,17 @@ export const en = {
   'settings.row': '{label}: {value}',
   'settings.textLabel': '{label}:',
   'settings.empty': '(empty = default)',
+  'settings.defaultMark': '(default)',
+  'settings.on': 'on',
+  'settings.off': 'OFF',
+  'settings.sourceSession': '(this session)',
+  'settings.sourceDefault': '(default)',
+  'settings.group.reporting': 'Reporting',
+  'settings.group.pipelines': 'Pipelines',
+  'settings.group.notifications': 'Notifications',
+  'settings.group.pane': 'Pane',
+  'settings.group.storage': 'Storage & updates',
+  'settings.group.other': 'Other',
   'settings.hint':
     'Press a row to change it; type and press Enter for a text field. Also: /plugin configure progress-panel@claude-progress-panel',
   'settings.refused': 'Setting not changed: {reason}',
@@ -243,8 +256,11 @@ export const en = {
     'Progress pane: agent "{agent}" finished — verify its result and update task "{task}" yourself.',
   'pane.linkedAgent': '● {agent}{steps}{left}',
   'pane.linkedAgentDone': '✓ {agent} finished — verify and update this task',
-  'pipe.confirmDelete': 'cancel + delete? ✕',
-  'pipe.confirmCancel': 'cancel? ✕',
+  'pipe.confirmDelete': ' ⊘ cancel + delete? ',
+  'pipe.confirmCancel': ' ⊘ cancel? ',
+  'pipe.stop': ' ⊘ stop ',
+  'pipe.stopHintDelete': 'cancel and delete this pipeline in CI (press twice)',
+  'pipe.stopHintCancel': 'cancel this pipeline in CI (press twice)',
   'pipe.cancelFailed': 'Not cancelled: {error}',
   'pipe.deleteRefused': 'Cancelled, but not deleted (deleting needs the Maintainer/Owner role): {error}',
   'pipe.deleteFailed': 'Cancelled, but not deleted: {error}',
@@ -255,6 +271,20 @@ export const en = {
   'notice.taskUnassigned':
     'Progress pane: agent "{agent}" was stopped in the Progress pane — task "{task}" is unassigned: re-plan or skip it.',
   'pane.linkedAgentStopped': '■ {agent} stopped in the Progress pane — re-plan or skip this task',
+  'pane.linkedPipeline': '⧗ waits on {label}: {state} — closes by itself when it finishes',
+  'pane.unconfirmed': '? not updated since {min} min — unconfirmed at the end of a turn',
+  'push.linkedTask':
+    'Progress pane: task "{task}" now waits on pipeline {key} — it closes by itself (done on green, failed on red); do not keep it open by hand.',
+  'task.pipelineGreen': 'pipeline {id} green',
+  'task.pipelineRed': 'pipeline {id} failed: {jobs}',
+  'task.pipelineCanceled': 'pipeline {id} canceled',
+  'notice.taskPipelineDone': 'Progress pane: task "{task}" is done — {note}.',
+  'notice.taskPipelineFailed': 'Progress pane: task "{task}" failed — {note}. Fix it, or re-plan it.',
+  'stale.nudge':
+    'Progress pane: task {id} "{task}" has been {status} for {min} min with no update — is that still true? Update it to its real state.',
+  'stop.untouched':
+    'Progress pane: these tasks still say `doing` but were not touched this turn — update each to its true state (done, blocked, todo…) with progress_update, or touch it if it really is still in progress:\n{list}',
+  'stop.untouchedLine': '- {id} "{task}" (doing, last updated {min} min ago)',
   'auto.permission': 'Permission: {message}',
   'auto.permissionAgent': '{agent} needs permission: {message}',
   'auto.idle': 'Waiting for your reply',

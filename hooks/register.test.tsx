@@ -141,7 +141,20 @@ function engine(
   on('fs.read', (_, e) => {
     const f = disk.files.get(diskKey(e.path))
     if (!f && diskKey(e.path).endsWith('/.claude-plugin/plugin.json'))
-      return { value: JSON.stringify({ name: 'progress-panel', version: '0.14.0', repository: PANEL_REPO }) }
+      return {
+        value: JSON.stringify({
+          name: 'progress-panel',
+          version: '0.14.0',
+          repository: PANEL_REPO,
+          // The defaults the Settings view compares against (a changed value is drawn bold).
+          userConfig: {
+            palette: { default: 'default' },
+            bell: { default: 'off' },
+            autoStart: { default: 'on' },
+            pipelinesDefault: { default: 'on' },
+          },
+        }),
+      }
     return f ? { value: f.text } : { deny: `ENOENT: ${e.path}` }
   })
   // The web, as the plugin's $.http.fetch reaches it: answers by URL (else a 404), every fetch recorded.
@@ -3382,18 +3395,18 @@ test("the Settings view: this session's switches with reset, defaults cycled or 
   await update($, { now: 'n' })
   const ui = await pane($)
   await ui.press({ key: 'settings:open' })
-  const shown = (await ui.findAll({ type: 'Button' })).map(b => b.text ?? '')
+  const shown = (await ui.findAll({ type: 'Button' })).map(b => String(b.props.label ?? b.text ?? ''))
   expect(shown).toContain('reporting: on (default)')
   expect(shown).toContain('Colours: default')
   // Only this plugin's rows.
   expect(shown.some(x => x.startsWith('Theme'))).toBe(false)
   // A switch of this session: changed, then reset to its default.
   await ui.press({ key: 'setting:session:pipelines' })
-  expect((await ui.find({ type: 'Button', key: 'setting:session:pipelines' }))?.text).toBe(
+  expect((await ui.find({ type: 'Button', key: 'setting:session:pipelines' }))?.props.label).toBe(
     'pipelines: off (this session)',
   )
   await ui.press({ key: 'setting:reset:pipelines' })
-  expect((await ui.find({ type: 'Button', key: 'setting:session:pipelines' }))?.text).toBe(
+  expect((await ui.find({ type: 'Button', key: 'setting:session:pipelines' }))?.props.label).toBe(
     'pipelines: on (default)',
   )
   // A choice cycles through its options, wrapping round.
@@ -3553,7 +3566,7 @@ async function runningPipeline(world: ReturnType<typeof engine>, $: $Test, provi
 const calls = (world: ReturnType<typeof engine>, method: string) =>
   world.runs.filter(r => r.includes('-X') && r[r.indexOf('-X') + 1] === method).map(r => r[r.length - 1])
 
-test('✕ on a running pipeline: the first press only asks; the second cancels and deletes it, and the row goes', async ($, on) => {
+test('⊘ stop on a running pipeline: the first press only asks; the second cancels and deletes it, and the row goes', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
   await start($)
@@ -3561,7 +3574,7 @@ test('✕ on a running pipeline: the first press only asks; the second cancels a
   const ui = await pane($)
   const x = `cancelpipe:s-me:${key}`
   await ui.press({ key: x })
-  expect((await ui.find({ type: 'Button', key: x }))?.text).toBe('cancel + delete? ✕')
+  expect((await ui.find({ type: 'Button', key: x }))?.text).toBe(' ⊘ cancel + delete? ')
   expect(calls(world, 'POST')).toEqual([])
   // Too late: the confirm expired, the next press only asks again.
   await world.clock.advance(6000)
@@ -3600,7 +3613,7 @@ test('a delete the forge refuses (403) keeps it cancelled and says so on its row
 })
 
 test(
-  'runningPipelineX cancel: only cancels; off: no ✕ on a running pipeline',
+  'the ⊘ stop button setting (runningPipelineX) cancel: only cancels — the ✕ beside it stays a plain hide',
   { options: { runningPipelineX: 'cancel' } },
   async ($, on) => {
     const disk = makeDisk()
@@ -3609,7 +3622,8 @@ test(
     const key = await runningPipeline(world, $)
     const ui = await pane($)
     await ui.press({ key: `cancelpipe:s-me:${key}` })
-    expect((await ui.find({ type: 'Button', key: `cancelpipe:s-me:${key}` }))?.text).toBe('cancel? ✕')
+    expect((await ui.find({ type: 'Button', key: `cancelpipe:s-me:${key}` }))?.text).toBe(' ⊘ cancel? ')
+    expect((await ui.find({ type: 'Button', key: `hidepipe:s-me:${key}` }))?.text).toBe('  ✕  ')
     await ui.press({ key: `cancelpipe:s-me:${key}` })
     expect(calls(world, 'POST')).toEqual(['projects/team%2Fapp/pipelines/41/cancel'])
     expect(calls(world, 'DELETE')).toEqual([])
@@ -3618,7 +3632,7 @@ test(
 )
 
 test(
-  'runningPipelineX off: no ✕ on a running pipeline',
+  'the ⊘ stop button setting off: no ⊘ on a running pipeline — its ✕ still hides it',
   { options: { runningPipelineX: 'off' } },
   async ($, on) => {
     const disk = makeDisk()
@@ -3627,9 +3641,52 @@ test(
     const key = await runningPipeline(world, $)
     const ui = await pane($)
     expect(await ui.find({ type: 'Button', key: `cancelpipe:s-me:${key}` })).toBeUndefined()
+    expect(await ui.find({ type: 'Button', key: `hidepipe:s-me:${key}` })).toBeDefined()
     await ui.unmount()
   },
 )
+
+test('✕ on a running pipeline only hides it: no call reaches the CI, and it stops being watched', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  const key = await runningPipeline(world, $)
+  const ui = await pane($)
+  // The default (delete) setting: the ⊘ button is there, and red — but ✕ is a different button.
+  expect((await ui.find({ type: 'Button', key: `cancelpipe:s-me:${key}` }))?.text).toBe(' ⊘ stop ')
+  await ui.press({ key: `hidepipe:s-me:${key}` })
+  expect(calls(world, 'POST')).toEqual([])
+  expect(calls(world, 'DELETE')).toEqual([])
+  expect(read(disk, `${DIR}/s-me.json`).pipelines ?? []).toEqual([])
+  await ui.unmount()
+})
+
+test("another session's running pipeline hidden with ✕ stays hidden in the panes, and its CI is untouched", async ($, on) => {
+  const disk = makeDisk()
+  const iso = new Date(T0).toISOString()
+  put(disk, `${DIR}/s-other.json`, {
+    ...other('s-other', 'site', T0, { now: 'pushing' }),
+    pipelines: [
+      {
+        key: 'team/app#9',
+        project: 'team/app',
+        id: 9,
+        label: 'app main',
+        state: 'running',
+        jobs: [],
+        addedAt: iso,
+        checkedAt: iso,
+      },
+    ],
+  })
+  const world = engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  await ui.press({ key: 'hidepipe:s-other:team/app#9' })
+  expect(calls(world, 'POST')).toEqual([])
+  expect(sidecar(disk, 's-other')).toContainEqual({ id: 'pipeline:team/app#9', doneAt: null })
+  await ui.unmount()
+})
 
 test("a linked task's steps are its agent's: steps sent to it are dropped with a note, and the pane shows the agent's", async ($, on) => {
   const disk = makeDisk()
@@ -4137,4 +4194,231 @@ test('many presses between two prompts reach the agent as the net change: one li
   // Said once: the next prompt carries nothing.
   expect(await ctx()).toEqual([])
   await ui.unmount()
+})
+
+// --- A task never stays in a state that is no longer true (0.23.2) ---------------------------------
+
+test('a push links its pipeline to the one `doing` task of that repo; the task closes by itself when it goes green', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, {
+    now: 'shipping',
+    tasks: [{ id: 'ship', title: 'Ship the fix', status: 'doing', repo: 'app' }],
+  })
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
+  const sha = 'a'.repeat(40)
+  world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${sha}&per_page=1`, [
+    { id: 51, status: 'running', ref: 'main', web_url: 'u' },
+  ])
+  world.gitlab.set('projects/team%2Fapp/pipelines/51', {
+    id: 51,
+    status: 'running',
+    ref: 'main',
+    web_url: 'u',
+  })
+  world.gitlab.set('projects/team%2Fapp/pipelines/51/jobs?per_page=100', [])
+  const note = await bash($, 'git push')
+  expect(note).toContain('task "Ship the fix" now waits on pipeline')
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]).toMatchObject({
+    status: 'doing',
+    pipeline: `team/app@${sha}`,
+  })
+  // Green: done by itself, the coordinator told once.
+  world.gitlab.set('projects/team%2Fapp/pipelines/51', {
+    id: 51,
+    status: 'success',
+    ref: 'main',
+    web_url: 'u',
+  })
+  await world.clock.advance(16_000)
+  const task = read(disk, `${DIR}/s-me.json`).tasks[0]
+  expect(task).toMatchObject({ status: 'done', note: 'pipeline 51 green' })
+  const told = await $.classic.UserPromptSubmit({ prompt: 'next' } as never)
+  expect(((told as { additionalContext?: string[] }).additionalContext ?? []).join(' ')).toContain(
+    'task "Ship the fix" is done — pipeline 51 green',
+  )
+})
+
+test('a red pipeline fails its task with the failing job; two `doing` tasks in the repo link nothing', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  world.gitlab.set('projects/team%2Fapp/pipelines/41', {
+    id: 41,
+    status: 'running',
+    ref: 'main',
+    web_url: 'u',
+  })
+  world.gitlab.set('projects/team%2Fapp/pipelines/41/jobs?per_page=100', [])
+  await update($, {
+    watch: [{ project: 'team/app', pipeline: 41 }],
+    tasks: [{ id: 'fix', title: 'Fix CI', status: 'doing', pipeline: 'team/app#41' }],
+  })
+  world.gitlab.set('projects/team%2Fapp/pipelines/41', {
+    id: 41,
+    status: 'failed',
+    ref: 'main',
+    web_url: 'u',
+  })
+  world.gitlab.set('projects/team%2Fapp/pipelines/41/jobs?per_page=100', [
+    { id: 1, name: 'check:macos', stage: 'test', status: 'failed', duration: 9 },
+    { id: 2, name: 'check', stage: 'test', status: 'success', duration: 9 },
+  ])
+  await world.clock.advance(16_000)
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]).toMatchObject({
+    status: 'failed',
+    note: 'pipeline 41 failed: check:macos',
+  })
+  // Two `doing` tasks of the repo: a push links neither (never a guess).
+  await update($, {
+    tasks: [
+      { id: 'a', title: 'One', status: 'doing', repo: 'app' },
+      { id: 'b', title: 'Two', status: 'doing', repo: 'app' },
+    ],
+  })
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git', sha: 'e'.repeat(40) })
+  const note = await bash($, 'git push')
+  expect(note).not.toContain('now waits on pipeline')
+  expect(read(disk, `${DIR}/s-me.json`).tasks.filter(t => t.pipeline)).toHaveLength(1)
+})
+
+test('a `doing` task untouched this turn stops the turn once — never twice for the same list — then is marked unconfirmed', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [
+      { id: 'w', title: 'Write docs', status: 'doing' },
+      { title: 'Later', status: 'todo' },
+    ],
+  })
+  await world.clock.advance(11 * 60_000)
+  await $.classic.UserPromptSubmit({ prompt: 'thanks' } as never)
+  const first = (await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }
+  expect(first.block).toContain('w "Write docs" (doing, last updated 11 min ago)')
+  // The todo task never stops a turn.
+  expect(first.block).not.toContain('Later')
+  // The agent's stop right after the block (or the same list again) passes, and the task is marked.
+  const second = (await $.classic.Stop({ stop_hook_active: true } as never)) as { block?: string }
+  expect(second.block).toBeUndefined()
+  expect(read(disk, `${DIR}/s-me.json`).tasks.find(t => t.id === 'w')?.unconfirmed).toBe(true)
+  const ui = await pane($)
+  expect((await texts(ui)).some(x => x.includes('unconfirmed at the end of a turn'))).toBe(true)
+  await ui.unmount()
+  // Same list in a later turn: no block (no loop).
+  await $.classic.UserPromptSubmit({ prompt: 'again' } as never)
+  expect(
+    ((await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }).block,
+  ).toBeUndefined()
+  // An update in the turn confirms it: the mark goes, and the stop passes.
+  await update($, { tasks: [{ id: 'w', status: 'done' }] })
+  expect(read(disk, `${DIR}/s-me.json`).tasks.find(t => t.id === 'w')?.unconfirmed).toBeUndefined()
+})
+
+test(
+  'with tasks switched off, no task check ever stops a turn',
+  { options: { tasksDefault: 'off' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    await start($)
+    put(
+      disk,
+      `${DIR}/s-me.json`,
+      other('s-me', 'app', T0, { tasks: [{ id: 'w', title: 'Write', status: 'doing' }] }),
+    )
+    await world.clock.advance(30 * 60_000)
+    await $.classic.UserPromptSubmit({ prompt: 'x' } as never)
+    expect(
+      ((await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }).block,
+    ).toBeUndefined()
+  },
+)
+
+test('an open task untouched for 20 min is asked about once with the next prompt, never twice in the same state', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [{ id: 'b', title: 'Waiting on review', status: 'blocked', note: 'review' }],
+  })
+  await world.clock.advance(21 * 60_000)
+  const ctx = async () =>
+    (
+      ((await $.classic.UserPromptSubmit({ prompt: 'p' } as never)) as { additionalContext?: string[] })
+        .additionalContext ?? []
+    ).join(' ')
+  expect(await ctx()).toContain('task b "Waiting on review" has been blocked for 21 min with no update')
+  expect(await ctx()).not.toContain('Waiting on review')
+})
+
+test('the Settings view: values right-aligned and coloured, a changed one bold, the defaults grouped in order', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  const rows = [
+    {
+      key: 'progress-panel.palette',
+      label: 'Colours',
+      kind: 'choice',
+      value: 'default',
+      options: ['default', 'colorblind', 'none'],
+      provider: 'plugin',
+      isLocked: false,
+    },
+    {
+      key: 'progress-panel.bell',
+      label: 'Also notify through the terminal',
+      kind: 'choice',
+      value: 'on',
+      options: ['on', 'off'],
+      provider: 'plugin',
+      isLocked: false,
+    },
+    {
+      key: 'progress-panel.autoStart',
+      label: 'Start in every new session',
+      kind: 'choice',
+      value: 'on',
+      options: ['on', 'off'],
+      provider: 'plugin',
+      isLocked: false,
+    },
+    {
+      key: 'progress-panel.pipelinesDefault',
+      label: 'Pipelines in new sessions',
+      kind: 'choice',
+      value: 'off',
+      options: ['on', 'off'],
+      provider: 'plugin',
+      isLocked: false,
+    },
+  ]
+  on('config.list', () => ({ value: rows }) as never)
+  await start($)
+  await update($, { now: 'n' })
+  for (const width of [80, 40]) {
+    const ui = await pane($, width)
+    await ui.press({ key: 'settings:open' })
+    const all = await ui.findAll({ type: 'Text' })
+    const headings = all
+      .map(x => x.text)
+      .filter(x => ['Reporting', 'Pipelines', 'Notifications', 'Pane'].includes(x ?? ''))
+    expect(headings).toEqual(['Reporting', 'Pipelines', 'Notifications', 'Pane'])
+    // The value is its own Text in the right column — never cut, whatever the width.
+    const on = all.find(x => x.text === 'on' && x.props.bold === true)
+    expect(on?.props.color).toBe('green')
+    const off = all.find(x => x.text === 'off')
+    expect(off?.props.color).toBe('yellow')
+    // `default` is the palette's own default: cyan, not bold, marked "(default)".
+    const choice = all.find(x => x.text === 'default')
+    expect(choice?.props).toMatchObject({ color: 'cyan', bold: false })
+    expect(all.some(x => x.text === '(default)')).toBe(true)
+    await ui.press({ key: 'settings:back' })
+    await ui.unmount()
+  }
 })

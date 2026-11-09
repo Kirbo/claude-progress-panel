@@ -60,6 +60,12 @@ export type Task = {
   /** The subagent working on it (0.23.0): its Agent call's description or its id; the pane shows
    *  that agent's live progress under the task. */
   agent?: string
+  /** The pipeline this task waits on (0.23.2): a watch key. The pane shows its state on the task, and
+   *  when it finishes the task closes by itself — `done` on green, `failed` on red. */
+  pipeline?: string
+  /** Still open, not updated in a turn that ended past the end-of-turn check (0.23.2): the pane
+   *  marks it, until the next update to the task. */
+  unconfirmed?: true
   /** Made by the plugin for a subagent that reported while working on no task (0.23.0): replaced
    *  as soon as the coordinator links a task of its own to that agent. */
   auto?: true

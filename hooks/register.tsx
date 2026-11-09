@@ -40,6 +40,9 @@ import {
   isBlank,
   isClosed,
   linkedAgent,
+  linkPushedPipeline,
+  listSignature,
+  markUnconfirmed,
   matchesTask,
   mergeScan,
   mergeSidecar,
@@ -54,11 +57,16 @@ import {
   reopenAgent,
   SORTS,
   STATUSES,
+  settleLinkedTasks,
   sortTasks,
   splitMatches,
+  staleTasks,
   stepCounts,
   syncAgents,
+  taskPipeline,
   timeLeft,
+  trackedByPipeline,
+  untouchedDoing,
   visibleTasks,
   waitingOnFrom,
   withAutoTask,
@@ -91,7 +99,15 @@ import {
   visiblePipelines,
 } from './pipelines'
 import { ciProvider, parsePushes, pushedRef, resolvePath } from './push'
-import { notifiesFinish, readSettings, type Settings, tint } from './settings'
+import {
+  groupSettings,
+  isChangedSetting,
+  notifiesFinish,
+  readSettings,
+  type Settings,
+  tint,
+  valueTone,
+} from './settings'
 import {
   active,
   defaultsFrom,
@@ -157,7 +173,7 @@ const releasing = atom(
   { shape: 'release-1' },
 )
 // The version this copy runs, read from its own manifest once.
-let manifest: { version: string; repository: string } | undefined
+let manifest: { version: string; repository: string; defaults: Record<string, string> } | undefined
 // GitLab cannot push its releases to a local plugin, so the newest one is looked up — at most every
 // 6 h across every session on the machine (the answer is shared in the plugin's store).
 // poll-exception: no push from GitLab to a local plugin
@@ -218,6 +234,87 @@ let settings: Settings = readSettings({})
 // prompt or main-loop tool call.
 let sessionToggles: Toggles | undefined
 const pendingNotes: string[] = []
+
+// A task never stays in a state that is no longer true (0.23.2). When this turn began (the person's
+// prompt), the last list the end-of-turn check stopped on (the same list never stops a turn twice),
+// and the open tasks already asked about in their current state.
+let turnStartMs: number | undefined
+let lastBlocked = ''
+const staleTold = new Map<string, string>()
+const TASK_STALE_AFTER_MS = 20 * 60_000
+const UNTOUCHED_AFTER_MS = 10 * 60_000
+
+// Something live tracks the task: its pipeline still runs, or its linked agent is still at work.
+function isTracked(file: SessionFile, task: Task): boolean {
+  if (trackedByPipeline(file, task)) return true
+  const agent = task.agent ? linkedAgent(file, task) : undefined
+  return agent !== undefined && agent.endedAt === null
+}
+
+const minutesSince = (iso: string, nowMs: number) =>
+  Math.max(0, Math.round((nowMs - Date.parse(iso)) / 60_000))
+
+// The person's prompt: a turn begins. Each open task untouched for 20 min, nothing tracking it, is
+// asked about once in its current state — never again until it changes.
+async function staleNudges($: EngineInterface, options: PluginOptions): Promise<string[]> {
+  turnStartMs = await $.clock.now()
+  if (!isOn(options, 'reporting') || !isOn(options, 'tasks')) return []
+  const dir = await progressDir($, options)
+  if (!dir) return []
+  const own = await ownFile($, dir)
+  const stale = staleTasks(own, turnStartMs, TASK_STALE_AFTER_MS, staleTold, task => isTracked(own, task))
+  return stale.map(task => {
+    staleTold.set(task.id, task.updatedAt)
+    return t('stale.nudge', {
+      id: task.id,
+      task: task.title,
+      status: task.status,
+      min: minutesSince(task.updatedAt, turnStartMs ?? 0),
+    })
+  })
+}
+
+// The end of the turn: a `doing` task untouched this turn (and for 10 min), nothing tracking it,
+// stops the turn ONCE with the list — the agent updates each to its true state. The same list never
+// stops twice (a second stop passes and the tasks are marked unconfirmed in the pane), so it can
+// never loop.
+async function endOfTurnCheck(
+  $: EngineInterface,
+  options: PluginOptions,
+  e: unknown,
+): Promise<string | undefined> {
+  if (turnStartMs === undefined || !isOn(options, 'reporting') || !isOn(options, 'tasks')) return undefined
+  const dir = await progressDir($, options)
+  if (!dir) return undefined
+  const own = await ownFile($, dir)
+  const nowMs = await $.clock.now()
+  const list = untouchedDoing(own, turnStartMs, nowMs, UNTOUCHED_AFTER_MS, task => isTracked(own, task))
+  if (list.length === 0) {
+    lastBlocked = ''
+    return undefined
+  }
+  const signature = listSignature(list)
+  const again = (e as { stop_hook_active?: unknown }).stop_hook_active === true
+  if (again || signature === lastBlocked) {
+    await exclusive(async () => {
+      const file = await ownFile($, dir)
+      const marked = markUnconfirmed(
+        file,
+        list.map(task => task.id),
+      )
+      if (marked !== file) await save($, dir, marked)
+    })
+    return undefined
+  }
+  lastBlocked = signature
+  return t('stop.untouched', {
+    list: list
+      .map(task =>
+        t('stop.untouchedLine', { id: task.id, task: task.title, min: minutesSince(task.updatedAt, nowMs) }),
+      )
+      .join('\n'),
+  })
+}
 // Linked agents that finished, not yet told to the coordinator (its next progress_update answer, or
 // its next main-loop tool call — once).
 const finishedLinks: string[] = []
@@ -371,6 +468,11 @@ const INPUT_SCHEMA = {
           detail: {
             type: 'string',
             description: 'A longer description, shown when the person unfolds the task; "" clears it.',
+          },
+          pipeline: {
+            type: 'string',
+            description:
+              'The pipeline this task waits on (a watch key, e.g. "group/name@<sha>"): the task then closes by itself — done when it goes green, failed when red. A push you run links its pipeline to your one `doing` task of that repo automatically. "" clears.',
           },
           steps: {
             type: 'array',
@@ -683,18 +785,26 @@ async function forgetSession($: EngineInterface, options: PluginOptions, id: str
   })
 }
 
-async function ownManifest($: EngineInterface): Promise<{ version: string; repository: string }> {
+async function ownManifest(
+  $: EngineInterface,
+): Promise<{ version: string; repository: string; defaults: Record<string, string> }> {
   if (!manifest) {
     const text = await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`).catch(() => undefined)
-    let raw: { version?: unknown; repository?: unknown } = {}
+    let raw: { version?: unknown; repository?: unknown; userConfig?: unknown } = {}
     try {
       raw = text === undefined ? {} : JSON.parse(text)
     } catch {
       raw = {}
     }
+    // Each setting's built-in default (the Settings view draws a changed one bold).
+    const defaults: Record<string, string> = {}
+    if (typeof raw.userConfig === 'object' && raw.userConfig !== null)
+      for (const [field, spec] of Object.entries(raw.userConfig as Record<string, { default?: unknown }>))
+        defaults[field] = spec?.default === undefined ? '' : String(spec.default)
     manifest = {
       version: typeof raw.version === 'string' ? raw.version : '',
       repository: typeof raw.repository === 'string' ? raw.repository : '',
+      defaults,
     }
   }
   return manifest
@@ -1336,8 +1446,25 @@ async function pollPipelines($: EngineInterface, options: PluginOptions): Promis
   await exclusive(async () => {
     const file = await ownFile($, dir)
     const pipelines = (file.pipelines ?? []).map(p => fresh.find(f => f.key === p.key) ?? p)
-    await save($, dir, { ...file, pipelines })
+    await save($, dir, settleTasks({ ...file, pipelines }, at))
   })
+}
+
+// Tasks waiting on a pipeline that finished close by themselves; the main loop is told once.
+function settleTasks(file: SessionFile, at: string): SessionFile {
+  const { file: next, settled } = settleLinkedTasks(file, at, {
+    green: id => t('task.pipelineGreen', { id }),
+    red: (id, jobs) => t('task.pipelineRed', { id, jobs }),
+    canceled: id => t('task.pipelineCanceled', { id }),
+  })
+  for (const s of settled)
+    pendingNotes.push(
+      t(s.outcome === 'done' ? 'notice.taskPipelineDone' : 'notice.taskPipelineFailed', {
+        task: s.task.title,
+        note: s.task.note ?? '',
+      }),
+    )
+  return next
 }
 
 // Other sessions' unfinished pipelines they stopped polling (ended, or killed without ending):
@@ -1563,7 +1690,7 @@ async function watchPushes(
   if (!dir) return []
   const base = typeof call.cwd === 'string' && call.cwd ? call.cwd : await $.session.cwd()
   const home = (await $.env.get('HOME')) ?? undefined
-  const watches: WatchInput[] = []
+  const watches: (WatchInput & { repo: string })[] = []
   for (const push of pushes)
     watches.push(...(await pushWatches($, options, resolvePath(base, push.dir, home), push, notes)))
   if (watches.length === 0) return []
@@ -1573,7 +1700,17 @@ async function watchPushes(
     const before = own.pipelines ?? []
     const watched = applyWatch(before, watches, [], at)
     const added = watched.list.filter(p => !before.some(old => old.key === p.key))
-    const file = { ...own, pipelines: watched.list }
+    let file: SessionFile = { ...own, pipelines: watched.list }
+    // Each new pipeline links itself to the one `doing` task of its repo: that task now closes when
+    // the pipeline does (never kept open by hand to wait for CI).
+    if (isOn(options, 'tasks'))
+      for (const p of added) {
+        const repo = watches.find(w => w.sha === p.sha && w.project === p.project)?.repo
+        if (!repo) continue
+        const linked = linkPushedPipeline(file, p.key, repo, at)
+        file = linked.file
+        if (linked.linked) notes.push(t('push.linkedTask', { task: linked.linked.title, key: p.key }))
+      }
     if (added.length > 0) await save($, dir, file)
     return { added, file }
   })
@@ -1837,6 +1974,28 @@ async function cancelPipeline(
 
 // The running pipeline ✕: the first press arms it (the label asks to confirm), a second within
 // CONFIRM_MS does it — never one accidental click.
+// ✕ on a running pipeline only hides it (0.23.2) — CI is never touched: this session's own stops
+// being watched (and polled); another session's is hidden in the panes through its sidecar.
+async function hidePipeline(
+  $: EngineInterface,
+  options: PluginOptions,
+  sessionId: string,
+  p: Pipeline,
+): Promise<void> {
+  const dir = await progressDir($, options)
+  if (!dir) return
+  if (sessionId === (await $.session.id())) {
+    await exclusive(async () => {
+      const own = await ownFile($, dir)
+      const pipelines = (own.pipelines ?? []).filter(x => x.key !== p.key)
+      if (pipelines.length !== (own.pipelines ?? []).length) await save($, dir, { ...own, pipelines })
+    })
+    await announce($, await read($, sessions), sessionId)
+    return
+  }
+  await dismiss($, options, sessionId, [{ id: `pipeline:${p.key}`, doneAt: null }])
+}
+
 async function pressPipelineX(
   $: EngineInterface,
   options: PluginOptions,
@@ -2063,7 +2222,7 @@ async function pushWatches(
   where: string,
   push: ReturnType<typeof parsePushes>[number],
   notes: string[],
-): Promise<WatchInput[]> {
+): Promise<(WatchInput & { repo: string })[]> {
   const git = async (...args: string[]) =>
     (await runCli($, ['git', '-C', where, ...args])).text?.trim() || undefined
   const root = await git('rev-parse', '--show-toplevel')
@@ -2115,7 +2274,7 @@ async function pushWatches(
     )
   const repo = baseName(root)
   const specs = push.refs.length > 0 ? push.refs : push.tags && !push.all ? [] : ['HEAD']
-  const out: WatchInput[] = []
+  const out: (WatchInput & { repo: string })[] = []
   for (const spec of specs) {
     const ref = pushedRef(spec)
     if (!ref) continue
@@ -2134,6 +2293,7 @@ async function pushWatches(
       sha,
       ...(provider !== 'command' && remote ? { host: remote.host } : {}),
       label: name ? `${repo} ${name}` : repo,
+      repo,
     })
   }
   return out
@@ -2303,8 +2463,13 @@ export const register: Register = (on, options) => {
     // The person answered: every automatic Needs-you item goes.
     await clearAutoNeeds($, options, () => true).catch(() => undefined)
     await noteTitle($, options, (e as { session_title?: unknown }).session_title)
+    const stale = await staleNudges($, options).catch(() => [] as string[])
     const result = withPendingNotes(await next(e))
-    return withReportingNudge($, options, isOn(options, 'reporting') ? withRemovalNotice(result) : result)
+    const nudged =
+      stale.length > 0
+        ? { ...result, additionalContext: [...(result.additionalContext ?? []), ...stale] }
+        : result
+    return withReportingNudge($, options, isOn(options, 'reporting') ? withRemovalNotice(nudged) : nudged)
   }).catch(() => undefined)
   // After every main-loop tool call: a task the person removed reaches the agent at its next step
   // (a subagent's calls never take the note — it is the coordinator's).
@@ -2371,9 +2536,13 @@ export const register: Register = (on, options) => {
     return next(e)
   }).catch(() => undefined)
   // The turn ended: no permission is pending any more.
+  // …and a `doing` task left untouched stops the turn once (`endOfTurnCheck`).
   on('classic.Stop', async ($, e, next) => {
     await clearAutoNeeds($, options, a => a.kind === 'permission').catch(() => undefined)
-    return next(e)
+    const result = await next(e)
+    if (result.block) return result
+    const block = await endOfTurnCheck($, options, e).catch(() => undefined)
+    return block ? { ...result, block } : result
   }).catch(() => undefined)
 
   on('session.end', async ($, e, next) => {
@@ -2516,6 +2685,7 @@ export const register: Register = (on, options) => {
       await read($, sessions)
       await read($, configTick)
       const eff = switches(options)
+      const defaultsByField = (await ownManifest($)).defaults
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" gap={2}>
@@ -2539,54 +2709,108 @@ export const register: Register = (on, options) => {
                   gap={2}
                   hover={ROW_HOVER}
                 >
-                  <Button
-                    key={`setting:session:${f}`}
-                    label={t('settings.switchRow', {
-                      feature: t(`toggle.feature.${f}`),
-                      state: t(eff[f] ? 'toggle.on' : 'toggle.off'),
-                      source: t(own ? 'toggle.overridden' : 'toggle.default'),
-                    })}
-                    plain
-                    onPress={() => void setToggle($, options, f, !eff[f])}
-                  />
-                  {own ? (
+                  {leftSide(
                     <Button
-                      key={`setting:reset:${f}`}
-                      label={t('settings.reset')}
+                      key={`setting:session:${f}`}
+                      label={t('settings.switchRow', {
+                        feature: t(`toggle.feature.${f}`),
+                        state: t(eff[f] ? 'toggle.on' : 'toggle.off'),
+                        source: t(own ? 'toggle.overridden' : 'toggle.default'),
+                      })}
                       plain
-                      dimColor
-                      onPress={() => void setToggle($, options, f, undefined)}
-                    />
-                  ) : null}
+                      onPress={() => void setToggle($, options, f, !eff[f])}
+                    >
+                      <Text wrap="truncate-end">{t(`toggle.feature.${f}`)}</Text>
+                    </Button>,
+                  )}
+                  {rightSide(
+                    own ? (
+                      <Button
+                        key={`setting:reset:${f}`}
+                        label={t('settings.reset')}
+                        plain
+                        dimColor
+                        onPress={() => void setToggle($, options, f, undefined)}
+                      />
+                    ) : null,
+                    <Text
+                      key={`setting:state:${f}`}
+                      color={tint(settings.palette, eff[f] ? 'green' : 'yellow')}
+                      bold={own || !eff[f]}
+                    >
+                      {t(eff[f] ? 'settings.on' : 'settings.off')}
+                    </Text>,
+                    <Text key={`setting:source:${f}`} dimColor>
+                      {t(own ? 'settings.sourceSession' : 'settings.sourceDefault')}
+                    </Text>,
+                  )}
                 </Box>
               )
             })}
           </Box>
           <Text bold>{t('settings.defaults')}</Text>
-          <Box flexDirection="column" paddingLeft={INDENT}>
-            {rows.map(r =>
-              r.options && r.options.length > 0 ? (
-                <Box key={`setting:row:${r.key}`} flexDirection="row" hover={ROW_HOVER}>
-                  <Button
-                    key={`setting:${r.key}`}
-                    label={t('settings.row', { label: r.label, value: String(r.value ?? '') })}
-                    plain
-                    onPress={() => void cycleConfig($, r.key, r.options ?? [], String(r.value ?? ''))}
-                  />
-                </Box>
-              ) : (
-                <Box key={`setting:row:${r.key}`} flexDirection="row" gap={1}>
-                  <Text>{t('settings.textLabel', { label: r.label })}</Text>
-                  <Input
-                    key={`setting:input:${r.key}`}
-                    placeholder={t('settings.empty')}
-                    value={String(r.value ?? '')}
-                    onSubmit={value => void setConfig($, r.key, value)}
-                  />
-                </Box>
-              ),
-            )}
-          </Box>
+          {/* Grouped under small headings; each row: its label on the left (cut with "…" when the
+              pane is narrow — never the value), its value in the right column, coloured — on green,
+              off yellow, a choice cyan, empty dim — and bold when it differs from its default. */}
+          {groupSettings(rows).map(group => (
+            <Box key={`setting:group:${group.heading}`} flexDirection="column" paddingLeft={INDENT}>
+              <Text dimColor>{t(group.heading)}</Text>
+              {group.rows.map(r => {
+                const value = String(r.value ?? '')
+                const field = r.key.slice(r.key.indexOf('.') + 1)
+                const changed = isChangedSetting(value, defaultsByField[field])
+                const tone = valueTone(value)
+                const color =
+                  tone === 'on' ? 'green' : tone === 'off' ? 'yellow' : tone === 'choice' ? 'cyan' : undefined
+                const shown = (
+                  <Box key={`setting:value:${r.key}`} flexDirection="row" flexShrink={0} gap={1}>
+                    <Text color={tint(settings.palette, color)} bold={changed} dimColor={tone === 'empty'}>
+                      {tone === 'empty' ? t('settings.empty') : value}
+                    </Text>
+                    {changed || tone === 'empty' ? null : <Text dimColor>{t('settings.defaultMark')}</Text>}
+                  </Box>
+                )
+                return r.options && r.options.length > 0 ? (
+                  <Box
+                    key={`setting:row:${r.key}`}
+                    flexDirection="row"
+                    justifyContent="space-between"
+                    gap={2}
+                    hover={ROW_HOVER}
+                  >
+                    {leftSide(
+                      <Button
+                        key={`setting:${r.key}`}
+                        label={t('settings.row', { label: r.label, value })}
+                        plain
+                        onPress={() => void cycleConfig($, r.key, r.options ?? [], value)}
+                      >
+                        <Text wrap="truncate-end">{r.label}</Text>
+                      </Button>,
+                    )}
+                    {shown}
+                  </Box>
+                ) : (
+                  <Box
+                    key={`setting:row:${r.key}`}
+                    flexDirection="row"
+                    justifyContent="space-between"
+                    gap={2}
+                  >
+                    {leftSide(<Text wrap="truncate-end">{t('settings.textLabel', { label: r.label })}</Text>)}
+                    <Box flexShrink={0}>
+                      <Input
+                        key={`setting:input:${r.key}`}
+                        placeholder={t('settings.empty')}
+                        value={value}
+                        onSubmit={next => void setConfig($, r.key, next)}
+                      />
+                    </Box>
+                  </Box>
+                )
+              })}
+            </Box>
+          ))}
           <Text dimColor>{t('settings.hint')}</Text>
         </Box>
       )
@@ -2757,21 +2981,55 @@ export const register: Register = (on, options) => {
                 </Text>
               </Button>
               {openLink(p.url)}
+              {/* Running: "⊘ stop" — the destructive one, red and apart, two presses — cancels (and
+                  by setting deletes) it in CI; "✕" beside it only hides the row, as on a finished one. */}
               {!finished && settings.runningPipelineX !== 'off' && cancellable(p) ? (
+                <Box key={`stopbox:${sessionId}:${p.key}`} flexDirection="column">
+                  <Button
+                    key={`cancelpipe:${sessionId}:${p.key}`}
+                    label={
+                      armedNow?.key === p.key && nowMs <= armedNow.untilMs
+                        ? t(
+                            settings.runningPipelineX === 'delete'
+                              ? 'pipe.confirmDelete'
+                              : 'pipe.confirmCancel',
+                          )
+                        : t('pipe.stop')
+                    }
+                    plain
+                    onPress={() => void pressPipelineX($, options, sessionId, p)}
+                  >
+                    <Text
+                      color={tint(settings.palette, 'red')}
+                      bold={armedNow?.key === p.key && nowMs <= armedNow.untilMs}
+                    >
+                      {armedNow?.key === p.key && nowMs <= armedNow.untilMs
+                        ? t(
+                            settings.runningPipelineX === 'delete'
+                              ? 'pipe.confirmDelete'
+                              : 'pipe.confirmCancel',
+                          )
+                        : t('pipe.stop')}
+                    </Text>
+                  </Button>
+                  <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }}>
+                    <Text dimColor>
+                      {t(
+                        settings.runningPipelineX === 'delete'
+                          ? 'pipe.stopHintDelete'
+                          : 'pipe.stopHintCancel',
+                      )}
+                    </Text>
+                  </Box>
+                </Box>
+              ) : null}
+              {!finished ? (
                 <Button
-                  key={`cancelpipe:${sessionId}:${p.key}`}
-                  label={
-                    armedNow?.key === p.key && nowMs <= armedNow.untilMs
-                      ? t(
-                          settings.runningPipelineX === 'delete'
-                            ? 'pipe.confirmDelete'
-                            : 'pipe.confirmCancel',
-                        )
-                      : t('pipe.dismiss')
-                  }
+                  key={`hidepipe:${sessionId}:${p.key}`}
+                  label={t('pipe.dismiss')}
                   plain
-                  dimColor={!(armedNow?.key === p.key && nowMs <= armedNow.untilMs)}
-                  onPress={() => void pressPipelineX($, options, sessionId, p)}
+                  dimColor
+                  onPress={() => void hidePipeline($, options, sessionId, p)}
                 />
               ) : null}
               {finished && p.finishedAt ? (
@@ -2895,6 +3153,22 @@ export const register: Register = (on, options) => {
           <Text dimColor>{hl(reason)}</Text>
         </Box>
       ) : null
+      // The pipeline it waits on (0.23.2): its state here — the task closes when it finishes.
+      const pipe = linkFile && !isClosed(task.status) ? taskPipeline(linkFile, task) : undefined
+      const pipeLine = pipe ? (
+        <Box paddingLeft={INDENT}>
+          <Text dimColor wrap="truncate-end">
+            {t('pane.linkedPipeline', { label: pipe.label ?? pipe.key, state: pipe.state })}
+          </Text>
+        </Box>
+      ) : null
+      // Still open and untouched when a turn ended past the end-of-turn check: marked until updated.
+      const unconfirmedLine =
+        task.unconfirmed && !isClosed(task.status) ? (
+          <Box paddingLeft={INDENT}>
+            <Text dimColor>{t('pane.unconfirmed', { min: minutesSince(task.updatedAt, nowMs) })}</Text>
+          </Box>
+        ) : null
       // A linked task shows the agent's own steps (never a copy in the task).
       if (linked) task = { ...task, steps: linked.tasks.map(x => ({ title: x.title, status: x.status })) }
       // Nothing more to show: one plain line.
@@ -2930,6 +3204,8 @@ export const register: Register = (on, options) => {
             </Box>
             {note}
             {linkLine}
+            {pipeLine}
+            {unconfirmedLine}
           </Box>
         )
       // Details or subtasks: the title folds them, its steps counted on the right like a pipeline's jobs.
@@ -2989,6 +3265,8 @@ export const register: Register = (on, options) => {
           </Box>
           {note}
           {linkLine}
+          {pipeLine}
+          {unconfirmedLine}
           {isOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT * 2}>
               {/* A title the row cut with "…": whole here, wrapped. */}

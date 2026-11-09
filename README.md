@@ -127,13 +127,16 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 
 ### Pipelines
 
-**A running pipeline's ✕ cancels it** — and, by default, deletes it from the CI — through your
-own `glab` / `gh` (GitLab: the pipeline's cancel, then delete — deleting needs the Maintainer or
-Owner role, so a refused delete leaves it cancelled and says so on its row; GitHub: the run's
-cancel, then delete). The first press only asks ("cancel + delete? ✕"); a second press within 5 s
-does it, then the row goes. `runningPipelineX` = `cancel` only cancels, `off` shows no ✕ on a
-running pipeline. Gitea / Forgejo and a custom CI command offer no ✕ while running (no cancel or
-delete verbs the plugin can rely on there).
+**A running pipeline's row has two buttons, kept apart:** **✕ only hides the row** (this session's
+own pipeline stops being watched; another session's is hidden in the panes) — it never touches the
+CI, exactly like ✕ on a finished row. The red **⊘ stop** cancels it — and, by default, deletes it
+from the CI — through your own `glab` / `gh` (GitLab: the pipeline's cancel, then delete — deleting
+needs the Maintainer or Owner role, so a refused delete leaves it cancelled and says so on its row;
+GitHub: the run's cancel, then delete). Its first press only asks ("⊘ cancel + delete?"); a second
+press within 5 s does it, then the row goes. The setting **Pipeline ⊘ stop button**
+(`runningPipelineX`) = `cancel` only cancels, `off` hides the ⊘ button (✕ stays). Gitea / Forgejo
+and a custom CI command offer no ⊘ while running (no cancel or delete verbs the plugin can rely on
+there).
 
 **Every `git push` the agent runs is watched automatically** — no tool call: when the push lands,
 the plugin reads the repo's CI off its files (`.gitlab-ci.yml` → GitLab, `.github/workflows/` →
@@ -200,6 +203,20 @@ folded "Finished" row.
   refresh through `glab` / `gh` / `tea` / your command, which a surface without a local CLI (e.g.
   the mobile app) cannot run. The rest of the pane works everywhere.
 
+### Tasks never stay in a state that is no longer true
+
+- **A pushed task closes with its pipeline.** A `git push` links its pipeline to your one `doing`
+  task of that repo (none or several: no link — never a guess); the task shows the pipeline's state
+  and becomes **done** when it goes green, **failed** (naming the failing job) when it goes red. The
+  agent is told; a status it set after the pipeline finished wins. Link one by hand with the task's
+  `pipeline` field.
+- **The end of a turn checks.** A `doing` task not touched during the turn (and for 10 min), with no
+  running pipeline or agent behind it, stops the turn once with the list, so the agent updates each
+  to its true state. The same list never stops a turn twice — the next stop passes and those tasks
+  are marked **unconfirmed** in the pane until their next update.
+- **Staleness nudge.** An open task untouched for 20 min is asked about once with your next prompt
+  ("has been blocked for 40 min with no update — is that still true?"), never again in that state.
+
 ### Settings
 
 **⚙ Settings** in the pane's top-right corner (or `/progress settings`) opens them inside the pane
@@ -208,8 +225,13 @@ folded "Finished" row.
 - **This session** — the four switches (reporting, tasks, agents, pipelines), each showing on/off
   and whether that is the default or this session's own choice; press to change, **reset to
   default** to drop the session's own choice.
-- **Defaults for new sessions** — every option below: press a row to step through its values; a
-  text field (progress folder, custom CI command) takes what you type on Enter.
+- **Defaults for new sessions** — every option below, grouped under Reporting, Pipelines,
+  Notifications, Pane and Storage & updates: press a row to step through its values; a text field
+  (progress folder, custom CI command) takes what you type on Enter.
+
+Each row's value sits in the right column (a long label is cut with "…", never the value) and is
+coloured — on green, off yellow, a choice cyan, an empty one dim — and **bold when it differs from
+its default**, so what you changed stands out; an unchanged one says "(default)".
 
 They write the plugin's own settings — the same ones `/plugin configure
 progress-panel@claude-progress-panel` (or `/config`, or `--config KEY=VALUE` at install) changes, so
@@ -244,7 +266,7 @@ built-in default below.
 | `pipelineRefreshSec`    | 10, 15, 30, 60                          | 15                     |
 | `updateCheck`           | on, off                                 | on                     |
 | `palette`               | default, colorblind, none               | default                |
-| `runningPipelineX`      | delete, cancel, off                     | delete                 |
+| `runningPipelineX` (⊘ stop button) | delete, cancel, off                | delete                 |
 
 `autoOpen` has no "always": Claude Code itself places a pane the plugin opens unasked only from
 ~144 columns, and a plugin cannot force it narrower.
