@@ -99,6 +99,10 @@ function engine(
   on('classic.PostToolUse', () => ({}) as never)
   on('classic.SubagentStop', () => ({}) as never)
   on('classic.SubagentStart', () => ({}) as never)
+  on('classic.Notification', () => ({}) as never)
+  on('classic.PostToolUseFailure', () => ({}) as never)
+  on('classic.PermissionDenied', () => ({}) as never)
+  on('classic.Stop', () => ({}) as never)
   // The session's subagents, as $.agent.list() answers (their Agent call's description).
   const agents: { id: string; description: string; type: string; status: string }[] = []
   on('agent.list', () => ({ value: agents }) as never)
@@ -2968,6 +2972,70 @@ test("another session's verdict is reused; a commit that never got a pipeline is
   expect(await cmd($, 'pipelines recheck')).toContain("Forgot what was remembered about app's CI")
   expect(memoryOf(disk)['/w/app|']).toBeUndefined()
 })
+
+test("Claude Code's waits become Needs-you items — and go as the wait ends; the agent's own stay", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-p', description: 'Lane B', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, { now: 'n', needsYou: ['Approve the push'] })
+  const auto = () => (read(disk, `${DIR}/s-me.json`).autoNeeds ?? []).map(a => a.text)
+  // A permission prompt: an item, toasted like any ask, in the status line.
+  await $.classic.Notification({
+    notification_type: 'permission_prompt',
+    message: 'Claude needs your permission to use Bash',
+  } as never)
+  expect(auto()).toEqual(['Permission: Claude needs your permission to use Bash'])
+  // A subagent's prompt names it.
+  await $.classic.Notification({
+    notification_type: 'permission_prompt',
+    message: 'Claude needs your permission to use Write',
+    agent_id: 'sub-p',
+  } as never)
+  expect(auto()).toContain('Lane B needs permission: Claude needs your permission to use Write')
+  // The main loop's tool ran: its item goes; the subagent's stays until its own call.
+  await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'p1',
+  } as never)
+  expect(auto()).toEqual(['Lane B needs permission: Claude needs your permission to use Write'])
+  await $.classic.PermissionDenied({
+    tool_name: 'Write',
+    tool_input: {},
+    tool_use_id: 'p2',
+    reason: 'no',
+    agent_id: 'sub-p',
+  } as never)
+  expect(auto()).toEqual([])
+  // Idle: until the next prompt.
+  await $.classic.Notification({
+    notification_type: 'idle_prompt',
+    message: 'Claude is waiting for your input',
+  } as never)
+  expect(auto()).toEqual(['Waiting for your reply'])
+  await $.classic.Stop({ stop_hook_active: false } as never)
+  expect(auto()).toEqual(['Waiting for your reply'])
+  await $.classic.UserPromptSubmit({ prompt: 'yes' } as never)
+  expect(auto()).toEqual([])
+  // The agent's own ask was never touched.
+  expect(read(disk, `${DIR}/s-me.json`).needsYou).toEqual(['Approve the push'])
+})
+
+test(
+  'the automatic Needs-you kinds follow their settings',
+  { options: { autoNeedsPermission: 'off' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    engine(on, disk)
+    await start($)
+    await $.classic.Notification({ notification_type: 'permission_prompt', message: 'x' } as never)
+    expect(disk.files.has(`${DIR}/s-me.json`)).toBe(false)
+    await $.classic.Notification({ notification_type: 'idle_prompt', message: 'y' } as never)
+    expect(read(disk, `${DIR}/s-me.json`).autoNeeds?.map(a => a.kind)).toEqual(['idle'])
+  },
+)
 
 test('a session whose system prompt carried the rule gets no second copy, only the reminder until it reports', async ($, on) => {
   engine(on, makeDisk())

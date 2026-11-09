@@ -281,6 +281,7 @@ export function isBlank(file: SessionFile): boolean {
     file.tasks.length === 0 &&
     !file.now &&
     file.needsYou.length === 0 &&
+    (file.autoNeeds ?? []).length === 0 &&
     (file.pipelines ?? []).length === 0 &&
     (file.agents ?? []).length === 0
   )

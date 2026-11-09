@@ -95,6 +95,22 @@
       "options": ["on", "off"],
       "default": "on",
       "required": false
+    },
+    "autoNeedsPermission": {
+      "type": "string",
+      "title": "Needs you: permission prompts",
+      "description": "on: a session waiting on a permission prompt shows it under Needs you (naming the subagent that asks) until it is answered.",
+      "options": ["on", "off"],
+      "default": "on",
+      "required": false
+    },
+    "autoNeedsIdle": {
+      "type": "string",
+      "title": "Needs you: waiting for your reply",
+      "description": "on: a session waiting for your reply shows it under Needs you until you answer.",
+      "options": ["on", "off"],
+      "default": "on",
+      "required": false
     }
   }
 }

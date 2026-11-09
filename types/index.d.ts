@@ -118,6 +118,10 @@ export type SessionFile = {
   /** This session's own feature switches (0.23.0), over the plugin's defaults: `/progress <feature>
    *  on|off` or the pane's buttons. Absent = the defaults. */
   toggles?: { reporting?: boolean; tasks?: boolean; agents?: boolean; pipelines?: boolean }
+  /** Needs-you items Claude Code's own waiting states raised (0.23.0) — a permission prompt, the
+   *  idle "waiting for your input" — apart from the agent's `needsYou` (which every report
+   *  replaces); cleared as soon as the wait ends. */
+  autoNeeds?: { kind: 'permission' | 'idle'; text: string; at: string; agentId?: string }[]
   now?: string
   needsYou: string[]
   updatedAt: string

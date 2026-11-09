@@ -610,7 +610,7 @@ function liveNeeds(all: Loaded): { project: string; item: string; key: string }[
     .filter(s => s.file.session.endedAt === null)
     .sort((a, b) => Date.parse(b.file.updatedAt) - Date.parse(a.file.updatedAt))
     .flatMap(s =>
-      s.file.needsYou.map(item => ({
+      [...s.file.needsYou, ...(s.file.autoNeeds ?? []).map(a => a.text)].map(item => ({
         project: sessionName(s.file),
         item,
         key: `${s.file.session.id}\u0000${item}`,
@@ -1421,6 +1421,65 @@ async function setToggle(
   if (feature === 'reporting' && after.reporting) void $.ui.open(paneArgs(options))
 }
 
+// Claude Code's own waiting states as Needs-you items of this session: a permission prompt (naming
+// the subagent that asks) and the idle "waiting for your reply" — each kind behind its setting, only
+// while reporting is on. Kept apart from the agent's own `needsYou`, never touching it.
+async function raiseAutoNeed($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
+  const n = e as { notification_type?: unknown; message?: unknown; agent_id?: unknown }
+  const kind =
+    n.notification_type === 'permission_prompt'
+      ? 'permission'
+      : n.notification_type === 'idle_prompt'
+        ? 'idle'
+        : undefined
+  if (!kind || !isOn(options, 'reporting')) return
+  if (optionString(options, kind === 'permission' ? 'autoNeedsPermission' : 'autoNeedsIdle') === 'off') return
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const agentId = typeof n.agent_id === 'string' && n.agent_id ? n.agent_id : undefined
+  const message = oneLine(typeof n.message === 'string' ? n.message : '')
+  let text = t('auto.idle')
+  if (kind === 'permission') {
+    const agent = agentId
+      ? (await $.agent.list().catch(() => [])).find(a => a.id === agentId)?.description
+      : undefined
+    text = agent ? t('auto.permissionAgent', { agent, message }) : t('auto.permission', { message })
+  }
+  const at = await nowIso($)
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const rest = (own.autoNeeds ?? []).filter(a => !(a.kind === kind && a.agentId === agentId))
+    await save($, dir, { ...own, autoNeeds: [...rest, { kind, text, at, ...(agentId ? { agentId } : {}) }] })
+  })
+  await announce($, await read($, sessions), await $.session.id())
+}
+
+// The wait ended: the automatic items it raised go (`which` picks them); the agent's never.
+async function clearAutoNeeds(
+  $: EngineInterface,
+  options: PluginOptions,
+  which: (a: NonNullable<SessionFile['autoNeeds']>[number]) => boolean,
+): Promise<void> {
+  const dir = await progressDir($, options)
+  if (!dir) return
+  // A plain read first: most tool calls clear nothing, and must not write.
+  const plain = await readOwnPlain($, options)
+  if (plain === 'nowhere' || !plain?.autoNeeds?.some(which)) return
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const kept = (own.autoNeeds ?? []).filter(a => !which(a))
+    if (kept.length !== (own.autoNeeds ?? []).length) await save($, dir, { ...own, autoNeeds: kept })
+  })
+  await announce($, await read($, sessions), await $.session.id())
+}
+
+// The permission was answered (the tool ran, failed or was denied): that loop's item goes.
+async function permissionAnswered($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
+  const agentId = (e as { agent_id?: unknown }).agent_id
+  const id = typeof agentId === 'string' && agentId ? agentId : undefined
+  await clearAutoNeeds($, options, a => a.kind === 'permission' && a.agentId === id).catch(() => undefined)
+}
+
 // `/progress pipelines recheck` (and `/progress doctor`): forget what is remembered about this repo's
 // CI, so its next push is judged afresh.
 async function forgetCiVerdicts($: EngineInterface, options: PluginOptions): Promise<string> {
@@ -1852,6 +1911,8 @@ export const register: Register = (on, options) => {
     return typeof id === 'string' && id ? withSubagentRule($, options, id, result) : result
   }).catch(() => undefined) // a failure here never holds a subagent up: the hook counts as absent
   on('classic.UserPromptSubmit', async ($, e, next) => {
+    // The person answered: every automatic Needs-you item goes.
+    await clearAutoNeeds($, options, () => true).catch(() => undefined)
     await noteTitle($, options, (e as { session_title?: unknown }).session_title)
     const result = withPendingNotes(await next(e))
     return withReportingNudge($, options, isOn(options, 'reporting') ? withRemovalNotice(result) : result)
@@ -1875,6 +1936,7 @@ export const register: Register = (on, options) => {
   })
   // A subagent's first call instead carries the reporting rule it never got (`withSubagentRule`).
   on('classic.PostToolUse', async ($, e, next) => {
+    await permissionAnswered($, options, e)
     const pushNotes: string[] = []
     const pushed = isOn(options, 'pipelines')
       ? await watchPushes($, options, e, pushNotes).catch(() => [] as string[])
@@ -1885,6 +1947,25 @@ export const register: Register = (on, options) => {
     if (agentId) return result
     const noted = withPendingNotes(result)
     return isOn(options, 'reporting') ? withRemovalNotice(noted) : noted
+  })
+
+  // Claude Code waits on the person: a permission prompt or the idle prompt becomes a Needs-you item.
+  on('classic.Notification', async ($, e, next) => {
+    await raiseAutoNeed($, options, e).catch(() => undefined)
+    return next(e)
+  })
+  on('classic.PostToolUseFailure', async ($, e, next) => {
+    await permissionAnswered($, options, e)
+    return next(e)
+  })
+  on('classic.PermissionDenied', async ($, e, next) => {
+    await permissionAnswered($, options, e)
+    return next(e)
+  })
+  // The turn ended: no permission is pending any more.
+  on('classic.Stop', async ($, e, next) => {
+    await clearAutoNeeds($, options, a => a.kind === 'permission').catch(() => undefined)
+    return next(e)
   })
 
   on('session.end', async ($, e, next) => {

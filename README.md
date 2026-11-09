@@ -60,6 +60,11 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   works in several, puts every decision only you can make in **Needs you**, and watches every push
   to a repo with CI. Nothing to add to your `CLAUDE.md`; the bundled `progress-panel` skill has the
   details.
+- **Claude Code's own waits are Needs you too:** a session stopped on a permission prompt
+  ("Permission: …", or "<agent> needs permission: …" for a subagent) or waiting for your reply
+  shows it under **Needs you**, toasted to the other sessions, until the wait ends — the tool ran
+  or was denied, the turn ended, or you answered. The agent's own asks are never touched.
+  Settings `autoNeedsPermission` / `autoNeedsIdle` (both on).
 - **Sessions** are named as Claude Code names them: a `/rename` shows from your next prompt on
   (else the repo or folder name).
 - **Tasks:** listed in plan order by default — the order the agent will do them (it reshuffles
@@ -185,6 +190,8 @@ folded "Finished" row.
 | `tasksDefault`          | on, off                                 | on                     |
 | `agentsDefault`         | on, off                                 | on                     |
 | `pipelinesDefault`      | on, off                                 | on                     |
+| `autoNeedsPermission`   | on, off                                 | on                     |
+| `autoNeedsIdle`         | on, off                                 | on                     |
 
 Change them with `/plugin configure progress-panel@claude-progress-panel` (or
 `claude plugin configure …`, or `--config KEY=VALUE` at install).

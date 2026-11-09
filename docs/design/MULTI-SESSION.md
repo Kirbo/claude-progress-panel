@@ -428,6 +428,18 @@ prompt) from the settings `paneColumns` (default 84 — the content's natural wi
 the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when it opens unasked
 (from 144 columns) are Claude Code's — a plugin cannot open itself narrower.
 
+## Claude Code's waits as Needs you (0.23.0)
+
+Asked 2026-11-09 (item 13). `classic.Notification` (`notification_type` `permission_prompt` /
+`idle_prompt`, `message`, and `agent_id` in a subagent) raises an item in the session's own
+`autoNeeds` — apart from the agent's `needsYou`, which every report replaces wholesale — one per
+kind and loop (a subagent's names it by its `$.agent.list()` description). `liveNeeds` reads both,
+so the status line, the toasts and the pane's Needs you show them like any ask. Cleared as the wait
+ends: that loop's permission item by its next `PostToolUse` / `PostToolUseFailure` /
+`PermissionDenied`, every permission item by `Stop`, everything by the next `UserPromptSubmit`;
+a plain read first, so a tool call with nothing to clear writes nothing. Behind `autoNeedsPermission`
+/ `autoNeedsIdle` (both on) and the reporting switch.
+
 ## Time left: measured, not guessed (0.23.0)
 
 Asked 2026-11-09 (item 11): agents' estimates were far too pessimistic — human-effort hours for work
