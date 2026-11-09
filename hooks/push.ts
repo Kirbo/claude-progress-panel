@@ -59,8 +59,13 @@ function segments(command: string): string[][] {
   return out.filter(s => s.length > 0)
 }
 
+// An absolute path on any OS: `/…`, `~…`, a drive (`C:/…`, `C:\…`) or a UNC share (`\\host\…`).
+function isAbsolute(path: string): boolean {
+  return /^([/~]|[A-Za-z]:[\\/]|\\\\)/.test(path)
+}
+
 function joinDir(base: string | undefined, next: string): string {
-  if (!base || next.startsWith('/') || next.startsWith('~')) return next
+  if (!base || isAbsolute(next)) return next
   return `${base.replace(/\/+$/, '')}/${next}`
 }
 
@@ -79,11 +84,13 @@ export function parsePushes(command: string): PushCall[] {
     let i = 0
     while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i] as string)) i += 1
     const head = words[i]
-    if (head === 'cd' && words[i + 1] !== undefined) {
-      cwd = joinDir(cwd, words[i + 1] as string)
+    if (head === 'cd' || head === 'pushd') {
+      // `cd /d <dir>` (cmd's drive switch) names its folder after the flag.
+      const target = words[i + 1] === '/d' || words[i + 1] === '/D' ? words[i + 2] : words[i + 1]
+      if (target !== undefined) cwd = joinDir(cwd, target)
       continue
     }
-    if (head !== 'git') continue
+    if (head !== 'git' && head !== 'git.exe') continue
     i += 1
     let dir = cwd
     while (i < words.length && (words[i] as string).startsWith('-')) {
@@ -138,16 +145,19 @@ export function pushedRef(refspec: string): PushedRef | undefined {
 
 /** Where a push ran: the command's folder, with the push's own `cd` / `-C` applied (`~/` = home). */
 export function resolvePath(base: string, rel: string | undefined, home: string | undefined): string {
-  let path = rel ?? base
-  if (path === '~' || path.startsWith('~/')) path = `${home ?? ''}${path.slice(1)}`
-  else if (!path.startsWith('/')) path = `${base.replace(/\/+$/, '')}/${path}`
+  const slashes = (p: string) => p.replace(/\\/g, '/')
+  let path = slashes(rel ?? base)
+  if (path === '~' || path.startsWith('~/')) path = `${slashes(home ?? '')}${path.slice(1)}`
+  else if (!isAbsolute(path)) path = `${slashes(base).replace(/\/+$/, '')}/${path}`
+  // A drive (`C:`) or a UNC share (`//host`) is kept as the root; everything else is POSIX.
+  const root = /^[A-Za-z]:/.exec(path)?.[0] ?? (path.startsWith('//') ? '/' : '')
   const parts: string[] = []
-  for (const part of path.split('/')) {
+  for (const part of path.slice(root.length).split('/')) {
     if (!part || part === '.') continue
     if (part === '..') parts.pop()
     else parts.push(part)
   }
-  return `/${parts.join('/')}`
+  return `${root}/${parts.join('/')}`
 }
 
 /** The CI a repository runs, by the files it carries (else the person's custom command, else none). */

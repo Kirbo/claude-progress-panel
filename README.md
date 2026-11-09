@@ -106,7 +106,10 @@ the plugin reads the repo's CI off its files (`.gitlab-ci.yml` → GitLab, `.git
 GitHub Actions, `.gitea/` or `.forgejo/workflows/` → Gitea/Forgejo, else your **Custom CI command**),
 the forge's host and project off the pushed remote (ssh or https, self-hosted included) and the
 pushed commit's sha, and watches that run. A push that fails, is rejected, is a dry run or deletes a
-branch watches nothing; a repo without CI neither. The agent still `watch`es a CI run by id, or by
+branch watches nothing; a repo without CI neither, nor a push to a mirror on another kind of forge
+(a GitLab-CI repo pushed to its GitHub mirror). It reads `cd`/`pushd` (Windows' `cd /d` and drive
+paths too), `git -C` and `git.exe`; a push through a git alias or a wrapper script it cannot see —
+there the agent's own `watch` (the rule) still covers it. The agent still `watch`es a CI run by id, or by
 commit sha (whole or abbreviated) before the run exists — another repo's, or a push made outside the
 session — and the pane follows it
 live: state, a progress bar of finished / all jobs while it runs, how long it has run (beside an

@@ -2865,6 +2865,10 @@ test('a failed, rejected or dry-run push, a delete and a repo without CI watch n
   ciFile(disk, '/w/alias/.gitlab-ci.yml')
   gitRepo(world, '/w/alias', { url: 'work:team/app.git' })
   await bash($, 'git push', { cwd: '/w/alias' })
+  // A GitLab-CI repo pushed to its GitHub mirror: GitHub runs none of it.
+  ciFile(disk, '/w/mirrored/.gitlab-ci.yml')
+  gitRepo(world, '/w/mirrored', { url: 'git@github.com:owner/app.git', remote: 'mirror', upstream: null })
+  await bash($, 'git push mirror main', { cwd: '/w/mirrored' })
   // Nothing watched, so nothing was ever written.
   expect(disk.files.has(`${DIR}/s-me.json`)).toBe(false)
 })

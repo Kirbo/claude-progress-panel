@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { apiHost, defaultHost, parseRemote, watchHost } from './forges'
+import { apiHost, defaultHost, forgeMatches, parseRemote, watchHost } from './forges'
 
 test('parseRemote: scp-style, ssh:// and https:// remotes → host + path, .git and users dropped', () => {
   expect(parseRemote('git@gitlab.com:KirboDev/agentic-coding/switchboard.git')).toEqual({
@@ -53,4 +53,18 @@ test('apiHost: a stored host, else the forge default (gitea/command have none)',
   expect(apiHost({ provider: 'github' })).toBe('github.com')
   // Absent provider = GitLab (files from before 0.10.0).
   expect(apiHost({})).toBe('gitlab.com')
+})
+
+test("forgeMatches: a repo's CI runs only on its own kind of forge — a mirror on another forge watches nothing", () => {
+  expect(forgeMatches('gitlab', 'gitlab.com')).toBe(true)
+  expect(forgeMatches('gitlab', 'git.example.com')).toBe(true)
+  // A GitLab-CI repo pushed to its GitHub mirror: GitHub runs no .gitlab-ci.yml.
+  expect(forgeMatches('gitlab', 'github.com')).toBe(false)
+  expect(forgeMatches('github', 'github.com')).toBe(true)
+  expect(forgeMatches('github', 'github.example.com')).toBe(true)
+  expect(forgeMatches('github', 'gitlab.com')).toBe(false)
+  expect(forgeMatches('gitea', 'codeberg.org')).toBe(true)
+  expect(forgeMatches('gitea', 'github.com')).toBe(false)
+  expect(forgeMatches('gitea', 'gitlab.com')).toBe(false)
+  expect(forgeMatches('command', 'github.com')).toBe(true)
 })

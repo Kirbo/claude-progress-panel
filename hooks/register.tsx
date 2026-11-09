@@ -4,7 +4,7 @@ import { atom, read, update } from 'claude-code'
 import type { Folds, Loaded, PipelineProvider, SortChoice } from '../types'
 import { commandArgv, parseCommandStatus } from './command'
 import { type Check, classifyCliError, classifyGitError, formatChecks } from './doctor'
-import { apiHost, parseRemote } from './forges'
+import { apiHost, forgeMatches, parseRemote } from './forges'
 import { parseGiteaJobs, parseGiteaRun, teaLoginFor } from './gitea'
 import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
 import { t, tn } from './i18n'
@@ -1381,6 +1381,8 @@ async function pushWatches(
   const url = isUrl ? remoteName : await git('remote', 'get-url', remoteName)
   const remote = parseRemote(url)
   if (provider !== 'command' && !remote) return []
+  // A mirror on another kind of forge runs none of this repo's CI.
+  if (remote && !forgeMatches(provider, remote.host)) return []
   const repo = baseName(root)
   const specs = push.refs.length > 0 ? push.refs : push.tags && !push.all ? [] : ['HEAD']
   const out: WatchInput[] = []

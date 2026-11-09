@@ -73,3 +73,21 @@ export function defaultHost(provider: PipelineProvider): string | undefined {
 export function apiHost(p: { provider?: PipelineProvider; host?: string }): string | undefined {
   return p.host ?? defaultHost(p.provider ?? 'gitlab')
 }
+
+// The public forges whose kind is certain from the host alone.
+const KNOWN_FORGE: Record<string, PipelineProvider> = {
+  'github.com': 'github',
+  'gitlab.com': 'gitlab',
+  'codeberg.org': 'gitea',
+}
+
+/**
+ * Whether a repo's CI (read off its files) runs on the forge a push went to. A self-hosted host
+ * could be any forge, so only a KNOWN public forge of another kind says no — a GitLab-CI repo pushed
+ * to its GitHub mirror starts no pipeline there. A custom command decides for itself.
+ */
+export function forgeMatches(provider: PipelineProvider, host: string): boolean {
+  if (provider === 'command') return true
+  const kind = KNOWN_FORGE[host.toLowerCase()]
+  return kind === undefined || kind === provider
+}

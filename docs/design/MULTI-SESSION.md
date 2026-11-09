@@ -188,6 +188,12 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   remote-tracking ref is not the pushed sha (rejected) neither. The watches go through `applyWatch`
   under the same lock as the tool's, so the agent's own `watch` of that sha is the same key, one
   row; the result's `additionalContext` tells the agent it is watched. Label `<repo> <branch>`.
+  Hardened (0.22.1): `cd /d <dir>`, `pushd`, `git.exe` and drive / UNC paths (`resolvePath` keeps
+  `C:` as the root, backslashes read as slashes); a push to a KNOWN public forge of another kind
+  than the repo's CI (`forgeMatches`: github.com / gitlab.com / codeberg.org) watches nothing — a
+  GitLab-CI repo's GitHub mirror; a self-hosted host could be any forge, so it is trusted. No
+  PowerShell tool exists on this engine (Windows pushes come through Bash). A git alias or wrapper
+  script is invisible to the parser: the rule's own `watch` stays the fallback.
 - **A retried pipeline is followed again** (0.21.1): a failed or canceled pipeline is still
   re-checked once a minute for 2 h after it ended (`shouldPoll`), since a Retry turns it back into
   a running one; then it shows running again (its old finish times cleared) and finally its new
