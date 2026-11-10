@@ -5,7 +5,8 @@
 //   3. fixed/ holds only AUDIT-YYYY-MM-DD.md files, none marked open/partial;
 //   4. no tracked public file names a CPP-NNNN id that is not a `## CPP-NNNN` heading in fixed/*.md
 //      (docs/audits/README.md is exempt: it carries the index and the next free id);
-//   5. no id of a locally present open plaintext appears in fixed/.
+//   5. no id of a locally present open plaintext appears in fixed/;
+//   6. outside CI, this clone runs the repo's git hooks (core.hooksPath = .githooks).
 import { spawnSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -56,6 +57,15 @@ export function auditProblems(cfg, tracked, read, localOpen = []) {
   return problems
 }
 
+/**
+ * The pre-commit hook seals edited findings and lints staged files; without it an edit to a sealed
+ * report is invisible to git. `hooksPath`: this clone's `core.hooksPath` ('' when unset).
+ */
+export function hooksProblem(hooksPath, isCi) {
+  if (isCi || hooksPath.replace(/\/+$/, '') === '.githooks') return null
+  return "this clone does not run the repo's git hooks (sealing, lint): run `git config core.hooksPath .githooks`"
+}
+
 function main(root) {
   const git = spawnSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
   if (git.status !== 0) throw new Error(`git ls-files failed: ${git.stderr}`)
@@ -74,6 +84,9 @@ function main(root) {
         .map(f => read(`${OPEN}/${f}`) ?? '')
     : []
   const problems = auditProblems(loadConfig(root), tracked, read, localOpen)
+  const hooks = spawnSync('git', ['config', '--get', 'core.hooksPath'], { cwd: root, encoding: 'utf8' })
+  const unhooked = hooksProblem((hooks.stdout ?? '').trim(), Boolean(process.env.CI))
+  if (unhooked) problems.push(unhooked)
   for (const p of problems) console.error(`check-audits: ${p}`)
   if (problems.length === 0) console.log('check-audits: ok')
   return problems.length ? 1 : 0

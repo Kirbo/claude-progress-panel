@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ARMOR, auditProblems } from './check-audits.mjs'
+import { ARMOR, auditProblems, hooksProblem } from './check-audits.mjs'
 
 // Register ids are built at run time: the guard scans this file too, and a literal id here would
 // read as a published open finding.
@@ -53,4 +53,13 @@ test('fixed/ rejects bad names and unfinished status', () => {
 test('an id in both a local open report and fixed/ fails', () => {
   const p = run({ 'docs/audits/fixed/AUDIT-2026-11-06.md': fixed }, [`## ${ID(1)} - dup`])
   assert.match(p[0], /both in a local open report/)
+})
+
+test("a clone whose git hooks are not this repo's is told how to set them — never in CI", () => {
+  assert.equal(hooksProblem('.githooks', false), null)
+  assert.equal(hooksProblem('.githooks/', false), null)
+  for (const path of ['', '.git/hooks', '/elsewhere/hooks'])
+    assert.match(hooksProblem(path, false), /git config core\.hooksPath \.githooks/)
+  // CI checks out a fresh clone and commits nothing: its hooks do not matter.
+  assert.equal(hooksProblem('', true), null)
 })
