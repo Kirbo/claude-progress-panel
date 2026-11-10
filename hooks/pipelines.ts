@@ -265,6 +265,12 @@ export function applyWatch(
       errors.push(`watch[${i}]: a project may not start with "-"`)
       return
     }
+    if (!isSafeProject(project, provider)) {
+      errors.push(
+        `watch[${i}]: ${project} is not a project path (${provider === 'gitlab' ? 'group/name' : 'owner/repo'})`,
+      )
+      return
+    }
     const isRun = provider === 'github' || provider === 'gitea'
     const given = isRun ? (w.run ?? w.pipeline) : w.pipeline
     const id = typeof given === 'number' && given > 0 ? given : null
@@ -344,6 +350,19 @@ export function stageGroups(jobs: readonly PipelineJob[]): { stage: string; jobs
     else groups.push({ stage: j.stage, jobs: [j] })
   }
   return groups
+}
+
+/**
+ * Whether a watched project may be used as it is. A forge's project becomes part of an API path
+ * (`repos/<project>/actions/runs/…`), so it is a plain `owner/name` path: no empty, `.` or `..`
+ * segment, and only what a forge allows in a path (letters, digits, `.`, `_`, `-`). A custom command's
+ * project is its script's own name for the job — one argument, never one that reads as an option.
+ */
+export function isSafeProject(project: string, provider: PipelineProvider | undefined): boolean {
+  if (!project || project.startsWith('-')) return false
+  if (provider === 'command') return true
+  if (!/^[A-Za-z0-9._/-]+$/.test(project)) return false
+  return project.split('/').every(part => part !== '' && part !== '.' && part !== '..')
 }
 
 /** A whole commit id (SHA-1's 40 or SHA-256's 64 hex digits) — what every forge's by-commit

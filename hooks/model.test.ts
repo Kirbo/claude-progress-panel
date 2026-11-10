@@ -244,6 +244,63 @@ test('parseSessionFile accepts a v2 file and refuses anything else', () => {
   expect(loose?.dismissed).toEqual([])
 })
 
+test('parseSessionFile refuses a session id that is not a plain file name', () => {
+  const file = fresh()
+  for (const id of ['../x', 'a/b', 'a\\b', '..', '.', '', ' s1', 'x\u0000y'])
+    expect(parseSessionFile(JSON.stringify({ ...file, session: { ...file.session, id } }))).toBeUndefined()
+  for (const id of ['s1', '3f2b8c1e-9d4a-4c56-8a01-aa11bb22cc33', 'agent_7.b'])
+    expect(parseSessionFile(JSON.stringify({ ...file, session: { ...file.session, id } }))?.session.id).toBe(
+      id,
+    )
+})
+
+test('parseSessionFile keeps only well-typed session fields and stored pipelines', () => {
+  const file = fresh()
+  const odd = (session: Record<string, unknown>, rest: Record<string, unknown> = {}) =>
+    parseSessionFile(JSON.stringify({ ...file, ...rest, session: { ...file.session, ...session } }))
+  // What every reader relies on is refused when it is not what it should be.
+  expect(odd({ endedAt: 5 })).toBeUndefined()
+  expect(odd({ project: 7 })).toBeUndefined()
+  expect(odd({ cwd: null })).toBeUndefined()
+  expect(odd({}, { updatedAt: 12 })).toBeUndefined()
+  // The optional extras are dropped instead.
+  const loose = odd({ pid: '12; rm -rf /', host: 9, title: {} })
+  expect(loose?.session.pid).toBeUndefined()
+  expect(loose?.session.host).toBeUndefined()
+  expect(loose?.session.title).toBeUndefined()
+  expect(odd({ pid: 4242, host: 'box', title: 'Mine' })?.session).toMatchObject({
+    pid: 4242,
+    host: 'box',
+    title: 'Mine',
+  })
+  // A stored pipeline whose project could leave its API path, or whose id is no run number, is dropped.
+  const pipe = (over: Record<string, unknown>) => ({
+    key: 'k',
+    project: 'group/name',
+    id: 7,
+    label: 'x',
+    state: 'running',
+    jobs: [],
+    addedAt: iso(T0),
+    checkedAt: null,
+    ...over,
+  })
+  const kept = odd(
+    {},
+    {
+      pipelines: [
+        pipe({ key: 'ok' }),
+        pipe({ key: 'up', project: 'owner/repo/../../user' }),
+        pipe({ key: 'query', project: 'owner/repo?x=1' }),
+        pipe({ key: 'flag', project: '-X' }),
+        pipe({ key: 'id', id: '7/cancel' }),
+        pipe({ key: 'sha', id: null, sha: 'abc123' }),
+      ],
+    },
+  )
+  expect(kept?.pipelines?.map(p => p.key)).toEqual(['ok', 'sha'])
+})
+
 test('formatTime: HH:MM today, date and time otherwise', () => {
   const at = new Date(2026, 10, 6, 9, 5).getTime()
   expect(formatTime(new Date(at).toISOString(), at + HOUR)).toBe('09:05')
@@ -714,7 +771,11 @@ test('a resumed or waiting agent the list calls completed ends once it shows no 
   expect(done.agents?.[0]?.waitingOn).toBeUndefined()
   expect(done.agents?.[0]?.endedAt).not.toBeNull()
   // The list saying "running" keeps a waiting agent waiting.
-  const stillRunning = syncAgents(waiting, [{ ...listed[0], status: 'running' }], iso(T0 + AGENT_IDLE_MS * 9))
+  const stillRunning = syncAgents(
+    waiting,
+    listed.map(a => ({ ...a, status: 'running' })),
+    iso(T0 + AGENT_IDLE_MS * 9),
+  )
   expect(stillRunning.agents?.[0]?.waiting).toBe(true)
 })
 

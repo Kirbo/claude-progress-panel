@@ -9,6 +9,7 @@ import {
   isFinished,
   isFullSha,
   isOrphaned,
+  isSafeProject,
   jobCounts,
   jobEstimatesFrom,
   jobState,
@@ -375,6 +376,44 @@ test('applyWatch: Gitea/Forgejo needs a host; a custom CI command takes any proj
   expect(errors).toEqual([
     'watch[1]: a Gitea/Forgejo pipeline needs a host (or watch it from a session in that repo)',
     'watch[4]: a project may not start with "-"',
+  ])
+})
+
+test('a forge project is a plain path: nothing that could leave its API path is watched', () => {
+  for (const project of ['group/name', 'group/sub.group/name-1', 'owner/repo_2'])
+    expect(isSafeProject(project, 'gitlab')).toBe(true)
+  for (const project of [
+    '',
+    '-X',
+    'owner/repo/../../user',
+    './x',
+    'a//b',
+    '/a/b',
+    'a/b/',
+    'a/b?x=1',
+    'a/b#f',
+    'a b/c',
+    'a%2Fb',
+    'a\\b',
+  ])
+    expect(isSafeProject(project, 'github')).toBe(false)
+  // A custom command's project is whatever its script knows — only never an option.
+  expect(isSafeProject('My job #1', 'command')).toBe(true)
+  expect(isSafeProject('--flag', 'command')).toBe(false)
+
+  const { list, errors } = applyWatch(
+    [],
+    [
+      { provider: 'github', project: 'owner/repo/../../user', run: 5 },
+      { project: 'group/name?x=1', pipeline: 5 },
+    ],
+    [],
+    '2026-11-06T20:00:00.000Z',
+  )
+  expect(list).toEqual([])
+  expect(errors).toEqual([
+    'watch[0]: owner/repo/../../user is not a project path (owner/repo)',
+    'watch[1]: group/name?x=1 is not a project path (group/name)',
   ])
 })
 

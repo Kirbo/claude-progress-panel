@@ -12,6 +12,7 @@ import type {
   Step,
   Task,
 } from '../types'
+import { isSafeProject } from './pipelines'
 
 export type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task }
 
@@ -303,6 +304,10 @@ export function parseSidecar(text: string): SidecarFile | undefined {
   }
 }
 
+// A stored pipeline's id: not known yet, or a run number — it is written into the forge's API path.
+const isRunId = (id: unknown): boolean =>
+  id === null || (typeof id === 'number' && Number.isInteger(id) && id > 0)
+
 /** The well-formed pipelines of a stored list (a session file's, or a sidecar's refreshed copies). */
 function asPipelines(value: unknown): Pipeline[] {
   return (Array.isArray(value) ? value : []).filter(
@@ -311,6 +316,8 @@ function asPipelines(value: unknown): Pipeline[] {
       p !== null &&
       typeof (p as Pipeline).key === 'string' &&
       typeof (p as Pipeline).project === 'string' &&
+      isSafeProject((p as Pipeline).project, (p as Pipeline).provider) &&
+      isRunId((p as Pipeline).id) &&
       Array.isArray((p as Pipeline).jobs),
   )
 }
@@ -450,7 +457,7 @@ export function applyAgentUpdate(
   // The agent's own list runs through the one task logic (ids, statuses, order), on a scratch file.
   const scratch: SessionFile = {
     ...file,
-    now: old?.now ?? null,
+    now: old?.now ?? undefined,
     tasks: old?.tasks ?? [],
     seq: old?.seq ?? 0,
     dismissed: [],
@@ -779,6 +786,33 @@ function asStrings(value: unknown): string[] | undefined {
   return Array.isArray(value) && value.every(v => typeof v === 'string') ? value : undefined
 }
 
+/**
+ * A session's id is its file's name (`<id>.json`) and is written into paths: a plain name only —
+ * letters, digits, `.`, `_`, `-`, starting with a letter or digit — never a separator or `..`.
+ */
+export function isSessionId(id: unknown): id is string {
+  return typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && !id.includes('..')
+}
+
+// The session block of a stored file: what every reader relies on must be what it should be (else
+// the file is refused); an optional extra of the wrong type is dropped.
+function asSessionInfo(raw: Record<string, unknown> | undefined): SessionInfo | undefined {
+  if (!raw || !isSessionId(raw.id)) return undefined
+  if (typeof raw.project !== 'string' || typeof raw.cwd !== 'string') return undefined
+  if (typeof raw.startedAt !== 'string') return undefined
+  if (raw.endedAt !== null && typeof raw.endedAt !== 'string') return undefined
+  return {
+    id: raw.id,
+    project: raw.project,
+    cwd: raw.cwd,
+    startedAt: raw.startedAt,
+    endedAt: raw.endedAt,
+    ...(typeof raw.title === 'string' ? { title: raw.title } : {}),
+    ...(typeof raw.pid === 'number' && Number.isInteger(raw.pid) && raw.pid > 1 ? { pid: raw.pid } : {}),
+    ...(typeof raw.host === 'string' ? { host: raw.host } : {}),
+  }
+}
+
 /** A v2 session file, or undefined for anything else (another version, broken JSON, wrong shapes). */
 export function parseSessionFile(text: string): SessionFile | undefined {
   let raw: unknown
@@ -790,7 +824,9 @@ export function parseSessionFile(text: string): SessionFile | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
   const f = raw as Record<string, unknown>
   const session = f.session as Record<string, unknown> | undefined
-  if (f.version !== 2 || typeof session?.id !== 'string' || !Array.isArray(f.tasks)) return undefined
+  if (f.version !== 2 || !isSessionId(session?.id) || !Array.isArray(f.tasks)) return undefined
+  const info = asSessionInfo(session)
+  if (!info || typeof f.updatedAt !== 'string') return undefined
   const needsYou = asStrings(f.needsYou)
   const dismissed = asStrings(f.dismissed)
   if (!needsYou || !dismissed) return undefined
@@ -816,6 +852,7 @@ export function parseSessionFile(text: string): SessionFile | undefined {
   )
   return {
     ...(f as unknown as SessionFile),
+    session: info,
     needsYou,
     dismissed,
     tasks,
