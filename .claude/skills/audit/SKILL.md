@@ -78,10 +78,10 @@ Regenerate; do not trust this table. It exists so you notice what is missing.
 
 | Surface | Where | Who controls the input |
 |---|---|---|
-| Status file read (`$.fs.stat` / `$.fs.read`) | `hooks/register.tsx` | the user, any local process or session that can write the file, a cloned repo that ships one if the path option points there |
+| Status file read (`$.fs.stat` / `$.fs.read`) | `hooks/store.ts`, `hooks/session.tsx` (scan) | the user, any local process or session that can write the file, a cloned repo that ships one if the path option points there |
 | Path resolution (`progressFile` option, `~/`, `CLAUDE_CONFIG_DIR`) | `hooks/paths.ts` | the user (option), the environment |
-| JSON parsing + pane state (`loaded` atom, `shape` tag) | `hooks/register.tsx` | whoever writes the file |
-| Rendering file text into the terminal UI | `hooks/register.tsx` JSX | whoever writes the file: escape sequences, huge or multi-line strings, control chars |
+| JSON parsing + pane state (the atoms and their `shape` tags) | `hooks/model.ts` (parsers), `hooks/state.ts` (atoms) | whoever writes the file |
+| Rendering file text into the terminal UI | `hooks/pane.tsx` JSX | whoever writes the file: escape sequences, huge or multi-line strings, control chars |
 | Refresh hook (`PostToolUse` matcher, mtime check) | `hooks/hooks.json` | tool calls of the session |
 | Model-callable tool, shared folder, Buttons (when present) | `hooks/` | the model (prompt-injectable), several concurrent sessions, the user's clicks; anything that writes, deletes or renames |
 | `$.process.run`, `$.env.get` (if used) | `hooks/` | arguments and env values; shell/argument injection |

@@ -18,7 +18,8 @@ repo), reviewing it to fix defects before users are exposed to them. Your scope 
 in this working tree** and nothing else: never probe, scan or test any other host, and never produce
 reusable attack tooling. Where a finding needs proof, the artifact is a regression test in this repo.
 
-The plugin is a Claude Code hooks module (`hooks/register.tsx`) that runs inside the user's Claude
+The plugin is a Claude Code hooks module (`hooks/register.tsx`, which wires `hooks/session.tsx`,
+`hooks/pane.tsx`, `hooks/store.ts` and `hooks/forge.ts`) that runs inside the user's Claude
 Code process with the user's privileges. It reads a status JSON file (default
 `~/.claude/progress.json`, or a path from the `progressFile` option) and draws a pane. It has no
 network code and no secrets. Its reach is whatever the engine's `$` object gives it (`$.fs`,

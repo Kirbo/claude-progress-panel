@@ -6,37 +6,8 @@ How to _use_ the panel during a task is the bundled skill:
 
 ## A. Set the panel up on a machine (exact steps)
 
-1. Check Claude Code is new enough: `claude --version` ≥ **2.1.318**. Older → tell the user to
-   update Claude Code first; stop.
-2. Install from this repo's marketplace, user scope (non-interactive, works from any directory):
-
-   ```sh
-   claude plugin marketplace add https://gitlab.com/KirboDev/agentic-coding/claude-progress-panel.git
-   claude plugin install progress-panel@claude-progress-panel --scope user
-   ```
-
-   Already added → `claude plugin marketplace update claude-progress-panel` then
-   `claude plugin update progress-panel@claude-progress-panel`.
-3. Remove any older copy that would load the same plugin twice: a `progress-panel` folder named in
-   `CLAUDE_CODE_PLUGIN_DIRS` (`env` block of `~/.claude/settings.json` or the shell profile), or a
-   `~/.claude/skills/progress-panel` plugin folder. Ask before deleting anything that is not
-   clearly a copy of this plugin.
-4. Store: `~/.claude/progress/` (one `<session-id>.json` per session) unless `CLAUDE_CONFIG_DIR`
-   is set or the user wants another folder (`claude plugin install … --config progressDir=<path>`,
-   or later `claude plugin configure progress-panel`). Other settings: `autoClearDoneHours`,
-   `keepEndedSessionsDays`, `sortTasksBy` (README "Settings") — ask the user only if they care.
-   If the user is continuing work from another machine, put their handover into THIS session
-   with the `progress_update` tool (tasks + now + needsYou) — never invent content.
-5. Pipelines in the pane need [`glab`](https://gitlab.com/gitlab-org/cli) on PATH and logged in
-   (`glab auth status`); without it everything else works and a watched pipeline shows glab's error.
-6. Verify: `claude plugin list` shows `progress-panel@claude-progress-panel` enabled, then
-   `/progress doctor` in a session (one line per check, each failure with its fix). The pane
-   appears in the NEXT session (or after `/reload-plugins` in a running one); `/progress` opens it.
-   It needs a terminal ≥ ~144 columns to open by itself and does not draw usefully inside
-   `screen`/`tmux` panes that are too narrow.
-7. If the user wants the agent to keep it current by default, add one line to their
-   `~/.claude/CLAUDE.md` (ask first — it is their file):
-   `Keep the progress panel (progress-panel skill) current during multi-step work.`
+Follow [`docs/AGENT-SETUP.md`](docs/AGENT-SETUP.md) step by step (version check, marketplace install,
+removing older copies, store folder, `glab`, verification).
 
 ## B. Working on this repo
 
@@ -45,14 +16,26 @@ How to _use_ the panel during a task is the bundled skill:
   day old.
 - **Lint/format: Biome** (`biome check .`; `--write` to fix). No ESLint/Prettier.
 - **TDD.** Write the failing test first (`claude plugin test .`), then the code: pure logic in
-  `hooks/model.ts` ↔ `hooks/model.test.ts` and `hooks/pipelines.ts` ↔ `hooks/pipelines.test.ts`; I/O, tool, timer and pane in `hooks/register.tsx` ↔
-  `hooks/register.test.tsx`, whose `engine()` helper stands in for the engine (`on('<op>', …)`
-  stubs, a fake disk, `mock.clock`) — reuse and extend it, don't fork it.
+  `hooks/model.ts` ↔ `hooks/model.test.ts` and `hooks/pipelines.ts` ↔ `hooks/pipelines.test.ts`
+  (each pure module has its `*.test.ts`); everything that touches the engine — I/O, tool, timers,
+  pane — is tested through `hooks/register.test.tsx`, whose `engine()` helper stands in for the
+  engine (`on('<op>', …)` stubs, a fake disk, `mock.clock`) — reuse and extend it, don't fork it.
+- **Where engine code lives** (each layer imports only the ones before it): `hooks/state.ts`
+  (constants, the atoms, `self` = what this session's copy remembers between hooks, the queues of
+  notes owed to an agent) → `hooks/store.ts` (the progress folder: the only place a session file or
+  sidecar is written) → `hooks/forge.ts` (`glab`/`gh`/`tea`/custom command, pipeline polls) →
+  `hooks/session.tsx` (scan, the tool's updates, agents, switches, doctor) → `hooks/pane.tsx` (the
+  drawing and its presses) → `hooks/register.tsx` (only the `on(…)` hooks). Module-level mutable
+  state goes in `self` (state.ts), never a new `let` elsewhere.
 - **i18n.** Every user-facing string is a key in `locales/en.ts`, read through `t()` from
   `hooks/i18n.ts` — never a literal in JSX or a command answer.
 - **The module has no Node/DOM.** Everything outside goes through `$` (`$.fs`, `$.env`, …). A
   function that takes `$` must be a top-level function declaration (the validator follows `$`
-  only into those). `$.env.get` takes string literals only.
+  only into those) — across files too, so never an arrow function bound to a name. `$.env.get`
+  takes string literals only. Every `on(…)` call is written in `register` itself (one handed to
+  another function is not registered). An atom is declared once, in `hooks/state.ts`, and read or
+  changed only through its `read…`/`update…` function there: `read`/`update` take an atom written
+  in the same file, and a reference by plugin + key from another file loses its initial value.
 - **State shape:** the pane's values are the `sessions`, `folds` and `sort` atoms; change an
   atom's `shape` tag whenever its stored type changes, so an old value from before a reload is
   declined. `types/index.d.ts` is the contract and must stay self-contained (no imports).
@@ -63,14 +46,19 @@ How to _use_ the panel during a task is the bundled skill:
 - **The design** (store format, tool semantics, refresh, retention) is
   `docs/design/MULTI-SESSION.md` — keep it in step with the code.
 - **Done = green:** `biome check .`, `claude plugin test .`, `claude plugin validate .`,
-  `node --test scripts/`, `node scripts/check-audits.mjs` all clean
+  `node --test scripts/`, `node scripts/check-audits.mjs` and the type-check
+  `mise exec npm:typescript@7.0.2 -- tsc --noEmit -p .` all clean. The type-check is a local gate
+  only, and deliberately not pinned in `mise.toml`: it checks against the engine's types in
+  `.claude-plugin/types/`, which Claude Code writes when it loads the plugin and git ignores, so CI
+  cannot run it and should not install it
   (validate's "plugin directory" notes about the icon are informational). Bump `version` in
   `.claude-plugin/plugin.json` for any behaviour change — `claude plugin update` keys on it — in
   the LAST commit of that version: on `main`, CI's `release` job makes a GitLab Release `v<version>`
   at the commit that first carried it, its notes git-cliff's (`cliff.toml`) over the Conventional
   Commits since the version before (`scripts/release.mjs`; `node scripts/release.mjs --dry-run`
   previews). So commit subjects are release notes: write them for users.
-- **Hooks:** once per clone `git config core.hooksPath .githooks`. The pre-commit hook runs Biome
+- **Hooks:** once per clone `git config core.hooksPath .githooks` (`check-audits.mjs` fails locally
+  until it is set). The pre-commit hook runs Biome
   over the staged files first — fixes what it can, re-stages fully staged files (never a partly
   staged one), refuses the commit on anything left (`scripts/lint-staged.mjs`) — then seals audit
   findings (see below).
@@ -85,18 +73,12 @@ How to _use_ the panel during a task is the bundled skill:
 - **Maintenance (`/maintain`, `.claude/skills/maintain/`):** toolchain + CI pin bumps (releases at
   least 1 day old), docs reconciliation, all gates.
 - **Screenshots** (`docs/screenshots/pane.png`, shown in the README): demo data, never a real
-  session's store, captured from a headless session — no window opens. Regenerate after a visible
-  change, in one go (the demo's "running" pipeline gets polled after a minute):
-  `node scripts/screenshot-demo.mjs <empty dir>`, then in tmux (`mise exec tmux@3.7c --`, own
-  socket `-L panel-demo`, 190×60) run `PROGRESS_PANEL_DIR=<dir> claude --plugin-dir . --settings
-  '{"enabledPlugins":{"progress-panel@claude-progress-panel":false}}'` from a folder Claude Code
-  already trusts, wait for the pane, `tmux capture-pane -e -p > full.ansi`, kill the server,
-  `node scripts/ansi-crop.mjs full.ansi <pane's first column> 84 1 30 > pane.ansi`, and render with
-  `mise exec aqua:charmbracelet/freeze@0.2.2 -- freeze --window --background "$(node
-  scripts/ansi-crop.mjs --print-bg pane.ansi)" --padding 24 --font.size 14 --line-height 1.3 -o
-  docs/screenshots/pane.png pane.ansi < /dev/null` (stdin closed, or it waits; the canvas takes the
-  pane's own background, so empty cells match the text cells).
+  session's store. Regenerate after a visible change with the `screenshots` skill
+  (`.claude/skills/screenshots/`).
 - Scripts (`scripts/*.mjs`) are plain Node with no dependencies, tested with `node --test scripts/`.
+- **A setting's default** is written twice by necessity — the manifest's `userConfig` and the code's
+  fallback (`readSettings`, `NUMBER_DEFAULTS`, `defaultsFrom`); `scripts/defaults.test.mjs` fails
+  when they differ. Change both.
 - Commits: Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
 - **GitHub mirror** (`github.com/Kirbo/claude-progress-panel`; read-only copy for discovery — issues
   and MRs live on GitLab, its issues/wiki are off): GitLab push-mirrors every branch and tag to it

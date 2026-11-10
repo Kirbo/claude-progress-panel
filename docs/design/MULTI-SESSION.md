@@ -39,7 +39,12 @@ Sessions                              [Sort: status]
 ## Store
 
 One folder, default `<CLAUDE_CONFIG_DIR or ~/.claude>/progress/`, option `progressDir`. One file
-per session, `<session-id>.json`, written only whole:
+per session, `<session-id>.json`, written only whole. The id is the file's name and is written into
+paths, so it is a plain name (letters, digits, `.`, `_`, `-`; no separator, no `..`): a file whose
+name is not one, or whose `session.id` is not its own name, is not a session's file — never shown,
+and nothing is written or deleted through the id it claims (`isSessionId`, `parseSessionFile`; a
+stored pipeline's `project` and `id` are held to what a forge's API path allows the same way,
+`isSafeProject`). The file:
 
 ```json
 {
@@ -63,7 +68,12 @@ per session, `<session-id>.json`, written only whole:
   `<session-id>.dismissed.json` — `{ "version": 1, "sessionId": "…", "entries": [{ "id": "t3",
   "doneAt": "ISO" }], "pipelines": [ … ] }` — on ✕ / Clear all, and with refreshed copies of the
   session's orphaned pipelines (see Pipelines); always read fresh, change, write whole, so neither
-  drops the other's part. So a person's click can never
+  drops the other's part. The plugin API has no file lock and no rename, so `writeSidecar`
+  (store.ts) guards twice: one pane's changes to one sidecar run one at a time (a press and a poll
+  interleave at every await), and a change computed from a copy another pane replaced meanwhile
+  (the file's mtime moved between the read and the write) is computed again from the new copy —
+  which narrows the window between two panes to the last stat and the write, and cannot close it.
+  So a person's click can never
   race the session writing its status. (Exception: an *ended* session's file, whose session is
   gone, is auto-cleared and deleted by whichever pane gets there; concurrent panes write identical
   results.)
@@ -129,6 +139,14 @@ user asked why the pane was empty (2026-11-09). `UserPromptSubmit` now closes th
 `additionalContext`: the same `prompt.reporting` text once, when this module composed no prompt,
 then — while the session's own file is still blank — a one-line `prompt.nudge`. The first report
 ends both.
+
+**…but never both, in a session seen from its start (0.23.3).** A new session's first prompt
+arrived with the whole rule although its system prompt carried it too (2026-11-10): the tool is
+still connecting when the session starts, so the prompt composed then has no rule (`ruleComposed`
+stays false) and the one composed for the first request does. A session this copy saw start
+(`classic.SessionStart`, source `startup`) therefore leaves the rule to its system prompt on the
+first prompt (`freshStart` / `ruleDeferred`); if no composed prompt carried it by the main loop's
+first tool call, that call hands it over (`takeDeferredRule`), once.
 
 **…and in every subagent (0.21.5; 0.23.0 as it starts).** A subagent's system prompt is not
 composed through this hook either: a fresh general-purpose subagent had the tool but never the
@@ -675,7 +693,7 @@ agents", dims a paused one, tasks off hides its tasks, agents off its Agents sec
 
 `/progress doctor` (the `progress` command's argument, case and spaces ignored) answers one line per
 check, ✓ / ✗ / –, each ✗ with its fix beneath (`hooks/doctor.ts`: the classifiers + the format,
-pure; the checks in register.tsx): the version (`ownManifest`); the reporting rule (`ruleComposed` /
+pure; the checks in session.tsx): the version (`ownManifest`); the reporting rule (`ruleComposed` /
 `ruleSent` / not yet); the progress folder (resolved, then a probe file written and deleted); the
 repo's CI (`repoCi`, the one detection the auto-watch uses); the forge CLI — ONE API call for this
 repo's project through the person's own `glab` / `gh` / `tea` (`projects/<path>`, `repos/<path>`),

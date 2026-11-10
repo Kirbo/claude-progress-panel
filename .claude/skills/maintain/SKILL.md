@@ -59,7 +59,7 @@ Ground truth first:
 
 | Surface | Source of truth |
 |---|---|
-| Behaviour, pane layout, status marks | `hooks/register.tsx` (+ `hooks/register.test.tsx`) |
+| Behaviour, pane layout, status marks | `hooks/session.tsx`, `hooks/pane.tsx`, `hooks/store.ts`, `hooks/forge.ts`, wired in `hooks/register.tsx` (+ `hooks/register.test.tsx`) |
 | Status-file path rules | `hooks/paths.ts` |
 | Refresh triggers | `hooks/hooks.json` |
 | User-facing strings | `locales/*.ts` via `hooks/i18n.ts` |
@@ -97,8 +97,8 @@ mise exec -- node --test scripts/
 mise exec -- node scripts/check-audits.mjs
 ```
 
-If the README or CLAUDE.md describes a `tsc` type-check, run it too; today neither does and the
-repo has no `tsconfig`, so there is none. Never silence a diagnostic (`biome-ignore`,
+Run the type-check too: `mise exec npm:typescript@7.0.2 -- tsc --noEmit -p .` (a local gate — the engine's types under
+`.claude-plugin/types/` are not in git, so CI does not run it). Never silence a diagnostic (`biome-ignore`,
 `@ts-expect-error`); fix it or raise it to the user.
 
 ## Phase 5 — Report, then commit

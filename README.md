@@ -339,6 +339,7 @@ is committed):
 ```sh
 mise install
 mise exec -- biome check .                 # lint + format check (biome check --write . to fix)
+mise exec npm:typescript@7.0.2 -- tsc --noEmit -p .             # type-check (local only: needs the types Claude Code writes on load)
 mise exec -- claude plugin test .          # hooks/*.test.tsx against the engine
 mise exec -- claude plugin validate .      # manifest + module, as the engine reads them
 mise exec -- node --test scripts/          # sealing + audit-register guard tests
@@ -348,7 +349,8 @@ git config core.hooksPath .githooks        # once per clone: pre-commit runs Bio
 ```
 
 Test-first: a change lands with its test (`hooks/*.test.ts` for the pure logic,
-`hooks/register.test.tsx` for the plugin against the engine). Every user-facing string
+`hooks/register.test.tsx` for the plugin against the engine), and type-checks
+(`mise exec npm:typescript@7.0.2 -- tsc --noEmit -p .`, locally). Every user-facing string
 lives in `locales/en.ts` and goes through `t()` (`hooks/i18n.ts`). CI (`.gitlab-ci.yml`) runs the
 checks above on every push, and on `main` gives each new `version` in `.claude-plugin/plugin.json`
 its GitLab Release, notes by [git-cliff](https://git-cliff.org) from the commit subjects
