@@ -719,6 +719,25 @@ rewrites a request. The main loop's requests are ignored. `modelLabel` shortens 
 without effort shows the model alone; a numeric budget shows as its number. An agent's report
 rebuilds its entry and keeps both fields. With `agents` off nothing is noted.
 
+## A row folds only when it has something inside (0.25.0)
+
+Nothing in the pane shows a fold arrow it cannot honour. A running agent's row is a fold (`▾` / `▸`)
+only when `agentHasInside` says there is something to show beneath it: a waiting line, what it said
+it is doing (`now`), its latest tool call, messages queued for it, or steps. Otherwise it is a plain
+line, `• <label>`, with its model, run time and ✕ as before. Tasks already follow the rule (a task
+without steps or a detail is a plain row), as do finished agents without steps.
+
+So that a row seldom stays bare, an agent that reports no steps of its own still gets a second
+level: the plugin sees every tool call a subagent makes (`PostToolUse` with its `agent_id`) and
+`noteAgentActivity` keeps the latest one on the agent's entry as one line
+(`AgentEntry.activity`, from `toolCallSummary`: `Read — src/x.rs`) with a running count
+(`AgentEntry.calls`), shown as `↳ Read — src/x.rs · 41 tool calls`. Every call is counted in memory
+(`agentCalls`); the entry is written at most every `ACTIVITY_EVERY_MS` (3 s) per agent, so a busy
+lane costs one small write a few seconds apart. The agent's own `progress_update` calls are not
+activity. An agent type whose tool list leaves out the progress tool (a read-only reviewer, say)
+cannot report steps at all: this line is what its row shows — give such a type the tool
+(`mcp__progress-panel__progress_update` in its `tools:`) to get real steps.
+
 ## Out of scope / later
 
 - Other machines: the store is local. Mirroring to a shared place stays the agent's job.

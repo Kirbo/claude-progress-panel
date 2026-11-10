@@ -44,6 +44,7 @@ import {
   toolCallSummary,
   trackedByPipeline,
   untouchedDoing,
+  withAgentActivity,
   withAgentRun,
   withAutoTask,
 } from './model'
@@ -53,7 +54,10 @@ import { applyWatch, oneLine } from './pipelines'
 import { ciProvider, parsePushes, pushedRef, resolvePath } from './push'
 import { NUMBER_DEFAULTS } from './settings'
 import {
+  ACTIVITY_EVERY_MS,
+  agentActivityAt,
   agentBackground,
+  agentCalls,
   agentRepoAsked,
   agentRunNoted,
   DAY_MS,
@@ -76,6 +80,7 @@ import {
   staleTold,
   subagentRuleSent,
   switches,
+  TOOL_ID,
   takeFinishedLinks,
   takeRemovalNotice,
   toldNoCi,
@@ -661,6 +666,40 @@ export async function noteAgentRun($: EngineInterface, options: PluginOptions, e
     const next = withAgentRun(own, id, model, effort)
     if (next !== own) await save($, dir, next)
     if (next.agents?.some(a => a.id === id)) agentRunNoted.set(id, sig)
+  })
+}
+
+// A subagent's tool call (PostToolUse): its latest call, in one line, and its running count go on its
+// entry — the second level of a row whose agent reports no steps of its own (an agent type without
+// the progress tool, or one that has not reported yet). Every call is counted; the entry is written
+// at most every ACTIVITY_EVERY_MS per agent. The agent's own progress reports are not "activity".
+export async function noteAgentActivity(
+  $: EngineInterface,
+  options: PluginOptions,
+  e: unknown,
+): Promise<void> {
+  if (!isOn(options, 'agents')) return
+  const call = fields(e)
+  const id = call.agent_id
+  const tool = call.tool_name
+  if (typeof id !== 'string' || !id || typeof tool !== 'string' || !tool || tool === TOOL_ID) return
+  const calls = (agentCalls.get(id) ?? 0) + 1
+  agentCalls.set(id, calls)
+  const now = await $.clock.now()
+  const last = agentActivityAt.get(id)
+  if (last !== undefined && now - last < ACTIVITY_EVERY_MS) return
+  const plain = await readOwnPlain($, options)
+  if (plain === 'nowhere' || !plain?.agents?.some(a => a.id === id)) return
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const input = call.tool_input
+  const args = input && typeof input === 'object' ? (input as Record<string, unknown>) : {}
+  const what = toolCallSummary(tool, args, 60)
+  agentActivityAt.set(id, now)
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const next = withAgentActivity(own, id, what, calls)
+    if (next !== own) await save($, dir, next)
   })
 }
 

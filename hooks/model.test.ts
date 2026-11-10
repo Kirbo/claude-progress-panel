@@ -3,6 +3,7 @@ import type { SessionFile, Task } from './model'
 import {
   AGENT_IDLE_MS,
   addDismissals,
+  agentHasInside,
   agentRepo,
   applyAgentUpdate,
   applyUpdate,
@@ -50,6 +51,7 @@ import {
   untouchedDoing,
   visibleTasks,
   waitingOnFrom,
+  withAgentActivity,
   withAgentRun,
 } from './model'
 
@@ -1108,4 +1110,30 @@ test("an agent's model and effort are kept on its entry, survive its next report
   // A model without effort: the effort goes; a numeric budget is kept as its text.
   expect(withAgentRun(later, 'a1', 'claude-haiku-5-5', undefined).agents?.[0]?.effort).toBeUndefined()
   expect(withAgentRun(later, 'a1', 'claude-sonnet-5-5', 4096).agents?.[0]?.effort).toBe('4096')
+})
+
+test("an agent's latest tool call is kept on its entry and survives its next report; a row folds only when it has something inside", () => {
+  const at = '2026-11-10T10:00:00.000Z'
+  const listed = syncAgents(
+    newSession({ id: 's', project: 'p', cwd: '/w/p' }, at),
+    [{ id: 'a1', description: 'Lane A', status: 'running' }],
+    at,
+  )
+  const bare = listed.agents?.[0]
+  expect(bare && agentHasInside(bare)).toBe(false)
+  expect(withAgentActivity(listed, 'nope', 'Read — x', 1)).toBe(listed)
+  expect(withAgentActivity(listed, 'a1', '', 1)).toBe(listed)
+  const busy = withAgentActivity(listed, 'a1', 'Read — src/x.rs', 3)
+  expect(busy.agents?.[0]).toMatchObject({ activity: 'Read — src/x.rs', calls: 3 })
+  expect(withAgentActivity(busy, 'a1', 'Read — src/x.rs', 3)).toBe(busy)
+  expect(busy.agents?.[0] && agentHasInside(busy.agents[0])).toBe(true)
+  const reported = applyAgentUpdate(busy, { id: 'a1', label: 'Lane A' }, { now: 'y' }, at).file
+  expect(reported.agents?.[0]).toMatchObject({ now: 'y', activity: 'Read — src/x.rs', calls: 3 })
+  // Each of the other things a row can hold makes it foldable on its own.
+  if (!bare) throw new Error('no agent')
+  expect(agentHasInside({ ...bare, now: 'reading' })).toBe(true)
+  expect(agentHasInside({ ...bare, queued: ['stop'] })).toBe(true)
+  expect(agentHasInside({ ...bare, waiting: true })).toBe(true)
+  expect(agentHasInside({ ...bare, waiting: true, endedAt: at })).toBe(false)
+  expect(agentHasInside({ ...bare, tasks: [{ id: 't1', title: 's', status: 'todo' }] as never })).toBe(true)
 })

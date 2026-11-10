@@ -39,6 +39,11 @@ export type AgentEntry = {
   /** The effort of that request (0.24.0): a level, or a budget's number as text; absent for a model
    *  without effort. */
   effort?: string
+  /** Its latest tool call, in one line (0.25.0: `Read — src/x.rs`), so an agent that reports no steps
+   *  of its own still says what it is on. Written at most every few seconds. */
+  activity?: string
+  /** How many tool calls it has made so far (0.25.0), as of that write. */
+  calls?: number
 }
 
 /** One subtask of a task: a title, its own status and, once closed, when (0.23.0: the pace a

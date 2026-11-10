@@ -778,8 +778,52 @@ test('a subagent that never reports (no progress tool) still shows under Agents 
   ])
   const ui = await pane($)
   expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe('▾ Agents  1 running')
-  expect((await ui.find({ type: 'Button', key: 'agent:s-me:rev-1' }))?.text).toBe('▾ Audit: authz')
+  // Nothing to unfold yet (no report, no tool call seen): a plain line, never a fold arrow.
+  expect(await ui.find({ type: 'Button', key: 'agent:s-me:rev-1' })).toBeUndefined()
+  expect(await texts(ui)).toContain('• Audit: authz')
   await ui.unmount()
+  // Its tool calls give the row its second level: the latest one, and how many so far — written at
+  // most every few seconds, every call counted.
+  const call = (tool_name: string, tool_input: Record<string, unknown>, id: string) =>
+    $.classic.PostToolUse({
+      tool_name,
+      tool_input,
+      tool_response: {},
+      tool_use_id: id,
+      agent_id: 'rev-1',
+    } as never)
+  await call('Read', { file_path: 'src-tauri/src/mesh/authz.rs' }, 'c1')
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]).toMatchObject({
+    activity: 'Read — src-tauri/src/mesh/authz.rs',
+    calls: 1,
+  })
+  await call('Grep', { pattern: 'required_scope' }, 'c2')
+  await call('Grep', { pattern: 'authed_peer' }, 'c3')
+  // Inside the interval: counted, not written.
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.calls).toBe(1)
+  await world.clock.advance(3100)
+  await call('Bash', { command: 'git log --oneline -5' }, 'c4')
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]).toMatchObject({
+    activity: 'Bash — git log --oneline -5',
+    calls: 4,
+  })
+  // Its own progress reports are not activity.
+  await $.classic.PostToolUse({
+    tool_name: TOOL,
+    tool_input: { now: 'x' },
+    tool_response: {},
+    tool_use_id: 'c5',
+    agent_id: 'rev-1',
+  } as never)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.calls).toBe(4)
+  const busy = await pane($)
+  expect((await busy.find({ type: 'Button', key: 'agent:s-me:rev-1' }))?.text).toBe('▾ Audit: authz')
+  expect(await texts(busy)).toContain('↳ Bash — git log --oneline -5 · 4 tool calls')
+  // Folded, the line goes and the arrow turns.
+  await busy.press({ key: 'agent:s-me:rev-1' })
+  expect((await busy.find({ type: 'Button', key: 'agent:s-me:rev-1' }))?.text).toBe('▸ Audit: authz')
+  expect(await texts(busy)).not.toContain('↳ Bash — git log --oneline -5 · 4 tool calls')
+  await busy.unmount()
   // The list says it ended: finished on the next scan, even without a SubagentStop.
   world.agents[0] = { ...world.agents[0], status: 'completed' } as (typeof world.agents)[number]
   await world.clock.advance(2100)

@@ -89,7 +89,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   the same way on its own.
 - **Subagents report too:** a subagent's `progress_update` lands under its coordinator's session,
   in an **Agents** part — never among the session's tasks. Each running agent shows the model and
-  effort it actually runs on (`sonnet 5.5 · medium`, read from its own model requests), its steps
+  effort it actually runs on (`sonnet 5.5 · medium`, read from its own model requests), its latest
+  tool call when it reports no steps of its own (`↳ Read — src/x.rs · 41 tool calls`), its steps
   (`██░░ 3/7`), how long it has run and `~N min left` — the pace it has measured once a step has
   finished (the median time per finished step × the steps left), the agent's own guess before that,
   marked `(est.)` — and unfolds to what it is on and every step

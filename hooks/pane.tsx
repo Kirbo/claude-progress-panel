@@ -6,6 +6,7 @@ import { cancellable, cancelPipeline } from './forge'
 import { t } from './i18n'
 import type { SessionFile, SortBy, Status, Task } from './model'
 import {
+  agentHasInside,
   attentionFor,
   capNewest,
   displayWidth,
@@ -1116,7 +1117,8 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       const key = `agent:${id}:${a.id}`
       // A permission prompt or a question of this agent's: the row says so, magenta like Needs you.
       const personWait = attentionFor(file, { agent: a }, WAIT_REASONS)
-      const isOpen = folded[key] ?? true
+      const hasInside = agentHasInside(a)
+      const isOpen = hasInside && (folded[key] ?? true)
       const closed = a.tasks.filter(x => isClosed(x.status)).length
       const steps =
         a.tasks.length > 0
@@ -1146,23 +1148,35 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             hover={ROW_HOVER}
           >
             {leftSide(
-              <Button
-                key={key}
-                label={t('pane.agentFold', { fold: isOpen ? '▾' : '▸', label: a.label })}
-                plain
-                onPress={() => void toggle($, key, isOpen)}
-              >
-                {/* Folded: one cut line; open: the whole label wraps here (shown once). Waiting on the
+              hasInside ? (
+                <Button
+                  key={key}
+                  label={t('pane.agentFold', { fold: isOpen ? '▾' : '▸', label: a.label })}
+                  plain
+                  onPress={() => void toggle($, key, isOpen)}
+                >
+                  {/* Folded: one cut line; open: the whole label wraps here (shown once). Waiting on the
                       person: the Needs-you mark before it. */}
-                <Text {...(isOpen ? {} : { wrap: 'truncate-end' as const })}>
+                  <Text {...(isOpen ? {} : { wrap: 'truncate-end' as const })}>
+                    {personWait ? (
+                      <Text color={tint(self.settings.palette, 'magenta')} bold>
+                        {'⚠ '}
+                      </Text>
+                    ) : null}
+                    {t('pane.agentFold', { fold: isOpen ? '▾' : '▸', label: a.label })}
+                  </Text>
+                </Button>
+              ) : (
+                // Nothing to unfold (no report, no tool call seen yet): a plain line, never a fold.
+                <Text key={key}>
                   {personWait ? (
                     <Text color={tint(self.settings.palette, 'magenta')} bold>
                       {'⚠ '}
                     </Text>
                   ) : null}
-                  {t('pane.agentFold', { fold: isOpen ? '▾' : '▸', label: a.label })}
+                  {t('pane.agentPlain', { label: a.label })}
                 </Text>
-              </Button>,
+              ),
             )}
             <Box flexDirection="row" flexShrink={0} gap={1}>
               <Text dimColor>
@@ -1205,6 +1219,14 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                 </Text>
               ) : null}
               {a.now ? <Text dimColor>{a.now}</Text> : null}
+              {/* Its latest tool call: the second level of an agent that reports no steps. */}
+              {a.activity ? (
+                <Text dimColor wrap="truncate-end">
+                  {a.calls
+                    ? t('pane.agentActivityCalls', { what: a.activity, calls: a.calls })
+                    : t('pane.agentActivity', { what: a.activity })}
+                </Text>
+              ) : null}
               {(a.queued ?? []).map(q => (
                 <Text dimColor>{t('pane.agentQueued', { text: q })}</Text>
               ))}

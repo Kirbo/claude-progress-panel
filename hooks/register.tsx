@@ -21,6 +21,7 @@ import {
   feedAgentPrompt,
   forgetCiVerdicts,
   markEnded,
+  noteAgentActivity,
   noteAgentBackground,
   noteAgentRepo,
   noteAgentRun,
@@ -185,6 +186,7 @@ export const register: Register = (on, options) => {
     if (typeof agentId === 'string' && agentId) {
       await reopenIfActive($, options, agentId).catch(() => undefined)
       await noteAgentRepo($, options, e).catch(() => undefined)
+      await noteAgentActivity($, options, e).catch(() => undefined)
       const own = pendingAgentNotices.get(agentId)
       pendingAgentNotices.delete(agentId)
       const told = own?.length

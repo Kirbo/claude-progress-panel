@@ -111,6 +111,13 @@ export const agentRepoAsked = new Set<string>()
 // request repeats them at every step, and only a change is worth a read of the session's file.
 export const agentRunNoted = new Map<string, string>()
 
+// A subagent's tool calls, counted as they pass, and when its entry was last given its latest one:
+// the entry is written at most every ACTIVITY_EVERY_MS, so a busy agent costs one write a few
+// seconds apart, not one per call.
+export const agentCalls = new Map<string, number>()
+export const agentActivityAt = new Map<string, number>()
+export const ACTIVITY_EVERY_MS = 3000
+
 // Subagents told the reporting rule (once each, process-wide).
 export const subagentRuleSent = new Set<string>()
 

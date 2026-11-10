@@ -490,6 +490,8 @@ export function applyAgentUpdate(
     // What it runs on is the engine's word (`withAgentRun`), not the report's: kept across reports.
     ...(old?.model ? { model: old.model } : {}),
     ...(old?.effort ? { effort: old.effort } : {}),
+    ...(old?.activity ? { activity: old.activity } : {}),
+    ...(old?.calls ? { calls: old.calls } : {}),
     startedAt: old?.startedAt ?? nowIso,
     updatedAt: nowIso,
     endedAt: null,
@@ -514,6 +516,34 @@ export const AGENT_IDLE_MS = 3 * 60_000
 
 function idle(a: AgentEntry, nowIso: string): boolean {
   return Date.parse(nowIso) - Date.parse(a.updatedAt) >= AGENT_IDLE_MS
+}
+
+/** The agent's entry with its latest tool call (one line) and how many calls it has made: what an
+ *  agent that reports no steps is on. The same file when the agent has no entry or nothing changed. */
+export function withAgentActivity(
+  file: SessionFile,
+  id: string,
+  activity: string,
+  calls: number,
+): SessionFile {
+  const known = file.agents?.find(a => a.id === id)
+  if (!known || !activity || (known.activity === activity && known.calls === calls)) return file
+  return {
+    ...file,
+    agents: (file.agents ?? []).map(a => (a.id === id ? { ...a, activity, calls } : a)),
+  }
+}
+
+/** Whether an agent's row has anything to unfold: a waiting line, what it said it is doing, its
+ *  latest tool call, messages queued for it, or steps. A row with nothing inside never folds. */
+export function agentHasInside(a: AgentEntry): boolean {
+  return (
+    (a.waiting === true && a.endedAt === null) ||
+    !!a.now ||
+    !!a.activity ||
+    (a.queued?.length ?? 0) > 0 ||
+    a.tasks.length > 0
+  )
 }
 
 /** A model id as an agent's row shows it: the family and its version, without the vendor prefix, a
