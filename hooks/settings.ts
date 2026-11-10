@@ -31,6 +31,18 @@ export type Settings = {
   runningPipelineX: 'delete' | 'cancel' | 'off'
 }
 
+/**
+ * The fallbacks of the settings read as free numbers (any value ≥ 0, not only the listed options):
+ * the pane's sizes and the two retention periods. `scripts/defaults.test.mjs` holds these, and every
+ * fallback in `readSettings`, to the manifest's own defaults.
+ */
+export const NUMBER_DEFAULTS = {
+  paneColumns: 84,
+  paneRows: 20,
+  autoClearDoneHours: 0,
+  keepEndedSessionsDays: 7,
+} as const
+
 function pick<T extends string>(raw: unknown, allowed: readonly T[], fallback: T): T {
   return typeof raw === 'string' && (allowed as readonly string[]).includes(raw) ? (raw as T) : fallback
 }

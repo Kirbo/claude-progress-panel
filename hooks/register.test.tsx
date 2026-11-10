@@ -6,6 +6,9 @@ import { applyUpdate, formatTime, newSession, stepCounts } from './model'
 import { resolveProgressDir } from './paths'
 import type { Pipeline } from './pipelines'
 
+// The test runtime's timer (the module itself has none): lets work the mocked clock started run on.
+declare const setTimeout: (run: () => void, ms: number) => unknown
+
 type On = Parameters<TestBody>[1]
 type $Test = Parameters<TestBody>[0]
 
@@ -37,6 +40,8 @@ type Disk = {
   tick: number
   /** When set, listing the folder fails (an unreadable or vanished store). */
   listFails?: boolean
+  /** Runs once right after the next read of this path: another process writing in between. */
+  afterRead?: { path: string; run: () => void }
 }
 
 // The disk's key for a path as the engine hands it to an `fs.*` hook. On Windows the engine
@@ -155,6 +160,11 @@ function engine(
           },
         }),
       }
+    const between = disk.afterRead
+    if (between && between.path === diskKey(e.path)) {
+      disk.afterRead = undefined
+      between.run()
+    }
     return f ? { value: f.text } : { deny: `ENOENT: ${e.path}` }
   })
   // The web, as the plugin's $.http.fetch reaches it: answers by URL (else a 404), every fetch recorded.
@@ -306,7 +316,9 @@ async function exactText(ui: Awaited<ReturnType<typeof pane>>, text: string) {
   return (await ui.findAll({ type: 'Text' })).find(x => x.text === text)
 }
 
-async function texts(ui: Awaited<ReturnType<typeof pane>>): Promise<string[]> {
+async function texts(ui: {
+  findAll(query: { type: 'Text' }): Promise<readonly { text?: string }[]>
+}): Promise<string[]> {
   return (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 }
 
@@ -492,6 +504,42 @@ test("✕ on an open task removes it from every pane, recorded in its session's 
   await ui.unmount()
 })
 
+test("two changes to one session's sidecar never drop each other: in this pane, or from another", async ($, on) => {
+  const disk = makeDisk()
+  put(
+    disk,
+    `${DIR}/s-other.json`,
+    other('s-other', 'site', T0, {
+      tasks: [{ title: 'Deploy docs' }, { title: 'Tag release' }, { title: 'Announce' }],
+    }),
+  )
+  engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  const cancelled = () =>
+    (JSON.parse(disk.files.get(`${DIR}/s-other.dismissed.json`)?.text ?? '{}').cancelled ?? []) as string[]
+
+  // Two presses under way at once in this pane: each reads the sidecar before the other wrote it.
+  await Promise.all([ui.press({ key: 'cancel:s-other:t1' }), ui.press({ key: 'cancel:s-other:t2' })])
+  expect(cancelled().sort()).toEqual(['t1', 't2'])
+
+  // Another pane (another process) writes between this pane's read and its write.
+  disk.afterRead = {
+    path: `${DIR}/s-other.dismissed.json`,
+    run: () =>
+      put(disk, `${DIR}/s-other.dismissed.json`, {
+        version: 1,
+        sessionId: 's-other',
+        entries: [{ id: 'pipeline:x', doneAt: null }],
+        cancelled: ['t1', 't2'],
+      }),
+  }
+  await ui.press({ key: 'cancel:s-other:t3' })
+  expect(cancelled().sort()).toEqual(['t1', 't2', 't3'])
+  expect(sidecar(disk, 's-other')).toEqual([{ id: 'pipeline:x', doneAt: null }])
+  await ui.unmount()
+})
+
 test('the owning session marks a removed task skipped and tells its agent once, on the main loop only', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
@@ -557,6 +605,32 @@ test('a removal reaches the agent with the next prompt too, or in the next progr
   await world.clock.advance(2000)
   const answer = await update($, { now: 'still going' })
   expect(JSON.stringify(answer)).toContain('t2 \\"Beta\\"')
+})
+
+test('a removal read before the session saved its fold is still told only once', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { tasks: [{ title: 'Alpha' }, { title: 'Beta' }] })
+  // The ✕ lands and the person's prompt comes before the next refresh: the prompt's own look at the
+  // file folds the removal in without saving it.
+  put(disk, `${DIR}/s-me.dismissed.json`, { version: 1, sessionId: 's-me', entries: [], cancelled: ['t1'] })
+  const prompt = await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)
+  expect(((prompt as { additionalContext?: string[] }).additionalContext ?? []).join(' ')).toContain(
+    't1 "Alpha"',
+  )
+  // The refresh folds it again, and saves: nothing more to tell.
+  await world.clock.advance(2000)
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]).toMatchObject({ id: 't1', status: 'skipped' })
+  const later = await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'x1',
+  } as never)
+  expect(((later as { additionalContext?: string[] }).additionalContext ?? []).join(' ')).not.toContain(
+    'Alpha',
+  )
 })
 
 test("a subagent's progress lands under its coordinator's session, never among the session's tasks", async ($, on) => {
@@ -941,6 +1015,31 @@ test('a session that reported nothing leaves nothing behind; one emptied before 
   await $.session.end({ reason: 'exit' } as never)
   expect(disk.files.has(`${DIR}/s-next.json`)).toBe(false)
   expect(disk.removed).toContain(`${DIR}/s-next.dismissed.json`)
+})
+
+test("a file that names another session's id is not a session: never shown, written or deleted through", async ($, on) => {
+  const disk = makeDisk()
+  // An ended, expired session under a file name that is not its id: retention would delete by the id.
+  const stray = other('s-victim', 'stray', T0 - 30 * 24 * HOUR, { now: 'Was here' })
+  stray.session.endedAt = new Date(T0 - 29 * 24 * HOUR).toISOString()
+  put(disk, `${DIR}/s-stray.json`, stray)
+  put(disk, `${DIR}/s-victim.json`, other('s-victim', 'victim', T0 - HOUR, { now: 'Working' }))
+  // A live one with a dead process under another name: the liveness check would write by the id.
+  const dead = other('s-busy', 'dead', T0 - HOUR, { now: 'Gone' })
+  dead.session.pid = 4242
+  dead.session.host = 'box'
+  put(disk, `${DIR}/s-alias.json`, dead)
+  const world = engine(on, disk)
+  await start($)
+  await world.clock.advance(2000)
+
+  expect(disk.removed).toEqual([])
+  expect(read(disk, `${DIR}/s-victim.json`).now).toBe('Working')
+  expect(disk.files.has(`${DIR}/s-busy.json`)).toBe(false)
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'group:s-victim' }))?.text).toContain('victim')
+  expect(await texts(ui)).not.toContain('Gone')
+  await ui.unmount()
 })
 
 test('blank sessions never show: an ended one is deleted by any pane, a live one is skipped', async ($, on) => {
@@ -1857,6 +1956,40 @@ test('an update sent while the session polls its pipeline is never overwritten b
   expect(file.tasks[0]).toMatchObject({ id: 't1', status: 'done' })
   expect(file.now).toBe('shipped')
   expect(file.pipelines?.[0]).toMatchObject({ key: 'g/app#42', state: 'success' })
+})
+
+test('a poll still waiting on the forge is never joined by the next one', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  await start($)
+  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  const before = world.runs.filter(argv => argv[0] === 'glab').length
+
+  // GitLab answers slower than the refresh interval: two more rounds come due meanwhile.
+  let release = () => {}
+  world.net.hold = new Promise<void>(r => {
+    release = r
+  })
+  let held = 0
+  const first = new Promise<void>(r => {
+    world.net.onHeld = () => {
+      held += 1
+      r()
+    }
+  })
+  const polling = world.clock.advance(45_000)
+  await first
+  // Let every round that came due get as far as it can.
+  await new Promise<void>(r => setTimeout(() => r(), 100))
+  expect(held).toBe(1)
+  release()
+  world.net.hold = undefined
+  await polling
+  // The one round that ran: the pipeline and its jobs.
+  expect(world.runs.filter(argv => argv[0] === 'glab').length - before).toBeGreaterThanOrEqual(2)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ state: 'running' })
 })
 
 test("every forge call names its host: the remote's for the session's own repo, else the public one", async ($, on) => {
@@ -2800,6 +2933,63 @@ test('a session the plugin joined mid-way gets the reporting rule with its next 
   // The first report ends it.
   await update($, { now: 'Fixing it', tasks: [{ title: 'Fix' }] })
   expect(await context()).toEqual([])
+})
+
+test("a new session's first prompt leaves the rule to its system prompt — it never gets both", async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  await $.classic.SessionStart({ source: 'startup' } as never)
+  const context = (r: unknown) => ((r as { additionalContext?: string[] }).additionalContext ?? []).join('\n')
+  const prompt = async () => context(await $.classic.UserPromptSubmit({ prompt: 'go on' } as never))
+  const call = async (id: string) =>
+    context(
+      await $.classic.PostToolUse({
+        tool_name: 'Bash',
+        tool_input: {},
+        tool_response: {},
+        tool_use_id: id,
+      } as never),
+    )
+  // The tool is still connecting when the session starts, so the system prompt composed so far has
+  // no rule; the one composed for the first request (the tool offered by then) carries it.
+  expect(await prompt()).not.toContain('# Progress pane')
+  const composed = await $.prompt.compose({
+    model: 'claude-opus-5-5',
+    promptModel: 'claude-opus-5-5',
+    surfaces: ['terminal'],
+    tools: ['Bash', TOOL],
+    outputStyle: null,
+    traits: ['skills'],
+  })
+  expect(composed.sections.map(x => x.id)).toContain('progress-panel:reporting')
+  expect(await call('x1')).not.toContain('# Progress pane')
+  expect(await prompt()).not.toContain('# Progress pane')
+})
+
+test('a new session whose system prompt never carried the rule gets it with its first tool call, once', async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  await $.classic.SessionStart({ source: 'startup' } as never)
+  const context = (r: unknown) => ((r as { additionalContext?: string[] }).additionalContext ?? []).join('\n')
+  const call = async (id: string, agent?: string) =>
+    context(
+      await $.classic.PostToolUse({
+        tool_name: 'Bash',
+        tool_input: {},
+        tool_response: {},
+        tool_use_id: id,
+        ...(agent ? { agent_id: agent } : {}),
+      } as never),
+    )
+  expect(context(await $.classic.UserPromptSubmit({ prompt: 'go on' } as never))).not.toContain(
+    '# Progress pane',
+  )
+  // Nothing composed it by the first step of the main loop: the rule rides that step.
+  expect(await call('x1')).toContain('# Progress pane')
+  expect(await call('x2')).not.toContain('# Progress pane')
+  expect(context(await $.classic.UserPromptSubmit({ prompt: 'and' } as never))).not.toContain(
+    '# Progress pane',
+  )
 })
 
 test('a compaction hands the rule again to a session that only had it from a prompt — never to a composed one', async ($, on) => {

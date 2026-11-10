@@ -86,7 +86,10 @@ export function parseGhJobs(text: string): PipelineJob[] | undefined {
   return (raw.jobs as unknown[])
     .filter(
       (j): j is Record<string, unknown> =>
-        typeof j === 'object' && j !== null && typeof j.name === 'string' && typeof j.status === 'string',
+        typeof j === 'object' &&
+        j !== null &&
+        typeof (j as Record<string, unknown>).name === 'string' &&
+        typeof (j as Record<string, unknown>).status === 'string',
     )
     .sort((a, b) => id(a) - id(b))
     .map(j => {

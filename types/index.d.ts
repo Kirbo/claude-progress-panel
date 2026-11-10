@@ -220,7 +220,7 @@ export type Loaded = Record<
 export type Folds = Record<string, boolean>
 
 /** The pane's sort order once the person picked one this session; '' = not yet (use $.store / the option). */
-export type SortChoice = '' | 'status' | 'title' | 'created' | 'done'
+export type SortChoice = '' | 'plan' | 'status' | 'title' | 'created' | 'done'
 
 declare module 'claude-code' {
   interface PluginState {
