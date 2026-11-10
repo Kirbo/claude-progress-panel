@@ -116,6 +116,18 @@ function engine(
   on('classic.PostToolUseFailure', () => ({}) as never)
   on('classic.PermissionDenied', () => ({}) as never)
   on('classic.Stop', () => ({}) as never)
+  // A model request's bottom: the engine's own send (the plugin only reads what it names).
+  on('turn.step', async function* (_: unknown, e: { turnId: string; index: number }) {
+    yield { kind: 'text', index: 0, text: 'ok' }
+    return {
+      turnId: e.turnId,
+      index: e.index,
+      answer: 'ok',
+      toolUses: [],
+      stopReason: 'end_turn',
+      usage: null,
+    }
+  } as never)
   // The session's subagents, as $.agent.list() answers (their Agent call's description).
   const agents: { id: string; description: string; type: string; status: string }[] = []
   on('agent.list', () => ({ value: agents }) as never)
@@ -692,6 +704,66 @@ test("a subagent's progress lands under its coordinator's session, never among t
   // The coordinator's own next answer lists its running subagents.
   const mine = await update($, { now: 'waiting on lanes' })
   expect(JSON.stringify(mine)).toContain('Lane A: scopes 3/4, ~1 min left')
+})
+
+test("a subagent's row says which model and effort it runs on, as its own requests name them", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({
+    id: 'sub-1',
+    description: 'Lane A: scopes',
+    type: 'general-purpose',
+    status: 'running',
+  })
+  await start($)
+  await update($, { tasks: [{ title: 'Coordinate the lanes', status: 'doing' }] })
+  // One model request, read to its end as the engine reads it: its chunks, then its result.
+  const step = async (agentId: string | undefined, model: string, effort?: string | number) => {
+    const stream = $.turn.step({
+      turnId: 't1',
+      index: 0,
+      model,
+      messageCount: 1,
+      ...(effort ? { effort } : {}),
+      ...(agentId ? { agentId } : {}),
+    } as never)
+    const chunks: unknown[] = []
+    for (;;) {
+      const item = await stream.next()
+      if (item.done) return { chunks, result: item.value }
+      chunks.push(item.value)
+    }
+  }
+  // An agent with no entry yet: nothing is written, and the request goes through whole.
+  const passed = await step('sub-unknown', 'claude-sonnet-5-5', 'medium')
+  expect(passed.chunks).toEqual([{ kind: 'text', index: 0, text: 'ok' }])
+  expect(passed.result).toMatchObject({ turnId: 't1', index: 0, answer: 'ok' })
+  await $.tool.call({ tool: TOOL, agentId: 'sub-1', now: 'Reading', tasks: [{ title: 'read' }] } as never)
+  // The session's own requests are not an agent's.
+  await step(undefined, 'claude-fable-5-2', 'high')
+  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => [a.id, a.model])).toEqual([['sub-1', undefined]])
+  // Its next request names what it runs on: kept on its entry.
+  await step('sub-1', 'claude-sonnet-5-5', 'medium')
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]).toMatchObject({
+    model: 'claude-sonnet-5-5',
+    effort: 'medium',
+  })
+  const ui = await pane($)
+  expect(await texts(ui)).toContain('sonnet 5.5 · medium · ░░░░░░░░ 0/1 · 0s')
+  await ui.unmount()
+  // The same again writes nothing; a change (another model, one without effort) replaces it; its
+  // next report keeps it.
+  const before = JSON.stringify(read(disk, `${DIR}/s-me.json`))
+  await step('sub-1', 'claude-sonnet-5-5', 'medium')
+  expect(JSON.stringify(read(disk, `${DIR}/s-me.json`))).toBe(before)
+  await step('sub-1', 'claude-haiku-5-5-20261001')
+  await $.tool.call({ tool: TOOL, agentId: 'sub-1', now: 'Writing' } as never)
+  const entry = read(disk, `${DIR}/s-me.json`).agents?.[0]
+  expect(entry?.model).toBe('claude-haiku-5-5-20261001')
+  expect(entry?.effort).toBeUndefined()
+  const again = await pane($)
+  expect(await texts(again)).toContain('haiku 5.5 · ░░░░░░░░ 0/1 · 0s')
+  await again.unmount()
 })
 
 test('a subagent that never reports (no progress tool) still shows under Agents while it runs', async ($, on) => {

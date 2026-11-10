@@ -44,6 +44,7 @@ import {
   toolCallSummary,
   trackedByPipeline,
   untouchedDoing,
+  withAgentRun,
   withAutoTask,
 } from './model'
 import { baseName } from './paths'
@@ -54,6 +55,7 @@ import { NUMBER_DEFAULTS } from './settings'
 import {
   agentBackground,
   agentRepoAsked,
+  agentRunNoted,
   DAY_MS,
   finishedLinks,
   isOn,
@@ -634,6 +636,31 @@ export async function reopenIfActive(
     const own = await ownFile($, dir)
     const next = pickedUp(reopenAgent(own, agentId, at), agentId)
     if (next !== own) await save($, dir, next)
+  })
+}
+
+// A subagent's model request (`turn.step`): what it actually runs on — the model the engine resolved
+// for it (its own, its type's, the session's subagent default or the parent's) and the effort asked
+// for — goes on its entry, so the pane can say it. Only a change is written; an agent with no entry
+// yet (it starts before the list scan or its first report adds it) is noted at a later step.
+export async function noteAgentRun($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
+  if (!isOn(options, 'agents')) return
+  const step = fields(e)
+  const id = step.agentId
+  const model = step.model
+  if (typeof id !== 'string' || !id || typeof model !== 'string' || !model) return
+  const effort = typeof step.effort === 'string' || typeof step.effort === 'number' ? step.effort : undefined
+  const sig = `${model}|${effort ?? ''}`
+  if (agentRunNoted.get(id) === sig) return
+  const plain = await readOwnPlain($, options)
+  if (plain === 'nowhere' || !plain?.agents?.some(a => a.id === id)) return
+  const dir = await progressDir($, options)
+  if (!dir) return
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const next = withAgentRun(own, id, model, effort)
+    if (next !== own) await save($, dir, next)
+    if (next.agents?.some(a => a.id === id)) agentRunNoted.set(id, sig)
   })
 }
 

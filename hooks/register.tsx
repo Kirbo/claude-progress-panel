@@ -23,6 +23,7 @@ import {
   markEnded,
   noteAgentBackground,
   noteAgentRepo,
+  noteAgentRun,
   notePendingCall,
   ownManifest,
   paneArgs,
@@ -198,6 +199,13 @@ export const register: Register = (on, options) => {
   }).catch(() => undefined)
 
   // Claude Code waits on the person: a permission prompt or the idle prompt becomes a Needs-you item.
+  // A subagent's model request: the model and effort it actually runs on go on its row. The main
+  // loop's own requests pass untouched, and a failure here never holds a request up.
+  // The event streams, so the hook is a generator that hands everything beneath it through whole.
+  on('turn.step', async function* ($, e, next) {
+    if (e.agentId) await noteAgentRun($, options, e).catch(() => undefined)
+    return yield* next(e)
+  })
   on('classic.Notification', async ($, e, next) => {
     await raiseAutoNeed($, options, e).catch(() => undefined)
     return next(e)

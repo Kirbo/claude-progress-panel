@@ -487,6 +487,9 @@ export function applyAgentUpdate(
       ? { resumedAt: old.endedAt !== null ? nowIso : old.resumedAt }
       : {}),
     ...(eta !== undefined ? { etaMin: eta } : {}),
+    // What it runs on is the engine's word (`withAgentRun`), not the report's: kept across reports.
+    ...(old?.model ? { model: old.model } : {}),
+    ...(old?.effort ? { effort: old.effort } : {}),
     startedAt: old?.startedAt ?? nowIso,
     updatedAt: nowIso,
     endedAt: null,
@@ -511,6 +514,32 @@ export const AGENT_IDLE_MS = 3 * 60_000
 
 function idle(a: AgentEntry, nowIso: string): boolean {
   return Date.parse(nowIso) - Date.parse(a.updatedAt) >= AGENT_IDLE_MS
+}
+
+/** A model id as an agent's row shows it: the family and its version, without the vendor prefix, a
+ *  provider's wrapping, the release date or a context tag (`claude-sonnet-5-5-20261001[1m]` →
+ *  `sonnet 5.5`). An alias or an id of another shape shows as it is. */
+export function modelLabel(id: string): string {
+  const m = /(?:^|[./:])claude-([a-z]+)((?:-\d{1,2})+)(?=$|[-@[:])/.exec(id.trim())
+  if (!m) return id.trim()
+  return `${m[1]} ${(m[2] ?? '').slice(1).split('-').join('.')}`
+}
+
+/** The agent's entry with what its latest model request ran on (`turn.step`: the model the engine
+ *  resolved, the effort it asked for). The same file when the agent has no entry yet or nothing
+ *  changed, so the caller writes only a change. */
+export function withAgentRun(
+  file: SessionFile,
+  id: string,
+  model: string,
+  effort: string | number | undefined,
+): SessionFile {
+  const known = file.agents?.find(a => a.id === id)
+  const level = effort === undefined ? undefined : String(effort)
+  if (!known || !model || (known.model === model && known.effort === level)) return file
+  const { effort: _was, ...rest } = known
+  const next = { ...rest, model, ...(level ? { effort: level } : {}) }
+  return { ...file, agents: (file.agents ?? []).map(a => (a.id === id ? next : a)) }
 }
 
 /**

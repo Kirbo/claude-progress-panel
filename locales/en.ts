@@ -105,6 +105,8 @@ export const en = {
   'pane.agentsFinished': '{fold} Agents  {count}',
   'pane.agentFold': '{fold} {label}',
   'pane.agentElapsed': ' · {d}',
+  'pane.agentRun': '{model} · {effort}',
+  'pane.agentRunModel': '{model}',
   'pane.agentWaiting': ' · waiting on background work',
   'pane.waitingOn': 'waiting on: {what} (background)',
   'pane.waitingOnUnknown': 'waiting on its background task',

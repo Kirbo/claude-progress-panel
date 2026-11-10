@@ -16,6 +16,7 @@ import {
   isClosed,
   linkedAgent,
   matchesTask,
+  modelLabel,
   OTHER_REPO,
   removalKey,
   SORTS,
@@ -1129,6 +1130,12 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       const elapsed = Number.isFinite(ranS) ? t('pane.agentElapsed', { d: formatDuration(ranS) }) : ''
       const left = timeLeft(a.tasks, a.startedAt, a.etaMin)
       const eta = left ? t(left.guess ? 'pane.agentEtaGuess' : 'pane.agentEta', { min: left.min }) : ''
+      // What it runs on, first on the right: the model (short) and, where it has one, the effort.
+      const run = a.model
+        ? a.effort
+          ? t('pane.agentRun', { model: modelLabel(a.model), effort: a.effort })
+          : t('pane.agentRunModel', { model: modelLabel(a.model) })
+        : ''
       return (
         <Box flexDirection="column">
           <Box
@@ -1159,10 +1166,15 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             )}
             <Box flexDirection="row" flexShrink={0} gap={1}>
               <Text dimColor>
-                {`${steps}${elapsed}${a.waiting && a.endedAt === null ? t('pane.agentWaiting') : eta}`.replace(
-                  /^ · /,
-                  '',
-                )}
+                {[
+                  run,
+                  `${steps}${elapsed}${a.waiting && a.endedAt === null ? t('pane.agentWaiting') : eta}`.replace(
+                    /^ · /,
+                    '',
+                  ),
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </Text>
               {/* ✕ on a running subagent: its work is cancelled — it is told to stop and wrap up. */}
               {a.cancelledAt ? null : (

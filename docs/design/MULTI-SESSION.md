@@ -703,6 +703,22 @@ and `git ls-remote --exit-code origin HEAD`, its whole stderr classified (`class
 untrusted SSH host key, missing credentials). Read-only apart from the probe; a custom CI command is
 not run.
 
+## What an agent runs on: model and effort (0.24.0)
+
+An agent's row starts its right side with the model and effort it actually runs on —
+`sonnet 5.5 · medium · ██░░ 3/7 · 2m · ~4 min left` — so a glance tells which lanes run on which
+model. The source is the engine's own word, not the Agent call's: a `turn.step` hook (one model
+request, the main loop's or a subagent's) reads the request's `model` (as the engine resolved it:
+the call's, the agent type's, the session's subagent default or the parent's) and `effort`, and
+`noteAgentRun` stores them on the agent's entry (`AgentEntry.model` / `.effort`) when they differ
+from what it holds. `agentRunNoted` remembers what each agent was given, so a repeated step costs no
+file read; an agent with no entry yet is noted at a later step. The event streams, so the hook is a
+generator that hands everything beneath it through unchanged (`return yield* next(e)`) — it never
+rewrites a request. The main loop's requests are ignored. `modelLabel` shortens an id for the row
+(`claude-sonnet-5-5-20261001[1m]` → `sonnet 5.5`; an id of another shape shows as it is); a model
+without effort shows the model alone; a numeric budget shows as its number. An agent's report
+rebuilds its entry and keeps both fields. With `agents` off nothing is noted.
+
 ## Out of scope / later
 
 - Other machines: the store is local. Mirroring to a shared place stays the agent's job.

@@ -34,6 +34,11 @@ export type AgentEntry = {
    *  counts as its repo); the pane groups it under that repo when a session spans several. */
   repo?: string
   queued?: string[]
+  /** The model its last request named (0.24.0), as the engine resolved it (`turn.step`): a full id. */
+  model?: string
+  /** The effort of that request (0.24.0): a level, or a budget's number as text; absent for a model
+   *  without effort. */
+  effort?: string
 }
 
 /** One subtask of a task: a title, its own status and, once closed, when (0.23.0: the pace a

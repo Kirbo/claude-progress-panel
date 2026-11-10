@@ -28,6 +28,7 @@ import {
   matchesTask,
   mergeScan,
   mergeSidecar,
+  modelLabel,
   needsLivenessCheck,
   newSession,
   OTHER_REPO,
@@ -49,6 +50,7 @@ import {
   untouchedDoing,
   visibleTasks,
   waitingOnFrom,
+  withAgentRun,
 } from './model'
 
 const T0 = Date.UTC(2026, 10, 6, 20, 0, 0)
@@ -1070,4 +1072,40 @@ test('a tool call in one line: its tool and the input that matters, cut with …
   expect(isGenericPermission('')).toBe(true)
   expect(isGenericPermission('Claude needs your permission to use Bash')).toBe(true)
   expect(isGenericPermission('Approve the deploy?')).toBe(false)
+})
+
+test('a model id reads as a short name: family and version, no vendor prefix, date or context tag', () => {
+  expect(modelLabel('claude-sonnet-5-5')).toBe('sonnet 5.5')
+  expect(modelLabel('claude-fable-5-2')).toBe('fable 5.2')
+  expect(modelLabel('claude-haiku-5-5-20261001')).toBe('haiku 5.5')
+  expect(modelLabel('claude-opus-5-5[1m]')).toBe('opus 5.5')
+  expect(modelLabel('claude-opus-5')).toBe('opus 5')
+  // A provider's spelling keeps the family and version (Bedrock, Vertex).
+  expect(modelLabel('us.anthropic.claude-sonnet-5-5-20261001-v1:0')).toBe('sonnet 5.5')
+  expect(modelLabel('claude-sonnet-5-5@20261001')).toBe('sonnet 5.5')
+  // An alias or anything unknown shows as it is.
+  expect(modelLabel('sonnet')).toBe('sonnet')
+  expect(modelLabel('my-proxy/model-x')).toBe('my-proxy/model-x')
+  expect(modelLabel('')).toBe('')
+})
+
+test("an agent's model and effort are kept on its entry, survive its next report, and change only when they do", () => {
+  const at = '2026-11-10T10:00:00.000Z'
+  const base = applyAgentUpdate(
+    newSession({ id: 's', project: 'p', cwd: '/w/p' }, at),
+    { id: 'a1', label: 'Lane A' },
+    { now: 'x', tasks: [{ title: 's1' }] },
+    at,
+  ).file
+  // Unknown agent, or nothing new: the same object (nothing to write).
+  expect(withAgentRun(base, 'nope', 'claude-sonnet-5-5', 'medium')).toBe(base)
+  const ran = withAgentRun(base, 'a1', 'claude-sonnet-5-5', 'medium')
+  expect(ran.agents?.[0]).toMatchObject({ model: 'claude-sonnet-5-5', effort: 'medium' })
+  expect(withAgentRun(ran, 'a1', 'claude-sonnet-5-5', 'medium')).toBe(ran)
+  // Its next report rebuilds the entry: the run stays on it.
+  const later = applyAgentUpdate(ran, { id: 'a1', label: 'Lane A' }, { now: 'y' }, at).file
+  expect(later.agents?.[0]).toMatchObject({ now: 'y', model: 'claude-sonnet-5-5', effort: 'medium' })
+  // A model without effort: the effort goes; a numeric budget is kept as its text.
+  expect(withAgentRun(later, 'a1', 'claude-haiku-5-5', undefined).agents?.[0]?.effort).toBeUndefined()
+  expect(withAgentRun(later, 'a1', 'claude-sonnet-5-5', 4096).agents?.[0]?.effort).toBe('4096')
 })

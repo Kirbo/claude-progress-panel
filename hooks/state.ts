@@ -107,6 +107,10 @@ export const promptFed = new Set<string>()
 // answer is kept on its entry), so a worktree counts as the repo it belongs to.
 export const agentRepoAsked = new Set<string>()
 
+// What each subagent's entry was last given as its model and effort (`model|effort`): a model
+// request repeats them at every step, and only a change is worth a read of the session's file.
+export const agentRunNoted = new Map<string, string>()
+
 // Subagents told the reporting rule (once each, process-wide).
 export const subagentRuleSent = new Set<string>()
 
