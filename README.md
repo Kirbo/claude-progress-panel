@@ -64,8 +64,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   out its name — not Needs you, Now, its header ("This session"), the top line or the status line.
   An ask's "— reply … here" is worded by each pane: "here" shows only in the pane of the session
   that asks, and only while another session is open.
-- **Claude Code's own waits are Needs you too:** a session stopped on a permission prompt or
-  waiting for your reply shows it under **Needs you**, toasted to the other sessions, until the wait
+- **Claude Code's own waits are Needs you too:** a session stopped on a permission prompt, or one
+  whose turn finished and waits for your next message ("Turn finished — waiting for your next
+  message": a state, nothing to answer), shows it under **Needs you**, toasted to the other sessions, until the wait
   ends — the tool ran or was denied, the turn ended, or you answered. The agent's own asks are never
   touched. Settings `autoNeedsPermission` / `autoNeedsIdle` (both on).
 - **No "needs your attention" without what, where and how.** A permission prompt says which tool

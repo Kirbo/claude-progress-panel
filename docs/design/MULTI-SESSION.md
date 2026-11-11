@@ -590,7 +590,8 @@ replaced with every `needsYou`. Since 0.26.0 an item may also carry `reply` (the
 for, "yes or no"), kept in its `needLinks` entry: the agent no longer writes "reply … here" into the
 text — each pane words it (`askLine`: "{text} — reply {reply}", plus " here" only when the pane is
 the asking session's own AND another session is open). The idle wait is worded per pane the same
-way ("— answer here"). A session that is the only open one (`isSolo`: no other file with
+way ("Turn finished — waiting for your next message", plus " here"; reworded in 0.26.1 — "Waiting
+for your reply" read as a question left unanswered). A session that is the only open one (`isSolo`: no other file with
 `endedAt === null`; a session that has not reported yet has no file, so the other one keeps its
 name in its pane) is never named: Needs you, Now, the top line and the status line drop the name,
 its header reads "This session". Ended sessions keep their names. Automatic permission items take what from the loop's pending tool

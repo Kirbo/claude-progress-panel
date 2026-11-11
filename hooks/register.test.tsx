@@ -3511,9 +3511,9 @@ test("Claude Code's waits become Needs-you items — and go as the wait ends; th
     notification_type: 'idle_prompt',
     message: 'Claude is waiting for your input',
   } as never)
-  expect(auto()).toEqual(['Waiting for your reply'])
+  expect(auto()).toEqual(['Turn finished — waiting for your next message'])
   await $.classic.Stop({ stop_hook_active: false } as never)
-  expect(auto()).toEqual(['Waiting for your reply'])
+  expect(auto()).toEqual(['Turn finished — waiting for your next message'])
   await $.classic.UserPromptSubmit({ prompt: 'yes' } as never)
   expect(auto()).toEqual([])
   // The agent's own ask was never touched.
@@ -5109,10 +5109,12 @@ test('the idle wait says "answer here" only in its own pane, and only when anoth
   const disk = makeDisk()
   const world = engine(on, disk)
   await start($)
-  await update($, { now: 'n' })
+  await update($, { now: 'n', tasks: [{ title: 'Work', status: 'doing' }] })
   await $.classic.Notification({ notification_type: 'idle_prompt', message: 'x' } as never)
   let ui = await pane($)
-  expect(await texts(ui)).toContain('• Waiting for your reply')
+  // Worded as a state, never as a question left unanswered — beneath its task too.
+  expect(await texts(ui)).toContain('• Turn finished — waiting for your next message')
+  expect(await texts(ui)).toContain('turn finished — waiting for your next message')
   await ui.unmount()
 
   // Another session opens: here is now worth saying. Its own idle wait is not "here".
@@ -5130,7 +5132,7 @@ test('the idle wait says "answer here" only in its own pane, and only when anoth
   await world.clock.advance(2000)
   ui = await pane($)
   const lines = await texts(ui)
-  expect(lines).toContain('• app: Waiting for your reply — answer here')
-  expect(lines).toContain('• site: Waiting for your reply')
+  expect(lines).toContain('• app: Turn finished — waiting for your next message here')
+  expect(lines).toContain('• site: Turn finished — waiting for your next message')
   await ui.unmount()
 })

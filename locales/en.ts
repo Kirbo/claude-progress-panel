@@ -288,7 +288,7 @@ export const en = {
   'pane.linkedAgentStopped': '■ {agent} stopped in the Progress pane — re-plan or skip this task',
   'pane.otherRepo': 'other',
   'wait.permission': 'waiting for your permission: {what}',
-  'wait.reply': 'waiting for your reply',
+  'wait.reply': 'turn finished — waiting for your next message',
   'pane.linkedPipeline': '⧗ waits on {label}: {state} — closes by itself when it finishes',
   'pane.unconfirmed': '? not updated since {min} min — unconfirmed at the end of a turn',
   'push.linkedTask':
@@ -305,8 +305,8 @@ export const en = {
   'stop.untouchedLine': '- {id} "{task}" (doing, last updated {min} min ago)',
   'auto.permission': 'Permission: {message}',
   'auto.permissionAgent': 'Permission: {message} (agent: {agent})',
-  'auto.idle': 'Waiting for your reply',
-  'auto.idleHere': 'Waiting for your reply — answer here',
+  'auto.idle': 'Turn finished — waiting for your next message',
+  'auto.idleHere': 'Turn finished — waiting for your next message here',
   'auto.permissionUnknown':
     'Permission prompt in session {session}{agent} — open that terminal to see and answer it',
   'auto.agentSuffix': ' (agent: {agent})',
