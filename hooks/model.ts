@@ -50,7 +50,7 @@ export type TaskInput = {
   pipeline?: string
 }
 /** One ask: its text alone, or with the task (id) or agent (label / id) it belongs to. */
-export type NeedInput = string | { text?: string; task?: string; agent?: string }
+export type NeedInput = string | { text?: string; task?: string; agent?: string; reply?: string }
 export type UpdateInput = {
   now?: string
   needsYou?: NeedInput[]
@@ -1580,7 +1580,7 @@ export function waitFor(
 }
 
 /** The asks a report sends: their texts (`needsYou`, what every reader shows) and, for the ones that
- *  name a task or an agent, the links (`needLinks`). A blank ask is refused. */
+ *  name a task, an agent or the reply they wait for, the links (`needLinks`). A blank ask is refused. */
 function needsFrom(
   items: readonly NeedInput[],
   errors: string[],
@@ -1594,14 +1594,22 @@ function needsFrom(
       return
     }
     needsYou.push(text)
-    if (typeof item === 'object' && item && (item.task?.trim() || item.agent?.trim()))
+    if (typeof item === 'object' && item && (item.task?.trim() || item.agent?.trim() || item.reply?.trim()))
       needLinks.push({
         text,
         ...(item.task?.trim() ? { task: item.task.trim() } : {}),
         ...(item.agent?.trim() ? { agent: item.agent.trim() } : {}),
+        ...(item.reply?.trim() ? { reply: item.reply.trim() } : {}),
       })
   })
   return { needsYou, ...(needLinks.length > 0 ? { needLinks } : { needLinks: [] }) }
+}
+
+/** The reply an ask waits for ("yes or no"), when its agent named one: each pane words the "reply …"
+ *  itself, so "here" is said only where it is true. */
+export function askReply(file: SessionFile, text: string): string | undefined {
+  const reply = (file.needLinks ?? []).find(l => l.text === text)?.reply
+  return typeof reply === 'string' && reply.trim() ? reply.trim() : undefined
 }
 
 /** What a task, an agent or an agent's step waits on the person for — an automatic wait (a
@@ -1609,7 +1617,7 @@ function needsFrom(
 export function attentionFor(
   file: SessionFile,
   target: { task?: Task; agent?: AgentEntry },
-  reasons: { permission: (what: string) => string; reply: () => string },
+  reasons: { permission: (what: string) => string; reply: () => string; ask?: (text: string) => string },
 ): string | undefined {
   const auto = target.agent
     ? waitFor(file, { agentId: target.agent.id })
@@ -1624,7 +1632,7 @@ export function attentionFor(
       ((target.task && l.task === target.task.id) ||
         (agent && l.agent !== undefined && (l.agent === agent.label || l.agent === agent.id))),
   )
-  return link?.text
+  return link && reasons.ask ? reasons.ask(link.text) : link?.text
 }
 
 /** The tool a generic permission notice names ("…to use Bash"), if any. */

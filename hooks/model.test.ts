@@ -7,6 +7,7 @@ import {
   agentRepo,
   applyAgentUpdate,
   applyUpdate,
+  askReply,
   cancelDeeper,
   cancelTasks,
   capNewest,
@@ -1136,4 +1137,26 @@ test("an agent's latest tool call is kept on its entry and survives its next rep
   expect(agentHasInside({ ...bare, waiting: true })).toBe(true)
   expect(agentHasInside({ ...bare, waiting: true, endedAt: at })).toBe(false)
   expect(agentHasInside({ ...bare, tasks: [{ id: 't1', title: 's', status: 'todo' }] as never })).toBe(true)
+})
+
+test('applyUpdate: an ask keeps the reply it waits for beside its text — the text itself stays as sent', () => {
+  const { file, errors } = applyUpdate(
+    fresh(),
+    {
+      needsYou: [
+        { text: 'Push 1.0?', reply: ' yes or no ' },
+        { text: 'Pick a port', reply: 'a number', task: 't1' },
+        { text: 'Plug in the key', reply: '  ' },
+      ],
+    },
+    iso(T0),
+  )
+  expect(errors).toEqual([])
+  expect(file.needsYou).toEqual(['Push 1.0?', 'Pick a port', 'Plug in the key'])
+  expect(file.needLinks).toEqual([
+    { text: 'Push 1.0?', reply: 'yes or no' },
+    { text: 'Pick a port', task: 't1', reply: 'a number' },
+  ])
+  expect(askReply(file, 'Push 1.0?')).toBe('yes or no')
+  expect(askReply(file, 'Plug in the key')).toBeUndefined()
 })

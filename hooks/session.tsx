@@ -16,6 +16,7 @@ import {
   agentHasTask,
   applyAgentUpdate,
   applyUpdate,
+  askReply,
   autoLinkTarget,
   dismissAgents,
   dropReplacedAutoTasks,
@@ -302,27 +303,59 @@ export function sessionName(file: SessionFile): string {
   return file.session.title || file.session.project
 }
 
-export function liveNeeds(all: Loaded): { project: string; item: string; key: string }[] {
+/** Whether `me` is the only open session: then nothing needs its name, and "here" goes without saying. */
+export function isSolo(all: Loaded, me: string): boolean {
+  return Object.values(all).every(s => s.file.session.endedAt !== null || s.file.session.id === me)
+}
+
+/** An ask as a pane words it: its text, then the reply it waits for — "here" only when `isHere`
+ *  (the asking session's own pane, while another session is open). */
+export function askLine(file: SessionFile, text: string, isHere: boolean): string {
+  const reply = askReply(file, text)
+  return reply ? t(isHere ? 'need.replyHere' : 'need.reply', { text, reply }) : text
+}
+
+/** Every open session's asks as `me`'s pane words them. `key` holds the ask as stored, so it is the
+ *  same ask in every pane. */
+export function liveNeeds(all: Loaded, me: string): { project: string; item: string; key: string }[] {
+  const solo = isSolo(all, me)
   return Object.values(all)
     .filter(s => s.file.session.endedAt === null)
     .sort((a, b) => Date.parse(b.file.updatedAt) - Date.parse(a.file.updatedAt))
-    .flatMap(s =>
-      [...s.file.needsYou, ...(s.file.autoNeeds ?? []).map(a => a.text)].map(item => ({
+    .flatMap(s => {
+      const isHere = s.file.session.id === me && !solo
+      return [
+        ...s.file.needsYou.map(text => ({ text, item: askLine(s.file, text, isHere) })),
+        // The idle wait is worded per pane too; a permission keeps the words it was raised with.
+        ...(s.file.autoNeeds ?? []).map(a => ({
+          text: a.text,
+          item: a.kind === 'idle' ? t(isHere ? 'auto.idleHere' : 'auto.idle') : a.text,
+        })),
+      ].map(n => ({
         project: sessionName(s.file),
-        item,
-        key: `${s.file.session.id}\u0000${item}`,
-      })),
-    )
+        item: n.item,
+        key: `${s.file.session.id}\u0000${n.text}`,
+      }))
+    })
 }
 
 // The status line, and a toast for each ask another session raised since the last look.
 export async function announce($: EngineInterface, all: Loaded, me: string): Promise<void> {
-  const needs = liveNeeds(all)
-  // The status line names the ask itself (cut with "…"), never only a count.
+  const needs = liveNeeds(all, me)
+  // The status line names the ask itself (cut with "…"), never only a count — and the session it
+  // comes from only while more than one is open.
   const first = needs[0]
+  const one = needs.length === 1
+  const statusKey = isSolo(all, me)
+    ? one
+      ? 'status.needsYouOneSolo'
+      : 'status.needsYouManySolo'
+    : one
+      ? 'status.needsYouOne'
+      : 'status.needsYouMany'
   await $.ui.status(
     first
-      ? t(needs.length === 1 ? 'status.needsYouOne' : 'status.needsYouMany', {
+      ? t(statusKey, {
           count: needs.length,
           project: first.project,
           item: cutText(first.item, 60),

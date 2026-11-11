@@ -1068,6 +1068,8 @@ test('resolveProgressDir: the option wins, ~ expands, else <config dir>/progress
 
 test('a session is shown by the name Claude Code gives it, and follows a rename', async ($, on) => {
   const disk = makeDisk()
+  // A second open session: the only open one would not be named at all.
+  put(disk, `${DIR}/s-other.json`, other('s-other', 'site', T0, { now: 'Idle' }))
   engine(on, disk)
   await start($)
   await update($, { now: 'testing', needsYou: ['an OK'] })
@@ -1333,7 +1335,7 @@ test('an open Done lists its newest 10; the older rest folds behind "N older"', 
   const older = await ui.find({ type: 'Button', key: 'doneolder:s-me' })
   expect(older?.text).toBe('▸ 15 older')
   // The live part is still there above it.
-  expect(await texts(ui)).toContain('app · Working')
+  expect(await texts(ui)).toContain('Working')
 
   await ui.press({ key: 'doneolder:s-me' })
   expect(await ui.find({ type: 'Text', text: /^✓ Task 1 / })).toBeTruthy()
@@ -1830,7 +1832,7 @@ test('my own asks never toast; skipped tasks list under Done with a dash', async
   await update($, { needsYou: ['Mine'], tasks: [{ title: 'Dropped', status: 'skipped' }] })
   await world.clock.advance(2000)
   expect(world.toasts).toEqual([])
-  expect(world.status.at(-1)).toBe('⚠ app: Mine')
+  expect(world.status.at(-1)).toBe('⚠ Mine')
 
   await update($, { needsYou: [] })
   expect(world.status.at(-1)).toBeUndefined()
@@ -3509,9 +3511,9 @@ test("Claude Code's waits become Needs-you items — and go as the wait ends; th
     notification_type: 'idle_prompt',
     message: 'Claude is waiting for your input',
   } as never)
-  expect(auto()).toEqual(['Waiting for your reply — answer in this session'])
+  expect(auto()).toEqual(['Waiting for your reply'])
   await $.classic.Stop({ stop_hook_active: false } as never)
-  expect(auto()).toEqual(['Waiting for your reply — answer in this session'])
+  expect(auto()).toEqual(['Waiting for your reply'])
   await $.classic.UserPromptSubmit({ prompt: 'yes' } as never)
   expect(auto()).toEqual([])
   // The agent's own ask was never touched.
@@ -4453,7 +4455,7 @@ test('a Now line too long for the pane is cut and folds open to its whole text',
     String(b.props.key ?? '').startsWith('full:now:'),
   )
   expect(key).toBeDefined()
-  const line = `app · ${now}`
+  const line = now
   const shown = async () => (await ui.findAll({ type: 'Text' })).filter(x => (x.text ?? '').includes(line))
   // Folded: one line, cut with "…" in a shrinkable row.
   expect((await shown()).map(x => x.props.wrap)).toEqual(['truncate-end'])
@@ -5024,4 +5026,111 @@ test('an ask may name its task or subagent: that one shows the Needs-you mark wi
     ((await update($, { needsYou: [{ text: ' ' }] })) as { result?: unknown }).result ?? '',
   )
   expect(answer).toContain('an ask needs its text')
+})
+
+test('the only open session is never named — not in Needs you, Now, its header, the top line or the status line — and needs no "here"', async ($, on) => {
+  const disk = makeDisk()
+  // An ended session is not open: it keeps its name, and the open one still needs none.
+  const old = other('s-old', 'old', T0 - HOUR, { now: 'Was busy' })
+  put(disk, `${DIR}/s-old.json`, {
+    ...old,
+    session: { ...old.session, endedAt: new Date(T0 - HOUR).toISOString() },
+  })
+  const world = engine(on, disk)
+  await start($)
+  await update($, {
+    now: 'Writing tests',
+    tasks: [{ id: 'rel', title: 'Release 1.0', status: 'doing' }],
+    needsYou: [{ text: 'Push 1.0?', reply: 'yes or no', task: 'rel' }, 'Plug in the USB key'],
+  })
+
+  const ui = await pane($, 120)
+  const lines = await texts(ui)
+  expect(lines).toContain('• Push 1.0? — reply yes or no')
+  expect(lines).toContain('• Plug in the USB key')
+  expect(lines).toContain('Push 1.0? — reply yes or no')
+  expect(lines).toContain('Writing tests')
+  expect(lines.filter(l => l.includes('app'))).toEqual([])
+  expect(lines.filter(l => l.includes('reply') && l.endsWith(' here'))).toEqual([])
+  expect(lines[0]).toMatch(/^updated \d\d:\d\d · checked \d\d:\d\d:\d\d$/)
+  expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ This session · /)
+  expect((await ui.find({ type: 'Button', key: 'group:s-old' }))?.text).toMatch(/^▸ old · ended /)
+  expect(world.status.at(-1)).toBe('⚠ 2 need you — Push 1.0? — reply yes or no')
+  await ui.unmount()
+})
+
+test('with two sessions open, "reply … here" shows only in the pane of the session that asks', async ($, on) => {
+  const disk = makeDisk()
+  put(
+    disk,
+    `${DIR}/s-other.json`,
+    other('s-other', 'site', T0 - HOUR, {
+      now: 'Deploying',
+      tasks: [{ id: 'dep', title: 'Deploy', status: 'doing' }],
+      needsYou: [{ text: 'Approve the deploy?', reply: 'yes or no', task: 'dep' }],
+    }),
+  )
+  const world = engine(on, disk)
+  await start($)
+  await update($, {
+    now: 'Writing tests',
+    tasks: [{ id: 'rel', title: 'Release 1.0', status: 'doing' }],
+    needsYou: [{ text: 'Push 1.0?', reply: 'yes or no', task: 'rel' }],
+  })
+
+  const ui = await pane($, 120)
+  const lines = await texts(ui)
+  // This session's own ask: answered here. The other session's: not here, and it says whose it is.
+  expect(lines).toContain('• app: Push 1.0? — reply yes or no here')
+  expect(lines).toContain('• site: Approve the deploy? — reply yes or no')
+  // The same wording beneath the task each ask belongs to.
+  expect(lines).toContain('Push 1.0? — reply yes or no here')
+  expect(lines).toContain('Approve the deploy? — reply yes or no')
+  expect(lines).not.toContain('Approve the deploy? — reply yes or no here')
+  expect(lines).toContain('app · Writing tests')
+  expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ app \(this session\) · /)
+  expect(world.status.at(-1)).toBe('⚠ 2 need you — app: Push 1.0? — reply yes or no here')
+  await ui.unmount()
+})
+
+test('a session that has not reported yet is still a second open session: the other one keeps its name', async ($, on) => {
+  const disk = makeDisk()
+  put(disk, `${DIR}/s-other.json`, other('s-other', 'site', T0, { now: 'Busy', needsYou: ['Answer me'] }))
+  engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  const lines = await texts(ui)
+  expect(lines).toContain('• site: Answer me')
+  expect(lines).toContain('site · Busy')
+  await ui.unmount()
+})
+
+test('the idle wait says "answer here" only in its own pane, and only when another session is open', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'n' })
+  await $.classic.Notification({ notification_type: 'idle_prompt', message: 'x' } as never)
+  let ui = await pane($)
+  expect(await texts(ui)).toContain('• Waiting for your reply')
+  await ui.unmount()
+
+  // Another session opens: here is now worth saying. Its own idle wait is not "here".
+  const waiting = other('s-other', 'site', T0, { now: 'Idle' })
+  put(disk, `${DIR}/s-other.json`, {
+    ...waiting,
+    autoNeeds: [
+      {
+        kind: 'idle',
+        text: 'Waiting for your reply — answer in this session',
+        at: new Date(T0).toISOString(),
+      },
+    ],
+  })
+  await world.clock.advance(2000)
+  ui = await pane($)
+  const lines = await texts(ui)
+  expect(lines).toContain('• app: Waiting for your reply — answer here')
+  expect(lines).toContain('• site: Waiting for your reply')
+  await ui.unmount()
 })

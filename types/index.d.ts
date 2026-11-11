@@ -182,8 +182,10 @@ export type SessionFile = {
   now?: string
   needsYou: string[]
   /** Which task or agent each `needsYou` item belongs to (0.23.2), by its text: that item shows the
-   *  Needs-you mark with the ask beneath it. Absent = an ask about nothing listed. */
-  needLinks?: { text: string; task?: string; agent?: string }[]
+   *  Needs-you mark with the ask beneath it. Absent = an ask about nothing listed. `reply` (0.26.0)
+   *  is the answer the ask waits for ("yes or no"): each pane words "— reply … " after the text
+   *  itself, with "here" only in the asking session's own pane while another session is open. */
+  needLinks?: { text: string; task?: string; agent?: string; reply?: string }[]
   updatedAt: string
   tasks: Task[]
   dismissed: string[]

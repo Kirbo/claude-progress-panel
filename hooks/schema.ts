@@ -15,6 +15,11 @@ export const INPUT_SCHEMA = {
             additionalProperties: false,
             properties: {
               text: { type: 'string', description: 'What is needed, and how to give it.' },
+              reply: {
+                type: 'string',
+                description:
+                  'The answer you wait for, when it is a reply in this session ("yes or no"): the pane adds "— reply yes or no" after the text itself, with "here" only where that is true. Leave it out of the text.',
+              },
               task: { type: 'string', description: 'The id of the task it is about.' },
               agent: { type: 'string', description: 'The subagent it is about (its description or id).' },
             },
@@ -23,7 +28,7 @@ export const INPUT_SCHEMA = {
         ],
       },
       description:
-        'Everything only the user can do or decide right now; [] clears it. Each item says WHAT is needed, WHERE and HOW to give it ("Push progress-panel 0.23.2? — reply yes or no here"); give it as { text, task } (or { text, agent }) when it is about a task or a subagent — that one then shows the Needs-you mark with this text beneath it.',
+        'Everything only the user can do or decide right now; [] clears it. Each item says WHAT is needed and HOW to give it; an answer you wait for in this session goes in `reply` ({ text: "Push progress-panel 0.23.2?", reply: "yes or no" }) — never write "here" or the session\'s name. Add `task` (or `agent`) when it is about a task or a subagent — that one then shows the Needs-you mark with the ask beneath it.',
     },
     tasks: {
       type: 'array',

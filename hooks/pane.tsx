@@ -42,7 +42,17 @@ import {
   stageGroups,
   visiblePipelines,
 } from './pipelines'
-import { announce, liveNeeds, minutesSince, ownManifest, sessionName, setToggle, toggle } from './session'
+import {
+  announce,
+  askLine,
+  isSolo,
+  liveNeeds,
+  minutesSince,
+  ownManifest,
+  sessionName,
+  setToggle,
+  toggle,
+} from './session'
 import { groupSettings, isChangedSetting, tint, valueTone } from './settings'
 import {
   CONFIRM_MS,
@@ -148,9 +158,13 @@ export const MARK: Record<string, { sign: string; color?: string; dim?: true }> 
 
 /** The line beneath a task / step: its note — for an `unfinished` one without its own, why it is. */
 // The line beneath a task / agent / step that waits on the person.
-export const WAIT_REASONS = {
-  permission: (what: string) => t('wait.permission', { what }),
-  reply: () => t('wait.reply'),
+/** The words for what a row waits on; an ask's are `file`'s, worded for this pane (`isHere`). */
+export function waitReasons(file: SessionFile, isHere: boolean) {
+  return {
+    permission: (what: string) => t('wait.permission', { what }),
+    reply: () => t('wait.reply'),
+    ask: (text: string) => askLine(file, text, isHere),
+  }
 }
 
 export function reasonOf(item: { status: Status; note?: string }): string | undefined {
@@ -531,7 +545,10 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       (self.settings.paneScope === 'repo' && f.session.project === myProject),
   )
   const live = ordered.filter(f => f.session.endedAt === null)
-  const needs = liveNeeds(all)
+  const needs = liveNeeds(all, me)
+  // The only open session: nothing names it, and its asks need no "here".
+  const solo = isSolo(all, me)
+  const isHere = (sessionId: string) => sessionId === me && !solo
   const newest = [...ordered].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
 
   if (!newest) return <Text dimColor>{t('pane.empty')}</Text>
@@ -802,7 +819,9 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     // Waiting on the person (a permission prompt, a reply): the Needs-you mark, the reason beneath.
     const waitFile = all[sessionId]?.file
     const wait =
-      waitFile && !isClosed(task.status) ? attentionFor(waitFile, { task }, WAIT_REASONS) : undefined
+      waitFile && !isClosed(task.status)
+        ? attentionFor(waitFile, { task }, waitReasons(waitFile, isHere(sessionId)))
+        : undefined
     const mark: { sign: string; color?: string; dim?: true } = (wait ? MARK.blocked : MARK[task.status]) ?? {
       sign: '?',
     }
@@ -1060,7 +1079,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         // The agent waits on the person: its `doing` step carries the Needs-you mark and why.
         const agentWait =
           live && step.status === 'doing' && all[id]?.file
-            ? attentionFor(all[id].file, { agent: a }, WAIT_REASONS)
+            ? attentionFor(all[id].file, { agent: a }, waitReasons(all[id].file, isHere(id)))
             : undefined
         const m = agentWait
           ? (MARK.blocked as { sign: string; color?: string; dim?: true })
@@ -1116,7 +1135,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     const agentRow = (a: (typeof agents)[number]) => {
       const key = `agent:${id}:${a.id}`
       // A permission prompt or a question of this agent's: the row says so, magenta like Needs you.
-      const personWait = attentionFor(file, { agent: a }, WAIT_REASONS)
+      const personWait = attentionFor(file, { agent: a }, waitReasons(file, isHere(id)))
       const hasInside = agentHasInside(a)
       const isOpen = hasInside && (folded[key] ?? true)
       const closed = a.tasks.filter(x => isClosed(x.status)).length
@@ -1359,7 +1378,12 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     const doneKey = `done:${id}`
     const isOpen = folded[groupKey] ?? ended === null
     const isDoneOpen = folded[doneKey] ?? false
-    const name = id === me ? t('pane.thisSession', { project: sessionName(file) }) : sessionName(file)
+    const name =
+      id !== me
+        ? sessionName(file)
+        : solo
+          ? t('pane.thisSessionSolo')
+          : t('pane.thisSession', { project: sessionName(file) })
     const label =
       t(ended === null ? 'pane.groupLive' : 'pane.groupEnded', {
         fold: isOpen ? '▾' : '▸',
@@ -1519,7 +1543,14 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Box flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0}>
           <Text dimColor wrap="truncate-end">
-            {`${t('pane.updated', { when: formatTime(newest.updatedAt, nowMs, self.settings.clock), project: sessionName(newest) })} · `}
+            {`${
+              solo && newest.session.id === me
+                ? t('pane.updatedSolo', { when: formatTime(newest.updatedAt, nowMs, self.settings.clock) })
+                : t('pane.updated', {
+                    when: formatTime(newest.updatedAt, nowMs, self.settings.clock),
+                    project: sessionName(newest),
+                  })
+            } · `}
             {nowMs - lastCheck > STALE_AFTER_MS ? (
               <Text color={tint(self.settings.palette, 'yellow')}>
                 {t('pane.checkedStale', { when: formatClock(lastCheck, self.settings.clock) })}
@@ -1594,7 +1625,9 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             {needs.map(n =>
               cutLine(
                 `needs:${n.project}:${n.item}`,
-                t('pane.needsYouItem', { project: n.project, item: n.item }),
+                solo
+                  ? t('pane.needsYouItemSolo', { item: n.item })
+                  : t('pane.needsYouItem', { project: n.project, item: n.item }),
                 {
                   bold: true,
                   color: tint(self.settings.palette, 'magenta'),
@@ -1614,7 +1647,9 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
               .map(f =>
                 cutLine(
                   `now:${f.session.id}`,
-                  t('pane.nowItem', { project: sessionName(f), now: f.now ?? '' }),
+                  solo
+                    ? t('pane.nowItemSolo', { now: f.now ?? '' })
+                    : t('pane.nowItem', { project: sessionName(f), now: f.now ?? '' }),
                   {},
                 ),
               )}

@@ -60,6 +60,10 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   works in several, puts every decision only you can make in **Needs you**, and watches every push
   to a repo with CI. Nothing to add to your `CLAUDE.md`; the bundled `progress-panel` skill has the
   details.
+- **One session open: no names, no "here".** While a session is the only open one, nothing spells
+  out its name — not Needs you, Now, its header ("This session"), the top line or the status line.
+  An ask's "— reply … here" is worded by each pane: "here" shows only in the pane of the session
+  that asks, and only while another session is open.
 - **Claude Code's own waits are Needs you too:** a session stopped on a permission prompt or
   waiting for your reply shows it under **Needs you**, toasted to the other sessions, until the wait
   ends — the tool ran or was denied, the turn ended, or you answered. The agent's own asks are never

@@ -85,9 +85,12 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
   true state. A task untouched for 20 min is asked about once.
 - **Asks:** put a blocker in `needsYou` the moment you need the user, and clear it (`[]` or the
   remaining list) as soon as it is answered. Keep it honest — every session shows it. Each ask
-  says WHAT is needed, WHERE and HOW to give it ("Push progress-panel 0.23.2? — reply yes or no
-  here"); when it is about a task, send it as `{ text, task: "<id>" }` (or `{ text, agent }` for a
-  subagent) — that task then shows the Needs-you mark with the ask beneath it.
+  says WHAT is needed and HOW to give it. An answer you wait for in this session goes in `reply`,
+  not in the text: `{ text: "Push progress-panel 0.23.2?", reply: "yes or no" }` — the pane words
+  "— reply yes or no" itself and adds "here" only in this session's own pane while another session
+  is open, so never write "here" or the session's name. When it is about a task, add
+  `task: "<id>"` (or `agent` for a subagent) — that task then shows the Needs-you mark with the
+  ask beneath it.
 - **Keep `now` true:** what is actually running right now.
 - **Don't delete history:** finished tasks stay `done`; the user clears them (✕ / Clear all) or
   the plugin's auto-clear setting does.
