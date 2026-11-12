@@ -1431,3 +1431,306 @@ test("a finished agent's ✕ names that ending: hidden and folded in, shown agai
   expect(pruneDone(aged, 0, T0)).toBe(aged)
   expect(pruneDone(aged, 3, T0)).toBe(aged)
 })
+
+test('parseSessionFile keeps only well-formed nested values: a bad element is dropped, a bad extra is left out', () => {
+  const file = fresh()
+  const parsed = parseSessionFile(
+    JSON.stringify({
+      ...file,
+      now: 7,
+      toggles: { reporting: false, tasks: 'off', bogus: true },
+      autoNeeds: [
+        null,
+        'x',
+        { kind: 'idle', text: 'Turn finished', at: iso(T0) },
+        { kind: 'other', text: 'x', at: iso(T0) },
+        { kind: 'permission', text: 5, at: iso(T0) },
+        {
+          kind: 'permission',
+          text: 'Permission: Bash',
+          at: iso(T0),
+          agentId: 9,
+          what: 'Bash — ls',
+          taskId: 't1',
+        },
+      ],
+      needLinks: [null, { text: 'Push?', task: 't1', reply: 5 }, { text: 9 }, 'x'],
+      tasks: [
+        null,
+        7,
+        { id: 't0', title: 'no status' },
+        {
+          id: 't1',
+          title: 'Odd',
+          status: 'doing',
+          note: 5,
+          detail: {},
+          repo: [],
+          agent: 1,
+          pipeline: null,
+          unconfirmed: 'yes',
+          stopAsked: 1,
+          staleAsked: 4,
+          auto: 'true',
+          before: 'done',
+          steps: [
+            null,
+            'x',
+            { title: 'kept', status: 'done', note: 3, doneAt: 4, removedByUser: 1 },
+            { title: 5, status: 'todo' },
+            { title: 'bad', status: 'nope' },
+          ],
+          createdAt: 5,
+          updatedAt: null,
+          doneAt: 12,
+        },
+        {
+          id: 't2',
+          title: 'Steps are no list',
+          status: 'todo',
+          steps: 'x',
+          createdAt: iso(T0),
+          updatedAt: iso(T0),
+          doneAt: null,
+        },
+      ],
+      agents: [
+        null,
+        { id: 'a0' },
+        {
+          id: 'a1',
+          label: 5,
+          now: 9,
+          tasks: [
+            null,
+            {
+              id: 's1',
+              title: 'Step',
+              status: 'unfinished',
+              before: 'doing',
+              createdAt: iso(T0),
+              updatedAt: iso(T0),
+              doneAt: null,
+            },
+          ],
+          seq: 'x',
+          etaMin: 'soon',
+          startedAt: 3,
+          updatedAt: 4,
+          endedAt: 5,
+          cancelled: ['s9', 4],
+          cancelledAt: 1,
+          waiting: 'yes',
+          waitingOn: 2,
+          resumedAt: 3,
+          repo: 4,
+          queued: ['more', 5],
+          model: 6,
+          effort: 7,
+          activity: 8,
+          calls: 'many',
+        },
+      ],
+    }),
+  )
+  expect(parsed).toBeDefined()
+  expect(parsed?.now).toBeUndefined()
+  expect(parsed?.toggles).toEqual({ reporting: false })
+  expect(parsed?.autoNeeds).toEqual([
+    { kind: 'idle', text: 'Turn finished', at: iso(T0) },
+    { kind: 'permission', text: 'Permission: Bash', at: iso(T0), what: 'Bash — ls', taskId: 't1' },
+  ])
+  expect(parsed?.needLinks).toEqual([{ text: 'Push?', task: 't1' }])
+  // A task keeps its place with what is well-formed of it; its times fall back to the file's.
+  expect(parsed?.tasks).toEqual([
+    {
+      id: 't1',
+      title: 'Odd',
+      status: 'doing',
+      steps: [{ title: 'kept', status: 'done' }],
+      createdAt: file.updatedAt,
+      updatedAt: file.updatedAt,
+      doneAt: null,
+    },
+    {
+      id: 't2',
+      title: 'Steps are no list',
+      status: 'todo',
+      createdAt: iso(T0),
+      updatedAt: iso(T0),
+      doneAt: null,
+    },
+  ])
+  expect(parsed?.agents).toEqual([
+    {
+      id: 'a1',
+      label: 'a1',
+      now: null,
+      tasks: [
+        {
+          id: 's1',
+          title: 'Step',
+          status: 'unfinished',
+          before: 'doing',
+          createdAt: iso(T0),
+          updatedAt: iso(T0),
+          doneAt: null,
+        },
+      ],
+      seq: 0,
+      startedAt: file.updatedAt,
+      updatedAt: file.updatedAt,
+      endedAt: null,
+      cancelled: ['s9'],
+      queued: ['more'],
+    },
+  ])
+})
+
+test('parseSessionFile reads a well-formed file back whole, and keeps a field it does not know', () => {
+  const at = iso(T0)
+  const whole: SessionFile = {
+    ...fresh(),
+    now: 'Building',
+    toggles: { tasks: false },
+    autoNeeds: [
+      { kind: 'permission', text: 'Permission: Bash', at, agentId: 'a1', what: 'Bash — ls', taskId: 't1' },
+    ],
+    needsYou: ['Push?'],
+    needLinks: [{ text: 'Push?', task: 't1', agent: 'Lane', reply: 'yes or no' }],
+    tasks: [
+      task({
+        id: 't1',
+        status: 'doing',
+        note: 'n',
+        detail: 'd',
+        repo: 'app',
+        agent: 'Lane',
+        pipeline: 'g/p#1',
+        unconfirmed: true,
+        staleAsked: at,
+        stopAsked: true,
+        steps: [{ title: 'one', status: 'skipped', note: 'why', doneAt: at, removedByUser: true }],
+      }),
+      task({ id: 't2', status: 'doing', auto: true, agent: 'Lane' }),
+    ],
+    cancelled: ['t9'],
+    agents: [
+      {
+        id: 'a1',
+        label: 'Lane',
+        now: 'on it',
+        tasks: [task({ id: 's1', status: 'unfinished', before: 'blocked' })],
+        seq: 1,
+        etaMin: 4,
+        startedAt: at,
+        updatedAt: at,
+        endedAt: at,
+        cancelled: ['s2'],
+        cancelledAt: at,
+        waiting: true,
+        waitingOn: 'cargo test',
+        resumedAt: at,
+        repo: 'app',
+        queued: ['also this'],
+        model: 'claude-sonnet-5-5',
+        effort: 'high',
+        activity: 'Read — x',
+        calls: 3,
+      },
+    ],
+    owed: [{ text: 'told' }],
+  }
+  expect(parseSessionFile(JSON.stringify(whole))).toEqual(whole)
+  // A file a newer version wrote: what this one does not know rides along untouched.
+  const newer = parseSessionFile(JSON.stringify({ ...whole, later: { x: 1 } })) as unknown as Record<
+    string,
+    unknown
+  >
+  expect(newer.later).toEqual({ x: 1 })
+  // A file from before any of the optional fields existed still reads.
+  const old = {
+    version: 2,
+    session: fresh().session,
+    needsYou: [],
+    updatedAt: at,
+    tasks: [],
+    dismissed: [],
+    seq: 0,
+  }
+  expect(parseSessionFile(JSON.stringify(old))).toEqual({ ...old, pipelines: [] })
+})
+
+test('a stored pipeline keeps only well-typed fields: an unknown state reads as unknown, a bad extra is left out', () => {
+  const pipe = (over: Record<string, unknown>) => ({
+    key: 'k',
+    project: 'group/name',
+    id: 7,
+    label: 'x',
+    state: 'running',
+    jobs: [],
+    addedAt: iso(T0),
+    checkedAt: null,
+    ...over,
+  })
+  const read = (list: unknown[]) =>
+    parseSessionFile(JSON.stringify({ ...fresh(), pipelines: list }))?.pipelines
+  expect(
+    read([
+      pipe({
+        state: 'exploded',
+        label: 5,
+        ref: 7,
+        pushed: 'yes',
+        checkedAt: 4,
+        finishedAt: 5,
+        noPipeline: 1,
+        fails: 'many',
+        stopped: 'bored',
+        startedAt: 1,
+        pipelineFinishedAt: 2,
+        durationS: 'long',
+        source: 3,
+        workflowId: 'w',
+        estimateS: 'x',
+        jobEstimates: { build: 30, test: 'slow' },
+        error: 9,
+      }),
+      pipe({ key: 'noadded', addedAt: 5 }),
+      pipe({ key: 7 }),
+      // A forge this version does not know: its calls could not be made, so it is no watch.
+      pipe({ key: 'forge', provider: 'svn' }),
+    ]),
+  ).toEqual([
+    {
+      key: 'k',
+      project: 'group/name',
+      id: 7,
+      label: 'k',
+      state: 'unknown',
+      jobs: [],
+      addedAt: iso(T0),
+      checkedAt: null,
+      jobEstimates: { build: 30 },
+    },
+  ])
+  const whole = pipe({
+    provider: 'github',
+    ref: 'main',
+    pushed: true,
+    checkedAt: iso(T0),
+    finishedAt: iso(T0),
+    noPipeline: true,
+    fails: 2,
+    stopped: 'errors',
+    startedAt: iso(T0),
+    pipelineFinishedAt: iso(T0),
+    durationS: 12,
+    source: 'push',
+    workflowId: 4,
+    estimateS: null,
+    jobEstimates: { build: 30 },
+    error: 'gh: not logged in',
+  })
+  expect(read([whole])).toEqual([whole])
+})

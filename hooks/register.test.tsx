@@ -6120,3 +6120,40 @@ test('the idle wait says "answer here" only in its own pane, and only when anoth
   expect(lines).toContain('• site: Turn finished — waiting for your next message')
   await ui.unmount()
 })
+
+test("another session's malformed file never breaks the pane: what is unreadable in it is left out", async ($, on) => {
+  const disk = makeDisk()
+  const iso = new Date(T0).toISOString()
+  put(disk, `${DIR}/s-odd.json`, {
+    ...other('s-odd', 'site', T0, { now: 'deploying', tasks: [{ title: 'Deploy docs', status: 'doing' }] }),
+    autoNeeds: [null, { kind: 'idle' }],
+    needLinks: [null],
+    toggles: 'on',
+    agents: [{ id: 'a1', tasks: [null] }, null],
+    pipelines: [
+      {
+        key: 'g/site#7',
+        project: 'g/site',
+        id: 7,
+        label: 'site',
+        state: 'exploded',
+        jobs: [null],
+        addedAt: iso,
+        checkedAt: null,
+      },
+    ],
+  })
+  const raw = JSON.parse(disk.files.get(`${DIR}/s-odd.json`)?.text ?? '{}')
+  raw.tasks.push(null, { id: 't2', title: 'Steps', status: 'doing', steps: [null, { title: 'one' }] })
+  put(disk, `${DIR}/s-odd.json`, raw)
+  const world = engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  const lines = await texts(ui)
+  expect(lines).toContain('● Deploy docs')
+  expect(lines.some(l => l.includes('site #7'))).toBe(true)
+  await ui.press({ key: 'agent:s-odd:a1' }).catch(() => undefined)
+  await ui.unmount()
+  // The scan went through to its end: the status line was set, nothing threw on the way.
+  expect(world.status.length).toBeGreaterThan(0)
+})

@@ -24,6 +24,7 @@ import {
   isSafeProject,
   JOB_NAME_MAX,
   jobState,
+  PROVIDERS,
   STAGE_NAME_MAX,
 } from './pipelines'
 
@@ -369,6 +370,35 @@ export function addDismissals(entries: readonly Dismissal[], tasks: readonly Dis
   return next
 }
 
+// --- Reading a stored file: every field is what its type says, or it is left out ----------------
+
+const isString = (v: unknown): v is string => typeof v === 'string'
+const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v)
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const asString = (v: unknown) => (isString(v) ? v : undefined)
+const asNumber = (v: unknown) => (isNumber(v) ? v : undefined)
+const asTrue = (v: unknown) => (v === true ? true : undefined)
+const stringsOf = (v: unknown) => (Array.isArray(v) ? v.filter(isString) : undefined)
+
+/**
+ * A stored object with each field `checks` names put through its check: what the check returns is
+ * kept, `undefined` leaves the field out. A field no check names rides along as it is — nothing here
+ * reads it (a newer version's addition survives an older one's rewrite of the file).
+ */
+function checked(
+  raw: Record<string, unknown>,
+  checks: Record<string, (value: unknown) => unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...raw }
+  for (const [key, check] of Object.entries(checks)) {
+    const value = check(raw[key])
+    if (value === undefined) delete out[key]
+    else out[key] = value
+  }
+  return out
+}
+
 /** A sidecar file, or undefined for anything else. */
 export function parseSidecar(text: string): SidecarFile | undefined {
   let raw: unknown
@@ -434,7 +464,27 @@ function asRuns(value: unknown): PipelineRun[] {
     }))
 }
 
-/** The well-formed pipelines of a stored list (a session file's, or a sidecar's refreshed copies). */
+const PIPELINE_STATES: readonly string[] = [
+  'queued',
+  'running',
+  'success',
+  'failed',
+  'canceled',
+  'skipped',
+  'manual',
+  'unknown',
+]
+const STOP_REASONS: readonly string[] = ['errors', 'nopipeline', 'age']
+
+// The per-job estimates of a stored pipeline: a number per job name, anything else left out.
+function asEstimates(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) return undefined
+  return Object.fromEntries(Object.entries(value).filter(([, s]) => isNumber(s))) as Record<string, number>
+}
+
+/** The well-formed pipelines of a stored list (a session file's, or a sidecar's refreshed copies):
+ *  one that is not a pipeline at all is dropped; of a pipeline, every field is what its type says
+ *  or is left out (its state, when it is none the pane knows, reads as `unknown`). */
 function asPipelines(value: unknown): Pipeline[] {
   return (Array.isArray(value) ? value : [])
     .filter(
@@ -443,24 +493,43 @@ function asPipelines(value: unknown): Pipeline[] {
         p !== null &&
         typeof (p as Pipeline).key === 'string' &&
         typeof (p as Pipeline).project === 'string' &&
+        ((p as Pipeline).provider === undefined || PROVIDERS.includes((p as Pipeline).provider as never)) &&
         isSafeProject((p as Pipeline).project, (p as Pipeline).provider) &&
         isRunId((p as Pipeline).id) &&
         // Both reach a command line (`{sha}`, `--hostname`): a stored one that is not what it says goes.
         ((p as Pipeline).sha === undefined || isCommitSha((p as Pipeline).sha)) &&
         ((p as Pipeline).host === undefined || isHostName((p as Pipeline).host)) &&
         ((p as Pipeline).watchRef === undefined || isRefName((p as Pipeline).watchRef)) &&
+        typeof (p as Pipeline).addedAt === 'string' &&
         Array.isArray((p as Pipeline).jobs),
     )
     .map(p => {
-      // Its address becomes a terminal hyperlink: only ever an http(s) one.
-      const { url, runs, ...rest } = p
-      const several = asRuns(runs)
+      const several = asRuns(p.runs)
       return {
-        ...rest,
-        ...(httpUrl(url) ? { url } : {}),
-        ...(several.length > 1 ? { runs: several } : {}),
+        ...checked(p as unknown as Record<string, unknown>, {
+          label: v => (isString(v) && v ? v : p.key),
+          state: v => (isString(v) && PIPELINE_STATES.includes(v) ? v : 'unknown'),
+          checkedAt: v => (isString(v) ? v : null),
+          // Its address becomes a terminal hyperlink: only ever an http(s) one.
+          url: httpUrl,
+          runs: () => (several.length > 1 ? several : undefined),
+          ref: asString,
+          pushed: asTrue,
+          finishedAt: asString,
+          noPipeline: asTrue,
+          fails: asNumber,
+          stopped: v => (isString(v) && STOP_REASONS.includes(v) ? v : undefined),
+          startedAt: asString,
+          pipelineFinishedAt: asString,
+          durationS: asNumber,
+          source: asString,
+          workflowId: asNumber,
+          estimateS: v => (v === null ? null : asNumber(v)),
+          jobEstimates: asEstimates,
+          error: asString,
+        }),
         jobs: asJobs(p.jobs),
-      }
+      } as Pipeline
     })
 }
 
@@ -1039,40 +1108,122 @@ export function parseSessionFile(text: string): SessionFile | undefined {
   const needsYou = asStrings(f.needsYou)
   const dismissed = asStrings(f.dismissed)
   if (!needsYou || !dismissed) return undefined
-  const tasks = (f.tasks as unknown[]).filter(
-    (t): t is Task =>
-      typeof t === 'object' &&
-      t !== null &&
-      typeof (t as Task).id === 'string' &&
-      typeof (t as Task).title === 'string' &&
-      isStoredStatus((t as Task).status),
-  )
-  const seq = typeof f.seq === 'number' && Number.isFinite(f.seq) ? f.seq : 0
-  const pipelines = asPipelines(f.pipelines)
-  const cancelled = (Array.isArray(f.cancelled) ? f.cancelled : []).filter(
-    (id): id is string => typeof id === 'string',
-  )
-  const agents = (Array.isArray(f.agents) ? f.agents : []).filter(
-    (a): a is AgentEntry =>
-      typeof a === 'object' &&
-      a !== null &&
-      typeof (a as AgentEntry).id === 'string' &&
-      Array.isArray((a as AgentEntry).tasks),
-  )
-  const { owed: _owed, ...rest } = f as unknown as SessionFile
+  const tasks = asTasks(f.tasks, f.updatedAt)
+  const cancelled = stringsOf(f.cancelled) ?? []
+  const agents = asAgents(f.agents, f.updatedAt)
   const owed = asOwed(f.owed)
-  return {
-    ...rest,
-    session: info,
-    needsYou,
-    dismissed,
-    tasks,
-    seq,
-    pipelines,
-    ...(cancelled.length > 0 ? { cancelled } : {}),
-    ...(agents.length > 0 ? { agents } : {}),
-    ...(owed.length > 0 ? { owed } : {}),
-  }
+  // Every field a reader touches is checked here, whole: one malformed value in one session's file
+  // would otherwise throw in every pane on the machine, at each redraw.
+  return checked(f, {
+    session: () => info,
+    now: asString,
+    toggles: asToggles,
+    autoNeeds: asAutoNeeds,
+    needsYou: () => needsYou,
+    needLinks: asNeedLinks,
+    dismissed: () => dismissed,
+    tasks: () => tasks,
+    seq: v => (isNumber(v) ? v : 0),
+    pipelines: asPipelines,
+    cancelled: () => (cancelled.length > 0 ? cancelled : undefined),
+    agents: () => (agents.length > 0 ? agents : undefined),
+    owed: () => (owed.length > 0 ? owed : undefined),
+  }) as unknown as SessionFile
+}
+
+const OPEN_BEFORE: readonly string[] = ['todo', 'doing', 'blocked']
+
+// A stored step list: each a title and a status; what is no step is dropped.
+function asSteps(value: unknown): Step[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const steps = value
+    .filter((s): s is Record<string, unknown> => isRecord(s) && isString(s.title) && isStoredStatus(s.status))
+    .map(s => checked(s, { note: asString, doneAt: asString, removedByUser: asTrue }) as unknown as Step)
+  return steps.length > 0 ? steps : undefined
+}
+
+// A stored task list (a session's, or a subagent's own): what is no task — no id, title or known
+// status — is dropped; a task's times fall back to the file's (`fallbackIso`).
+function asTasks(value: unknown, fallbackIso: string): Task[] {
+  return (Array.isArray(value) ? value : [])
+    .filter(
+      (t): t is Record<string, unknown> =>
+        isRecord(t) && isString(t.id) && isString(t.title) && isStoredStatus(t.status),
+    )
+    .map(
+      t =>
+        checked(t, {
+          note: asString,
+          detail: asString,
+          repo: asString,
+          agent: asString,
+          pipeline: asString,
+          staleAsked: asString,
+          before: v => (isString(v) && OPEN_BEFORE.includes(v) ? v : undefined),
+          unconfirmed: asTrue,
+          stopAsked: asTrue,
+          auto: asTrue,
+          steps: asSteps,
+          createdAt: v => (isString(v) ? v : fallbackIso),
+          updatedAt: v => (isString(v) ? v : fallbackIso),
+          doneAt: v => (isString(v) ? v : null),
+        }) as unknown as Task,
+    )
+}
+
+// The stored subagents: each an id and a task list; the rest as its type says, or a safe stand-in.
+function asAgents(value: unknown, fallbackIso: string): AgentEntry[] {
+  return (Array.isArray(value) ? value : [])
+    .filter((a): a is Record<string, unknown> => isRecord(a) && isString(a.id) && Array.isArray(a.tasks))
+    .map(
+      a =>
+        checked(a, {
+          label: v => (isString(v) && v ? v : (a.id as string).slice(0, 8)),
+          now: v => (isString(v) ? v : null),
+          tasks: v => asTasks(v, fallbackIso),
+          seq: v => (isNumber(v) ? v : 0),
+          etaMin: asNumber,
+          startedAt: v => (isString(v) ? v : fallbackIso),
+          updatedAt: v => (isString(v) ? v : fallbackIso),
+          endedAt: v => (isString(v) ? v : null),
+          cancelled: stringsOf,
+          cancelledAt: asString,
+          waiting: asTrue,
+          waitingOn: asString,
+          resumedAt: asString,
+          repo: asString,
+          queued: stringsOf,
+          model: asString,
+          effort: asString,
+          activity: asString,
+          calls: asNumber,
+        }) as unknown as AgentEntry,
+    )
+}
+
+function asToggles(value: unknown): SessionFile['toggles'] | undefined {
+  if (!isRecord(value)) return undefined
+  const out: Record<string, boolean> = {}
+  for (const f of ['reporting', 'tasks', 'agents', 'pipelines'])
+    if (typeof value[f] === 'boolean') out[f] = value[f] as boolean
+  return out
+}
+
+function asAutoNeeds(value: unknown): SessionFile['autoNeeds'] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value
+    .filter(
+      (n): n is Record<string, unknown> =>
+        isRecord(n) && (n.kind === 'permission' || n.kind === 'idle') && isString(n.text) && isString(n.at),
+    )
+    .map(n => checked(n, { agentId: asString, what: asString, taskId: asString })) as SessionFile['autoNeeds']
+}
+
+function asNeedLinks(value: unknown): SessionFile['needLinks'] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value
+    .filter((l): l is Record<string, unknown> => isRecord(l) && isString(l.text))
+    .map(l => checked(l, { task: asString, agent: asString, reply: asString })) as SessionFile['needLinks']
 }
 
 // The stored notices still owed to an agent: each a ready text or a removed task, anything else dropped.

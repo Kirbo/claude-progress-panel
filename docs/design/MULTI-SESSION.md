@@ -102,6 +102,16 @@ line without control characters: `asPipelines`). The file:
   file still unreadable with the same content `OWN_UNREADABLE_MS` (10 s) after it was first seen
   so is damaged, not in flight, and the session does start it over — it could never report again
   otherwise (`refuseUnreadable`, store.ts).
+- **Every stored field is checked on read** (`parseSessionFile`, `parseSidecar`): any pane reads
+  every session's file, so one malformed value in one file would throw in every pane on the
+  machine at each redraw. What every reader relies on (the version, the session block,
+  `updatedAt`, the task list) makes the file refused when it is wrong — it then keeps its last
+  good copy, like a file caught mid-write. Inside it, what is no task, step, agent, ask, link,
+  pipeline, job or run at all is dropped; of one that is, each optional field is what its type
+  says or is left out, and a field that must be there gets a safe stand-in (a task's times the
+  file's `updatedAt`, an agent's label its id, a pipeline's state `unknown`). A field this version
+  does not know rides along untouched, so a newer version's addition survives an older one's
+  rewrite of the file.
 - Forgetting an ended session deletes both its files.
 - **A blank session is never stored or shown** (0.11.0, asked for 2026-11-07: sessions that never
   reported anything piled up in the pane). Blank = no task, no `now`, no ask, no pipeline. A
