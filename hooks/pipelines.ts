@@ -21,7 +21,7 @@ export type WatchInput = {
   host?: string
 }
 
-const PROVIDERS: readonly PipelineProvider[] = ['gitlab', 'github', 'gitea', 'command']
+export const PROVIDERS: readonly PipelineProvider[] = ['gitlab', 'github', 'gitea', 'command']
 const KEY_PREFIX: Record<PipelineProvider, string> = {
   gitlab: '',
   github: 'gh:',
