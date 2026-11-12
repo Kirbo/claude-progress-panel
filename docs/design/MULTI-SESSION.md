@@ -226,7 +226,11 @@ background-work pause) turns its `doing` steps `unfinished` (– dim, "agent sto
 finishing" unless noted); a resume turns them back to `doing`. A finished subagent folds open
 under Done → Agents to the same step list, without ✕. The plugin stamps `createdAt`,
 `updatedAt` and `doneAt` (set on entering a closed status, cleared on re-opening). The tool answers
-with the session's task list (ids, statuses) so the agent can address tasks by id.
+with the tasks the agent still works with (ids, statuses), so it can address them by id: the open
+ones, and those this call created or changed (`applyUpdate`'s `touched`). Tasks closed before are
+only counted ("; 12 closed ones are not listed") — a session keeps its done tasks all day, and
+echoing every one of them in every answer, over hundreds of calls, was the largest avoidable cost
+of the plugin to the agent. A stand-in task (`auto`) is never listed (`summarize`).
 
 ## Reading: refresh
 

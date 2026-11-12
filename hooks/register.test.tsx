@@ -1304,6 +1304,41 @@ test('progress_update patches the file and answers with the task list', async ($
   expect(bad).toMatchObject({ result: expect.stringContaining('tasks[0]: no task t9') })
 })
 
+test("the tool's answer lists the open tasks and the ones this call changed — the closed rest is a count", async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  const result = async (input: Record<string, unknown>) =>
+    ((await update($, input)) as { result: string }).result.split('\n')
+  // Created by this call: all listed, closed or not, so the agent has every id.
+  expect(
+    await result({
+      tasks: [
+        { title: 'Design', status: 'done' },
+        { title: 'Build', status: 'doing' },
+        { title: 'Verify' },
+        { title: 'Old idea', status: 'skipped', note: 'not needed' },
+      ],
+    }),
+  ).toEqual(['Saved. 4 tasks:', 't1 done Design', 't2 doing Build', 't3 todo Verify', 't4 skipped Old idea'])
+  // A later call: the open ones, plus the one it closed; the tasks closed before are only counted.
+  expect(await result({ tasks: [{ id: 't2', status: 'done', note: 'abc123' }] })).toEqual([
+    'Saved. 2 tasks (open, or changed by this call); 2 closed ones are not listed:',
+    't2 done Build',
+    't3 todo Verify',
+  ])
+  // A call that touches no task still names the open ones (a resumed session finds its ids here).
+  expect(await result({ now: 'Verifying' })).toEqual([
+    'Saved. 1 task (open, or changed by this call); 3 closed ones are not listed:',
+    't3 todo Verify',
+  ])
+  expect(await result({ tasks: [{ id: 't3', status: 'done' }] })).toEqual([
+    'Saved. 1 task (open, or changed by this call); 3 closed ones are not listed:',
+    't3 done Verify',
+  ])
+  expect(await result({ now: 'All done' })).toEqual(['Saved. No open task; 4 closed ones are not listed.'])
+})
+
 test('every session shows: newest update, needs-you from all, one now line each, groups', async ($, on) => {
   const disk = makeDisk()
   put(

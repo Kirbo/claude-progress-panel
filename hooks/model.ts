@@ -111,13 +111,15 @@ function highestSeq(seq: number, ids: readonly string[]): number {
   return max
 }
 
-/** Applies a progress_update patch. Problems are collected per entry; the rest still applies. */
+/** Applies a progress_update patch. Problems are collected per entry; the rest still applies.
+ *  `touched`: the ids of the tasks the patch created or changed. */
 export function applyUpdate(
   file: SessionFile,
   input: UpdateInput,
   nowIso: string,
-): { file: SessionFile; errors: string[] } {
+): { file: SessionFile; errors: string[]; touched: string[] } {
   const errors: string[] = []
+  const touched: string[] = []
   let tasks = [...file.tasks]
   let dismissed = [...file.dismissed]
   let seq = highestSeq(file.seq, [...tasks.map(t => t.id), ...dismissed])
@@ -192,6 +194,7 @@ export function applyUpdate(
       const created = status ?? 'todo'
       const id = givenId ?? `t${seq + 1}`
       seq = highestSeq(seq, [id])
+      touched.push(id)
       tasks.push({
         id,
         title: patch.title,
@@ -206,6 +209,7 @@ export function applyUpdate(
     }
 
     const old = tasks[at] as Task
+    touched.push(old.id)
     const next = status ?? old.status
     const doneAt = isClosed(next) ? (isClosed(old.status) ? old.doneAt : nowIso) : null
     const {
@@ -244,6 +248,7 @@ export function applyUpdate(
       updatedAt: nowIso,
     },
     errors,
+    touched,
   }
 }
 

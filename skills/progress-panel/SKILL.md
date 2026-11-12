@@ -40,8 +40,9 @@ send only what changed:
   say WHY in `note` — the pane shows it beneath the row. Steps take a `note` the same way. A subagent
   that stops for good leaves its open steps `unfinished` (–, "agent stopped before finishing"); the
   plugin sets that one, never send it.
-- New tasks need a `title`; the tool assigns ids (`t1`, `t2`, …) and answers with the full list —
-  use the ids afterwards. A title alone reaches only an OPEN task of that title: the same title
+- New tasks need a `title`; the tool assigns ids (`t1`, `t2`, …) and its answer names them — use
+  the ids afterwards. The answer lists your open tasks and the ones that call created or changed;
+  tasks closed earlier are only counted ("12 closed ones are not listed"). A title alone reaches only an OPEN task of that title: the same title
   again after it closed is a new task (a second "Verify" round), so reopen a closed task by its
   `id`. An id of your own is a plain name (letters, digits, `.`, `_`, `-`), and one the person
   removed in the pane is never reused.
@@ -101,7 +102,7 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
 - **Don't delete history:** finished tasks stay `done`; the user clears them (✕ / Clear all) or
   the plugin's auto-clear setting does.
 - **Resume:** a resumed session keeps its entry while its session id is unchanged (a `/clear`
-  starts a new entry); the tool's answer lists your tasks and ids.
+  starts a new entry); the tool's answer lists your open tasks and their ids.
 
 ## Delegating to a subagent
 

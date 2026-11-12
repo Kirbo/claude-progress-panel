@@ -333,7 +333,14 @@ export const en = {
     'Progress pane: this session has not reported yet. If this request takes more than one step, your first tool call is mcp__progress-panel__progress_update with `now` and the task list (progress-panel skill); a question answered in one reply needs none.',
   'tool.description':
     'Update this session\'s entry in the Progress pane that every Claude Code session on this machine shows. A patch: send only what changed. `now` replaces the one-line summary of what you are doing; `needsYou` replaces the list of things only the user can do or decide (send [] once answered); `tasks` upserts by `id` (or by exact `title` when no id; new tasks need a title) with status todo | doing | blocked | done | skipped | failed (tried and could not be done) and an optional short `note` — for blocked / skipped / failed, WHY (shown beneath it); `remove` deletes task ids. Timestamps are stamped for you. `watch` adds CI pipelines to the pane — GitLab ({ project: "group/name", pipeline: <id> } or { project, sha }) or GitHub Actions ({ provider: "github", project: "owner/repo", run: <id> } or { provider: "github", project, sha }); optional label — the plugin then follows them live through the user\'s glab / gh / tea until they finish; `unwatch` removes them by key ("group/name#<id>", "gh:owner/repo#<id>"). A `git push` run through Bash is watched automatically (its result says so); watch what that cannot see — a run by id, another repo\'s pipeline, a push made elsewhere. Call it first on any task that takes more than one step (`now` + the task list), then on every status change, without waiting to be asked. A subagent calls it too, every few steps: `now`, its own steps as `tasks` (each open step\'s `note` its estimate, e.g. "~10 min"), `eta` (minutes left) — that lands under its coordinator\'s session, not as the session\'s tasks. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person. `clearAgents: true` removes every subagent row that is no longer working (when the person asks to clear the pane); `dismissAgents` names specific ones.',
-  'tool.saved': 'Saved. {count} task(s):',
+  'tool.saved': 'Saved.',
+  'tool.savedAll': 'Saved. {tasks}:',
+  'tool.savedSome': 'Saved. {tasks} (open, or changed by this call); {closed}:',
+  'tool.savedNoneOpen': 'Saved. No open task; {closed}.',
+  'tool.tasks_one': '{count} task',
+  'tool.tasks_other': '{count} tasks',
+  'tool.closed_one': '{count} closed one is not listed',
+  'tool.closed_other': '{count} closed ones are not listed',
   'tool.watching': 'Pipelines: watching {keys} (refreshed every {seconds} s until they finish).',
   'push.watched':
     'Progress pane: that push is watched automatically ({keys}) — no `watch` call needed for it.',

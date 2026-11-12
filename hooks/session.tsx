@@ -490,9 +490,26 @@ export async function scan($: EngineInterface, options: PluginOptions): Promise<
   await updateChecked($, () => nowMs)
 }
 
-export function summarize(file: SessionFile, errors: readonly string[]): string {
-  const lines = [t('tool.saved', { count: file.tasks.length })]
-  for (const task of file.tasks) lines.push(`${task.id} ${task.status} ${task.title}`)
+// The tool's answer: the tasks the agent still works with — the open ones, and those this call
+// created or changed (their ids, their new state) — one line each. The tasks closed before are only
+// counted: a session keeps its done tasks all day (nothing clears them by default), and listing
+// every one of them in every answer was the plugin's largest avoidable cost to the agent. A stand-in
+// task is the plugin's own and is never listed.
+export function summarize(file: SessionFile, errors: readonly string[], touched: readonly string[]): string {
+  const own = file.tasks.filter(task => !task.auto)
+  const listed = own.filter(task => !isClosed(task.status) || touched.includes(task.id))
+  const hidden = own.length - listed.length
+  const tasks = tn('tool.tasks', listed.length)
+  const closed = tn('tool.closed', hidden)
+  const head =
+    hidden === 0
+      ? listed.length === 0
+        ? t('tool.saved')
+        : t('tool.savedAll', { tasks })
+      : listed.length === 0
+        ? t('tool.savedNoneOpen', { closed })
+        : t('tool.savedSome', { tasks, closed })
+  const lines = [head, ...listed.map(task => `${task.id} ${task.status} ${task.title}`)]
   if (errors.length > 0) lines.push(t('tool.problems'), ...errors)
   return lines.join('\n')
 }
@@ -564,7 +581,7 @@ export async function runUpdate(
       : '',
   ].filter(Boolean)
   const agents = [...clearedLines, agentsLine(file)].filter(Boolean).join('\n') || undefined
-  const text = `${notice ? `${notice}\n` : ''}${summarize(file, [...updated.errors, ...watched.errors])}${agents ? `\n${agents}` : ''}`
+  const text = `${notice ? `${notice}\n` : ''}${summarize(file, [...updated.errors, ...watched.errors], updated.touched)}${agents ? `\n${agents}` : ''}`
   return added.length > 0
     ? `${text}\n${t('tool.watching', {
         keys: added.map(p => p.key).join(', '),
