@@ -62,6 +62,7 @@ import {
   agentActivityAt,
   agentBackground,
   agentCalls,
+  agentCallsJoined,
   agentRepoAsked,
   agentRunNoted,
   DAY_MS,
@@ -858,13 +859,20 @@ export async function noteAgentActivity(
   const id = call.agent_id
   const tool = call.tool_name
   if (typeof id !== 'string' || !id || typeof tool !== 'string' || !tool || tool === TOOL_ID) return
-  const calls = (agentCalls.get(id) ?? 0) + 1
-  agentCalls.set(id, calls)
+  agentCalls.set(id, (agentCalls.get(id) ?? 0) + 1)
   const now = await $.clock.now()
   const last = agentActivityAt.get(id)
   if (last !== undefined && now - last < ACTIVITY_EVERY_MS) return
   const plain = await readOwnPlain($, options)
-  if (plain === 'nowhere' || !plain?.agents?.some(a => a.id === id)) return
+  const entry = plain === 'nowhere' ? undefined : plain?.agents?.find(a => a.id === id)
+  if (!entry) return
+  // This copy's first write for the agent: what it counted so far goes on top of what the entry
+  // already holds (a copy from before a reload wrote it) — the count never starts over.
+  if (!agentCallsJoined.has(id)) {
+    agentCallsJoined.add(id)
+    agentCalls.set(id, (agentCalls.get(id) ?? 0) + (entry.calls ?? 0))
+  }
+  const calls = agentCalls.get(id) ?? 0
   const dir = await progressDir($, options)
   if (!dir) return
   const input = call.tool_input

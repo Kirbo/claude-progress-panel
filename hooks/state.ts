@@ -112,6 +112,9 @@ export const agentRunNoted = new Map<string, string>()
 // the entry is written at most every ACTIVITY_EVERY_MS, so a busy agent costs one write a few
 // seconds apart, not one per call.
 export const agentCalls = new Map<string, number>()
+// The agents whose count this copy has joined to the one on their entry: a copy that starts while an
+// agent is at work (a reload) counts on from what the copy before it wrote, never from 1 again.
+export const agentCallsJoined = new Set<string>()
 export const agentActivityAt = new Map<string, number>()
 export const ACTIVITY_EVERY_MS = 3000
 
@@ -372,6 +375,7 @@ export function forgetSessionMemory(): void {
   agentRepoAsked.clear()
   agentRunNoted.clear()
   agentCalls.clear()
+  agentCallsJoined.clear()
   agentActivityAt.clear()
   pendingCall.clear()
 }

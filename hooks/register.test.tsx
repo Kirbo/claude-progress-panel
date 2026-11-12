@@ -892,6 +892,46 @@ test("a subagent's row says which model and effort it runs on, as its own reques
   await again.unmount()
 })
 
+test("a reload does not start a running subagent's call count over", async ($, on) => {
+  // As the copy before the reload left it: the agent at work, 107 tool calls counted so far. The
+  // count is this copy's memory only — a reloaded copy began again at 1, and the row's "107 tool
+  // calls" dropped to "1 tool call" in front of the person.
+  const disk = makeDisk()
+  const at = new Date(T0 - 60_000).toISOString()
+  put(disk, `${DIR}/s-me.json`, {
+    ...newSession({ id: 's-me', project: 'app', cwd: '/w/app' }, at),
+    now: 'coordinating',
+    agents: [
+      {
+        id: 'rev-1',
+        label: 'Audit: authz',
+        now: null,
+        tasks: [],
+        seq: 0,
+        activity: 'Read — a.rs',
+        calls: 107,
+        startedAt: at,
+        updatedAt: at,
+        endedAt: null,
+      },
+    ],
+  })
+  const world = engine(on, disk)
+  world.agents.push({ id: 'rev-1', description: 'Audit: authz', type: 'security-auditor', status: 'running' })
+  await start($)
+  await $.classic.PostToolUse({
+    tool_name: 'Grep',
+    tool_input: { pattern: 'required_scope' },
+    tool_response: {},
+    tool_use_id: 'c1',
+    agent_id: 'rev-1',
+  } as never)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]).toMatchObject({
+    activity: 'Grep — required_scope',
+    calls: 108,
+  })
+})
+
 test('a subagent that never reports (no progress tool) still shows under Agents while it runs', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
