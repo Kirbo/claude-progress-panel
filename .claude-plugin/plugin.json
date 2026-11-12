@@ -1,6 +1,6 @@
 {
   "name": "progress-panel",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "description": "A pane beside every Claude Code chat showing the progress of every session on the machine, grouped by session",
   "author": {
     "name": "Kirbo"

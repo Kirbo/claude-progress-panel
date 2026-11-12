@@ -134,8 +134,7 @@ export const en = {
   'pane.agentEta': ' · ~{min} min left',
   'pane.agentEtaGuess': ' · ~{min} min left (est.)',
   'agent.fallbackLabel': 'agent {id}',
-  'tool.agentSaved':
-    "Saved under your coordinator's session ({done}/{total} steps done). Keep reporting every few steps: now, your steps as tasks, eta in minutes.",
+  'tool.agentSaved': "Saved under your coordinator's session ({done}/{total} steps done).",
   'tool.agents': 'Subagents: {list}',
   'tool.agentsCleared': 'Cleared from the pane: {list}',
   'tool.agentsStillRunning': 'Not cleared — still working: {list}',

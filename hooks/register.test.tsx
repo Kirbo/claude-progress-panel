@@ -763,7 +763,8 @@ test("a subagent's progress lands under its coordinator's session, never among t
     ],
     eta: 5,
   } as never)
-  expect(JSON.stringify(answer)).toMatch(/coordinator/i)
+  // The answer confirms and counts — what to report and how often is in its prompt, said once.
+  expect(answer).toEqual({ result: "Saved under your coordinator's session (3/4 steps done)." })
   const file = read(disk, `${DIR}/s-me.json`)
   // Its steps never become the session's tasks; on no task of the coordinator's, it gets a stand-in.
   expect(file.tasks.map(t => t.title)).toEqual(['Coordinate the lanes', '↳ Lane A: scopes'])
