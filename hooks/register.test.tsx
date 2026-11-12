@@ -1,6 +1,7 @@
 import type { TestBody } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
 
+import { STILL_RUNS, WHO_AM_I } from './host'
 import type { SessionFile } from './model'
 import { applyUpdate, formatTime, newSession, stepCounts } from './model'
 import { resolveProgressDir } from './paths'
@@ -3596,13 +3597,24 @@ test('/progress doctor outside a repository checks only what applies; a missing 
 test('a session whose process died without ending is marked ended; a live one, another machine and this one are not', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
-  world.programs.set('sh -c echo $PPID; ps -o comm= -p $PPID; hostname', '4000\nclaude\nMini.local\n')
-  // 4343 answers kill -0 (alive); 4242 does not (gone).
-  world.programs.set('sh -c kill -0 "$1" 2>/dev/null sh 4343', '')
+  world.programs.set(`sh -c ${WHO_AM_I}`, '4000\nclaude\nMini.local\n777000\n')
+  // 4343 and 4444 answer (alive, each with when it started); 4242 does not (gone).
+  world.programs.set(`sh -c ${STILL_RUNS} sh 4343`, '500100\n')
+  world.programs.set(`sh -c ${STILL_RUNS} sh 4444`, '900900\n')
+  world.programs.set(`sh -c ${STILL_RUNS} sh 4545`, '\n')
   const idle = new Date(T0 - 11 * 60_000).toISOString()
-  const other = (id: string, pid: number, host: string) => ({
+  const other = (id: string, pid: number, host: string, pidStart?: string) => ({
     version: 2,
-    session: { id, project: 'p', cwd: '/w', startedAt: idle, endedAt: null, pid, host },
+    session: {
+      id,
+      project: 'p',
+      cwd: '/w',
+      startedAt: idle,
+      endedAt: null,
+      pid,
+      host,
+      ...(pidStart ? { pidStart } : {}),
+    },
     needsYou: [],
     updatedAt: idle,
     tasks: [{ id: 't1', title: 'x', status: 'doing', createdAt: idle, updatedAt: idle }],
@@ -3612,14 +3624,27 @@ test('a session whose process died without ending is marked ended; a live one, a
   put(disk, `${DIR}/s-dead.json`, other('s-dead', 4242, 'mini.local'))
   put(disk, `${DIR}/s-live.json`, other('s-live', 4343, 'mini.local'))
   put(disk, `${DIR}/s-away.json`, other('s-away', 4242, 'laptop.local'))
+  // The same pid, started when the file says: that process. Started at another time: the pid was
+  // given to something else since (a reboot, a long day) — the session is gone.
+  put(disk, `${DIR}/s-same.json`, other('s-same', 4343, 'mini.local', '500100'))
+  put(disk, `${DIR}/s-reused.json`, other('s-reused', 4444, 'mini.local', '111111'))
+  // Alive, but when it started cannot be told: never ended on a guess.
+  put(disk, `${DIR}/s-untold.json`, other('s-untold', 4545, 'mini.local', '222222'))
   await start($)
   await update($, { now: 'here' })
-  // This session's file names its own process and machine.
-  expect(read(disk, `${DIR}/s-me.json`).session).toMatchObject({ pid: 4000, host: 'mini.local' })
+  // This session's file names its own process, when that started, and its machine.
+  expect(read(disk, `${DIR}/s-me.json`).session).toMatchObject({
+    pid: 4000,
+    host: 'mini.local',
+    pidStart: '777000',
+  })
   await world.clock.advance(2100)
   expect(read(disk, `${DIR}/s-dead.json`).session.endedAt).toBe(idle)
   expect(read(disk, `${DIR}/s-live.json`).session.endedAt).toBeNull()
   expect(read(disk, `${DIR}/s-away.json`).session.endedAt).toBeNull()
+  expect(read(disk, `${DIR}/s-same.json`).session.endedAt).toBeNull()
+  expect(read(disk, `${DIR}/s-reused.json`).session.endedAt).toBe(idle)
+  expect(read(disk, `${DIR}/s-untold.json`).session.endedAt).toBeNull()
 
   // A session another pane wrongly marked ended is live again with its next write.
   const mine = read(disk, `${DIR}/s-me.json`)
@@ -3631,7 +3656,7 @@ test('a session whose process died without ending is marked ended; a live one, a
 test('a parent process that is not Claude Code records no pid — nothing is ever ended on a guess', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
-  world.programs.set('sh -c echo $PPID; ps -o comm= -p $PPID; hostname', '4000\nsandbox-helper\nmini\n')
+  world.programs.set(`sh -c ${WHO_AM_I}`, '4000\nsandbox-helper\nmini\n1\n')
   await start($)
   await update($, { now: 'here' })
   expect(read(disk, `${DIR}/s-me.json`).session.pid).toBeUndefined()

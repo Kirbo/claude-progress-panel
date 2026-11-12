@@ -220,8 +220,10 @@ export function withProcess(file: SessionFile): SessionFile {
   if (!self.ownProcess) return file
   const s = file.session
   // A session another pane marked dead that is writing again was not dead: it is live once more.
-  if (s.pid === self.ownProcess.pid && s.host === self.ownProcess.host && s.endedAt === null) return file
-  return { ...file, session: { ...s, ...self.ownProcess, endedAt: null } }
+  const { pid, host, pidStart } = self.ownProcess
+  if (s.pid === pid && s.host === host && s.pidStart === pidStart && s.endedAt === null) return file
+  const { pidStart: _was, ...rest } = s
+  return { ...file, session: { ...rest, pid, host, ...(pidStart ? { pidStart } : {}), endedAt: null } }
 }
 
 export function withTitle(file: SessionFile): SessionFile {

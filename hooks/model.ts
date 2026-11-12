@@ -1011,6 +1011,7 @@ function asSessionInfo(raw: Record<string, unknown> | undefined): SessionInfo | 
     ...(typeof raw.title === 'string' ? { title: raw.title } : {}),
     ...(typeof raw.pid === 'number' && Number.isInteger(raw.pid) && raw.pid > 1 ? { pid: raw.pid } : {}),
     ...(typeof raw.host === 'string' ? { host: raw.host } : {}),
+    ...(typeof raw.pidStart === 'string' && raw.pidStart.length <= 64 ? { pidStart: raw.pidStart } : {}),
   }
 }
 

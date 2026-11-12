@@ -109,13 +109,23 @@ line without control characters: `asPipelines`). The file:
   at `session.end` deletes its file and sidecar instead of stamping `endedAt`; any pane deletes an
   ended blank file it finds (older versions wrote one at start), and the pane skips a live blank one.
 - **A session that died without `session.end` is ended (0.23.0).** At start a session records its
-  process and machine in its file (`session.pid`, `session.host`, from `whoAmI`: a spawned child's
-  parent and `hostname` — `sh -c 'echo $PPID; ps -o comm= -p $PPID; hostname'`, PowerShell's
-  `ParentProcessId` on Windows), but only when that parent is `claude`/`node`: a helper in between
+  process and machine in its file (`session.pid`, `session.host`, `session.pidStart`, from
+  `whoAmI`: a spawned child's parent, the machine's name and when that parent started —
+  `sh -c 'echo $PPID; ps -o comm= -p $PPID; uname -n; …'`, PowerShell's `ParentProcessId` and
+  `hostname` on Windows), but only when that parent is `claude`/`node`: a helper in between
   would die at once and end every idle session. Any pane on the SAME host asks, at most once a
   minute per session, whether a live session idle for `DEAD_AFTER_MS` (10 min) still has its process
   (`kill -0`, `tasklist`); gone → `endedAt` = its last `updatedAt` (its owner is gone, so the
-  one-writer rule holds). A false "dead" heals itself: the owner's next write clears `endedAt`
+  one-writer rule holds). **A pid alone is not a process:** after a reboot, or once the number has
+  been handed out again, `kill -0` answers for a stranger and the dead session stayed live with
+  its asks. So the start of the process is recorded too (`pidStart`: on Linux the start in clock
+  ticks since boot, field 22 of `/proc/<pid>/stat` — stable whatever the clock, time zone or
+  locale does; elsewhere `ps -o lstart=` under `LC_ALL=C TZ=UTC0`) and asked again with the
+  liveness check: the same pid with another start is another process, and the session is ended.
+  A start that cannot be read decides nothing, a file without `pidStart` (an older version's) is
+  asked by pid alone, and Windows records none (pid only, as before). The machine's name is
+  `uname -n`, not `hostname`: that command is missing on some minimal systems, where nothing was
+  recorded at all. A false "dead" heals itself: the owner's next write clears `endedAt`
   (`withProcess`). Can't tell → nothing changes. `/progress doctor` shows the recorded pid.
   Proven live on macOS (2026-11-09): a real session's file carries its `claude` pid and host; a
   headless session (stream-json input held open) reported, was killed with `kill -9` (no

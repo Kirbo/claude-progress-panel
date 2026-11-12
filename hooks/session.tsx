@@ -479,7 +479,7 @@ export async function scan($: EngineInterface, options: PluginOptions): Promise<
       const id = file.session.id
       if (nowMs - (livenessAskedAt.get(id) ?? 0) < LIVENESS_EVERY_MS) continue
       livenessAskedAt.set(id, nowMs)
-      if ((await processAlive($, file.session.pid as number)) === false)
+      if ((await processAlive($, file.session.pid as number, file.session.pidStart)) === false)
         await save($, dir, endDeadSession(file))
       continue
     }

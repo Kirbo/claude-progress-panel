@@ -279,11 +279,14 @@ test('parseSessionFile keeps only well-typed session fields and stored pipelines
   expect(loose?.session.pid).toBeUndefined()
   expect(loose?.session.host).toBeUndefined()
   expect(loose?.session.title).toBeUndefined()
-  expect(odd({ pid: 4242, host: 'box', title: 'Mine' })?.session).toMatchObject({
+  expect(odd({ pid: 4242, host: 'box', title: 'Mine', pidStart: '933242' })?.session).toMatchObject({
     pid: 4242,
     host: 'box',
     title: 'Mine',
+    pidStart: '933242',
   })
+  expect(odd({ pidStart: 5 })?.session.pidStart).toBeUndefined()
+  expect(odd({ pidStart: 'x'.repeat(65) })?.session.pidStart).toBeUndefined()
   // A stored pipeline whose project could leave its API path, or whose id is no run number, is dropped.
   const pipe = (over: Record<string, unknown>) => ({
     key: 'k',

@@ -312,7 +312,7 @@ export const self: {
   togglesOptions: PluginOptions | undefined
   /** This session's own process and machine (`whoAmI`, at start): written into its file so another
    *  session can tell when it died without `session.end`. Undefined where it cannot be told. */
-  ownProcess: { pid: number; host: string } | undefined
+  ownProcess: { pid: number; host: string; pidStart?: string } | undefined
   /** The folder scan and the pipeline poll are single-flight: a round that finds the previous one
    *  still running skips, so slow disks or forges never stack rounds that land out of order. */
   scanning: boolean

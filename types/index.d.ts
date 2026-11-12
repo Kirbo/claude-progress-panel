@@ -102,6 +102,10 @@ export type SessionInfo = {
    *  process is gone without `session.end` (a closed terminal, a kill) is marked ended. */
   pid?: number
   host?: string
+  /** When that process started, as its machine tells it (clock ticks since boot on Linux, else
+   *  `ps`'s start time): the same pid with another start is another process — the session is gone
+   *  (a reboot, a reused pid). Absent in older files and on Windows: the pid alone is asked after. */
+  pidStart?: string
 }
 
 /** A CI job's state, GitLab's statuses folded into what the pane shows. */
