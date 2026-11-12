@@ -693,13 +693,27 @@ export async function runAgentUpdate(
         ? withAutoTask(r.file, label, at)
         : r.file
     await save($, dir, file)
-    return { errors: r.errors, entry: file.agents?.find(a => a.id === id) }
+    return { errors: r.errors, touched: r.touched, entry: file.agents?.find(a => a.id === id) }
   }).catch(unreadable)
   if (saved === undefined) return t('tool.unreadable')
-  const { errors, entry } = saved
-  const steps = entry ? entry.tasks : []
+  return summarizeAgent(saved.entry?.tasks ?? [], saved.errors, saved.touched)
+}
+
+// A subagent's answer: the count, and the steps THIS call created or changed — one line each, with
+// the id it updates them by (its prompt says "by id", and the tool is what assigns the ids). The
+// first report names every step; a later one only what it set, so a long list is never paid for
+// again with every report.
+export function summarizeAgent(
+  steps: readonly Task[],
+  errors: readonly string[],
+  touched: readonly string[],
+): string {
   const done = steps.filter(x => isClosed(x.status)).length
-  return [t('tool.agentSaved', { done, total: steps.length }), ...errors].join('\n')
+  const set = steps.filter(x => touched.includes(x.id))
+  const head = t(set.length > 0 ? 'tool.agentSavedSet' : 'tool.agentSaved', { done, total: steps.length })
+  const lines = [head, ...set.map(x => `${x.id} ${x.status} ${x.title}`)]
+  if (errors.length > 0) lines.push(...(set.length > 0 ? [t('tool.problems')] : []), ...errors)
+  return lines.join('\n')
 }
 
 // This session's subagents into its own file, so one that never reports (no progress tool, e.g. a

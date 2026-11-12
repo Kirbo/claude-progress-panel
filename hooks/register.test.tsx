@@ -766,8 +766,35 @@ test("a subagent's progress lands under its coordinator's session, never among t
     ],
     eta: 5,
   } as never)
-  // The answer confirms and counts — what to report and how often is in its prompt, said once.
-  expect(answer).toEqual({ result: "Saved under your coordinator's session (3/4 steps done)." })
+  // The answer confirms, counts and names the steps this call set, each with its id (its prompt says
+  // to update a step by id) — what to report and how often is in its prompt, said once.
+  expect(answer).toEqual({
+    result: [
+      "Saved under your coordinator's session (3/4 steps done); this call set:",
+      't1 done read',
+      't2 done table',
+      't3 done authz',
+      't4 todo tests',
+    ].join('\n'),
+  })
+  // A later call is answered with what IT changed — never the whole list again with every report.
+  const next = await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-1',
+    tasks: [{ id: 't4', status: 'doing' }],
+  } as never)
+  expect(next).toEqual({
+    result: "Saved under your coordinator's session (3/4 steps done); this call set:\nt4 doing tests",
+  })
+  // …and one that changes no step with the count alone.
+  const quiet = await $.tool.call({ tool: TOOL, agentId: 'sub-1', now: 'Writing the tests' } as never)
+  expect(quiet).toEqual({ result: "Saved under your coordinator's session (3/4 steps done)." })
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-1',
+    now: 'Writing the section table',
+    tasks: [{ id: 't4', status: 'todo' }],
+  } as never)
   const file = read(disk, `${DIR}/s-me.json`)
   // Its steps never become the session's tasks; on no task of the coordinator's, it gets a stand-in.
   expect(file.tasks.map(t => t.title)).toEqual(['Coordinate the lanes', '↳ Lane A: scopes'])

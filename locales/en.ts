@@ -145,6 +145,7 @@ export const en = {
   'pane.agentEtaGuess': ' · ~{min} min left (est.)',
   'agent.fallbackLabel': 'agent {id}',
   'tool.agentSaved': "Saved under your coordinator's session ({done}/{total} steps done).",
+  'tool.agentSavedSet': "Saved under your coordinator's session ({done}/{total} steps done); this call set:",
   'tool.agents': 'Subagents: {list}',
   'tool.agentsCleared': 'Cleared from the pane: {list}',
   'tool.agentsStillRunning': 'Not cleared — still working: {list}',

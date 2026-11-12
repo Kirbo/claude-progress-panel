@@ -734,13 +734,14 @@ export function stepCounts(task: Pick<Task, 'steps'>): { closed: number; total: 
   return { closed: steps.filter(s => isClosed(s.status)).length, total: steps.length }
 }
 
-/** A subagent's progress patch, upserted into its entry under the session — never the session's tasks. */
+/** A subagent's progress patch, upserted into its entry under the session — never the session's tasks.
+ *  `touched`: the ids of the steps the patch created or changed. */
 export function applyAgentUpdate(
   file: SessionFile,
   who: { id: string; label: string },
   input: UpdateInput,
   nowIso: string,
-): { file: SessionFile; errors: string[] } {
+): { file: SessionFile; errors: string[]; touched: string[] } {
   const agents = file.agents ?? []
   const old = agents.find(a => a.id === who.id)
   // The agent's own list runs through the one task logic (ids, statuses, order), on a scratch file.
@@ -792,6 +793,7 @@ export function applyAgentUpdate(
       updatedAt: nowIso,
     },
     errors: r.errors,
+    touched: r.touched,
   }
 }
 
