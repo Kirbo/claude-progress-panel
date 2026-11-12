@@ -8,5 +8,6 @@ described in their commit / the release notes.
   idle sessions' one line under Needs you, "Clear all (N)", ✕ on finished agent rows, the undo
   line, a stopped watch's row and a commit's several runs. Done = the `screenshots` skill run once
   (headless tmux + `freeze`; neither is installed on the machine it was last attempted on, and the
-  recipe starts a second Claude Code session), with `scripts/screenshot-demo.mjs` extended by a
-  finished agent and a commit row of several runs so the picture shows them.
+  recipe starts a second Claude Code session). The demo data is ready for it:
+  `scripts/screenshot-demo.mjs` now carries a running and a finished subagent and a commit row of
+  two runs (`scripts/screenshot-demo.test.mjs` keeps it readable by the pane).
