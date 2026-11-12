@@ -679,9 +679,11 @@ CI — the two were one ✕ before, and a hide-meant press deleted a release pip
 Agents under their repo (same release): when a session's open tasks and running agents span more
 than one repo (`groupWorkByRepo`), each repo branch holds its tasks, then its agents; there is no
 session-level Agents list then. An agent's repo (`agentRepo`): the repo of the task linked to it,
-else `AgentEntry.repo` — recorded once per agent from its first tool call's cwd through
+else `AgentEntry.repo` — recorded once per agent from a tool call's cwd through
 `git rev-parse --path-format=absolute --git-common-dir` (`repoFromCommonDir`, so a worktree is its
-repo) — else `OTHER_REPO` ("other"). One repo keeps the flat layout. Done → Agents groups the same.
+repo): the first call made once the agent has an entry to keep the answer on (a call before a scan
+or its first report gave it one asks nothing and leaves the question open — it used to count as
+asked, and the repo was lost for good) — else `OTHER_REPO` ("other"). One repo keeps the flat layout. Done → Agents groups the same.
 
 Background work (same release): a SubagentStop's `background_tasks` is the whole session's, with no
 owner; only ids the agent's own Bash results named (`backgroundTaskId`) count as its, so a stop with

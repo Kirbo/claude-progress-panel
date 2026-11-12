@@ -5642,6 +5642,44 @@ test("a session's work in several repos groups by repo, each with its own agents
   await ui.unmount()
 })
 
+test("an agent's first tool call before its entry exists does not lose its repo: asked again once it has one", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  const common = 'git -C /tmp/wt-site rev-parse --path-format=absolute --git-common-dir'
+  world.programs.set(common, '/w/site/.git\n')
+  await start($)
+  await update($, { now: 'n' })
+  const call = (id: string, cwd: string) =>
+    $.classic.PostToolUse({
+      tool_name: 'Bash',
+      tool_input: { command: 'ls' },
+      tool_response: { stdout: '', stderr: '', interrupted: false },
+      tool_use_id: `u-${id}`,
+      agent_id: id,
+      cwd,
+    } as never)
+  const asked = () => world.runs.filter(r => r.join(' ') === common).length
+  // Its first call lands before any scan listed it: it has no entry to put a repo on — git is not
+  // even asked (nothing to write), and the question stays open.
+  await call('ag-early', '/tmp/wt-site')
+  expect(asked()).toBe(0)
+  world.agents.push({ id: 'ag-early', description: 'Lane E', type: 'general-purpose', status: 'running' })
+  await world.clock.advance(2100)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.repo).toBeUndefined()
+  await call('ag-early', '/tmp/wt-site')
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.repo).toBe('site')
+  // Answered: its later calls ask nothing more.
+  await call('ag-early', '/tmp/wt-site')
+  expect(asked()).toBe(1)
+  // One that runs outside any repository is asked once, not at every call.
+  world.agents.push({ id: 'ag-none', description: 'Lane N', type: 'general-purpose', status: 'running' })
+  await world.clock.advance(2100)
+  const outside = () => world.runs.filter(r => r.includes('/tmp/nowhere')).length
+  await call('ag-none', '/tmp/nowhere')
+  await call('ag-none', '/tmp/nowhere')
+  expect(outside()).toBe(1)
+})
+
 test('one repo: tasks, then the session-level Agents — no repo headings', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)

@@ -759,27 +759,38 @@ export async function noteAgentActivity(
   })
 }
 
+// The repo a subagent works in, from the cwd of its tool calls — asked of git once per agent and kept
+// on its entry. "Asked" is noted only once the answer has somewhere to go: an agent's first call
+// often lands before a scan (every 2 s) or its first report gave it an entry, and noting it then
+// lost its repo for good. Until it has an entry nothing is asked at all (one plain read per call).
 export async function noteAgentRepo($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
   const call = fields(e)
   const id = call.agent_id
   if (typeof id !== 'string' || !id || typeof call.cwd !== 'string' || !call.cwd) return
   if (agentRepoAsked.has(id)) return
-  agentRepoAsked.add(id)
+  const plain = await readOwnPlain($, options)
+  if (plain === 'nowhere' || !plain?.agents?.some(a => a.id === id)) return
   const dir = await progressDir($, options)
   if (!dir) return
   const common = (
     await runCli($, ['git', '-C', call.cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'])
   ).text
   const repo = common ? repoFromCommonDir(common) : undefined
-  if (!repo) return
+  if (!repo) {
+    // Not in a repository: that is the answer.
+    agentRepoAsked.add(id)
+    return
+  }
   await exclusive(async () => {
     const own = await ownFile($, dir)
     const agent = own.agents?.find(a => a.id === id)
-    if (!agent || agent.repo === repo) return
-    await save($, dir, {
-      ...own,
-      agents: (own.agents ?? []).map(a => (a.id === id ? { ...a, repo } : a)),
-    })
+    if (!agent) return
+    if (agent.repo !== repo)
+      await save($, dir, {
+        ...own,
+        agents: (own.agents ?? []).map(a => (a.id === id ? { ...a, repo } : a)),
+      })
+    agentRepoAsked.add(id)
   })
 }
 
