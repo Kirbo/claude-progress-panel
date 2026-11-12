@@ -2203,6 +2203,26 @@ test("a watch's first check never holds the tool's answer, and joins the round a
   expect(world.toasts.filter(x => x.startsWith('Pipeline'))).toEqual(['Pipeline app failed'])
 })
 
+test(
+  'what the agent is told about the refresh follows the setting, never a fixed number',
+  { options: { pipelineRefreshSec: '30' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+    world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+    await start($)
+    const answer = await watch($, world, { watch: [{ project: 'g/app', pipeline: 42 }] })
+    expect(JSON.stringify(answer)).toContain('watching g/app#42 (refreshed every 30 s until they finish)')
+    // And it is what happens: nothing at 15 s, the next check at 30 s.
+    expect(glabCalls(world.runs, PIPE)).toBe(1)
+    await world.clock.advance(15_000)
+    expect(glabCalls(world.runs, PIPE)).toBe(1)
+    await world.clock.advance(15_000)
+    expect(glabCalls(world.runs, PIPE)).toBe(2)
+  },
+)
+
 test('an update sent while the session polls its pipeline is never overwritten by the poll', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)

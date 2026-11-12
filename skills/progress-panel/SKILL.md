@@ -60,11 +60,14 @@ up a **Custom CI command** for (`provider: "command"`, `project` = the name that
 other repo on a self-hosted forge (GitLab, GitHub Enterprise, Gitea/Forgejo) add `host`
 (`"git.example.com"`). Gitea/Forgejo always need one (given, or the own repo's). Watch in the same call that sets
 `now`: by id when you know it, else by the pushed commit's `sha` (`git rev-parse HEAD` of what you
-pushed) — the plugin finds the pipeline / run once the forge creates it. A push that starts several
-GitHub workflows: watch by sha shows the newest run; add the others by `run` id if they matter.
+pushed) — a `sha` is 7 to 64 hex digits; the plugin finds the pipeline / run once the forge creates it. A
+watch by sha follows EVERY pipeline / workflow run of that commit as one row: unfinished while any
+of them is, green only when all are — never add the others by id. The same commit on several
+branches or tags: add `ref` (`"main"`) to follow that ref's pipelines only (a push's own watch
+already does).
 
 The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), `tea`
-(Gitea/Forgejo) or their custom command every 15 s until it finishes — do not poll it yourself just to update the pane. You still read the result yourself
+(Gitea/Forgejo) or their custom command until it finishes — do not poll it yourself just to update the pane. A watch the plugin gives up on (the CLI keeps failing, no pipeline ever came, still unfinished after a day) says "stopped watching — <why>" and you are told once: a task waiting on it no longer closes by itself, so settle it yourself, or `watch` the same thing again once the cause is fixed. You still read the result yourself
 (e.g. `glab api …/pipelines/<id>/jobs`, `gh run view <id>`) before reporting on it.
 
 ## The routine

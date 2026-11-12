@@ -548,7 +548,10 @@ export async function runUpdate(
   const agents = [...clearedLines, agentsLine(file)].filter(Boolean).join('\n') || undefined
   const text = `${notice ? `${notice}\n` : ''}${summarize(file, [...updated.errors, ...watched.errors])}${agents ? `\n${agents}` : ''}`
   return added.length > 0
-    ? `${text}\n${t('tool.watching', { keys: added.map(p => p.key).join(', ') })}`
+    ? `${text}\n${t('tool.watching', {
+        keys: added.map(p => p.key).join(', '),
+        seconds: self.settings.pipelineRefreshMs / 1000,
+      })}`
     : text
 }
 

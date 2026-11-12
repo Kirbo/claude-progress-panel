@@ -125,3 +125,14 @@ test("the tool's own description shows only watches it accepts", async () => {
   assert.ok(found.length >= 4, `only ${found.length} examples found`)
   assertAccepted(found)
 })
+
+test('no text an agent or a person reads names the refresh interval as a fixed number', async () => {
+  const { en } = await import('../locales/en.ts')
+  // The interval is a setting (pipelineRefreshSec): the words follow it, or name no number.
+  for (const key of ['tool.description', 'rule.pipelines'])
+    if (key in en) assert.doesNotMatch(en[key], /every \d+ ?s\b/, key)
+  for (const [key, text] of Object.entries(en))
+    if (key.startsWith('rule.') || key.startsWith('prompt.')) assert.doesNotMatch(text, /every \d+ ?s\b/, key)
+  assert.match(en['tool.watching'], /every \{seconds\} s/)
+  assert.doesNotMatch(doc('skills/progress-panel/SKILL.md'), /every \d+ ?s\b/)
+})
