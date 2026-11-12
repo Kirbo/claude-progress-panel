@@ -299,11 +299,19 @@ test('parseSessionFile keeps only well-typed session fields and stored pipelines
         pipe({ key: 'query', project: 'owner/repo?x=1' }),
         pipe({ key: 'flag', project: '-X' }),
         pipe({ key: 'id', id: '7/cancel' }),
-        pipe({ key: 'sha', id: null, sha: 'abc123' }),
+        pipe({ key: 'sha', id: null, sha: 'abc1234' }),
+        // A stored sha or host that is none (it would reach a command line) is dropped as well.
+        pipe({ key: 'option', id: null, sha: '--upload-pack=x' }),
+        pipe({ key: 'short', id: null, sha: 'abc' }),
+        pipe({ key: 'number', id: null, sha: 1234567 }),
+        pipe({ key: 'host', host: 'git.example.com:8443' }),
+        pipe({ key: 'hostflag', host: '-oProxyCommand=x' }),
+        pipe({ key: 'hostpath', host: 'git.example.com/api' }),
+        pipe({ key: 'hosttype', host: 7 }),
       ],
     },
   )
-  expect(kept?.pipelines?.map(p => p.key)).toEqual(['ok', 'sha'])
+  expect(kept?.pipelines?.map(p => p.key)).toEqual(['ok', 'sha', 'host'])
 })
 
 test('formatTime: HH:MM today, date and time otherwise', () => {

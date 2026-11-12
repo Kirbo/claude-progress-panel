@@ -52,6 +52,18 @@ function normalizeHost(host: string): string {
     .toLowerCase()
 }
 
+/**
+ * A forge host as a CLI's `--hostname` takes it: dot-separated labels of letters, digits and inner
+ * hyphens, an optional port — no user, path, space, or leading "-" (which would read as an option).
+ */
+export function isHostName(host: unknown): host is string {
+  return (
+    typeof host === 'string' &&
+    host.length <= 253 &&
+    /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*(:\d{1,5})?$/i.test(host)
+  )
+}
+
 /** The host a new watch is on: the one given, else the remote's when the watch is that repo. */
 export function watchHost(
   given: string | undefined,

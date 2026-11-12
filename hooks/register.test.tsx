@@ -5,6 +5,7 @@ import type { SessionFile } from './model'
 import { applyUpdate, formatTime, newSession, stepCounts } from './model'
 import { resolveProgressDir } from './paths'
 import type { Pipeline } from './pipelines'
+import { INPUT_SCHEMA, schemaProblems } from './schema'
 
 // The test runtime's timer (the module itself has none): lets work the mocked clock started run on.
 declare const setTimeout: (run: () => void, ms: number) => unknown
@@ -296,7 +297,11 @@ async function start($: $Test) {
   await $.session.start({ cwd: '/w/app/sub', surface: 'terminal', isInteractive: true })
 }
 
+// A tool call as the harness makes it: the input is checked against the tool's own schema first, so
+// a test can never send what a real agent's call would be refused for.
 async function update($: $Test, input: Record<string, unknown>) {
+  const problems = schemaProblems(INPUT_SCHEMA, input)
+  if (problems.length > 0) throw new Error(`not the tool's input schema: ${problems.join('; ')}`)
   return $.tool.call({ tool: TOOL, ...input } as never)
 }
 
@@ -402,7 +407,7 @@ test('the transcript draws a progress_update call as one quiet line, in full onl
   })
   expect(await texts(ui)).toEqual(['◦ Progress · Gitea done. Now: the CI command · 2 tasks'])
   await ui.unmount()
-  ui = await row({ input: { watch: [{ project: 'g/app', sha: 'abc' }] } })
+  ui = await row({ input: { watch: [{ project: 'g/app', sha: 'abc1234' }] } })
   expect(await texts(ui)).toEqual(['◦ Progress · watching 1 pipeline'])
   await ui.unmount()
   // ctrl+o (expanded) and errors draw the engine's own row.
@@ -2148,22 +2153,22 @@ test('a Gitea/Forgejo run is read through tea, with the login on its host', asyn
   const disk = makeDisk()
   const world = engine(on, disk)
   world.tea.logins = [{ name: 'cb', url: 'https://codeberg.org', ssh_host: '', user: 'me', default: 'true' }]
-  const byCommit = '/repos/team/app/actions/runs?head_sha=abc&limit=1'
+  const byCommit = '/repos/team/app/actions/runs?head_sha=abc1234&limit=1'
   world.tea.api.set(`cb ${byCommit}`, {
     total_count: 1,
-    workflow_runs: [{ id: 77, status: 'running', commit_sha: 'abc', prettyref: 'main', html_url: 'u77' }],
+    workflow_runs: [{ id: 77, status: 'running', commit_sha: 'abc1234', prettyref: 'main', html_url: 'u77' }],
   })
   world.tea.api.set('cb /repos/team/app/actions/runs/77/jobs', [{ id: 1, name: 'build', status: 'running' }])
   await start($)
   await update($, {
     watch: [
-      { provider: 'gitea', project: 'team/app', sha: 'abc', host: 'codeberg.org' },
+      { provider: 'gitea', project: 'team/app', sha: 'abc1234', host: 'codeberg.org' },
       { provider: 'gitea', project: 'team/app', run: 3, host: 'gitea.example.com' },
     ],
   })
   const [found, unknown] = read(disk, `${DIR}/s-me.json`).pipelines ?? []
   expect(found).toMatchObject({
-    key: 'gt:codeberg.org/team/app@abc',
+    key: 'gt:codeberg.org/team/app@abc1234',
     id: 77,
     state: 'running',
     ref: 'main',
@@ -2212,10 +2217,10 @@ test('a pipeline watched by commit is found once GitLab has it', async ($, on) =
   const disk = makeDisk()
   const world = engine(on, disk)
   await start($)
-  await update($, { watch: [{ project: 'g/app', sha: 'abc123', label: 'app main' }] })
-  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ key: 'g/app@abc123', id: null })
+  await update($, { watch: [{ project: 'g/app', sha: 'abc1234', label: 'app main' }] })
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ key: 'g/app@abc1234', id: null })
 
-  world.gitlab.set('projects/g%2Fapp/pipelines?sha=abc123&per_page=1', [
+  world.gitlab.set('projects/g%2Fapp/pipelines?sha=abc1234&per_page=1', [
     { id: 42, status: 'pending', ref: 'main' },
   ])
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'pending']))
@@ -2945,14 +2950,14 @@ test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, �
     status: 'in_progress',
     conclusion: null,
     head_branch: 'main',
-    head_sha: 'abc123',
+    head_sha: 'abc1234',
     event: 'push',
     workflow_id: 77,
     run_started_at: started,
     updated_at: started,
     html_url: 'https://github.com/Kirbo/ha/actions/runs/900',
   }
-  world.github.set(`${REPO}/actions/runs?head_sha=abc123&per_page=1`, {
+  world.github.set(`${REPO}/actions/runs?head_sha=abc1234&per_page=1`, {
     total_count: 1,
     workflow_runs: [run],
   })
@@ -3005,10 +3010,10 @@ test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, �
   world.github.set(`${REPO}/actions/runs/899/jobs?per_page=100`, { total_count: 0, jobs: [] })
   world.github.set(`${REPO}/actions/runs/898/jobs?per_page=100`, { total_count: 0, jobs: [] })
   await start($)
-  await update($, { watch: [{ provider: 'github', project: 'Kirbo/ha', sha: 'abc123' }] })
+  await update($, { watch: [{ provider: 'github', project: 'Kirbo/ha', sha: 'abc1234' }] })
 
   const saved = read(disk, `${DIR}/s-me.json`).pipelines?.[0]
-  expect(saved?.key).toBe('gh:Kirbo/ha@abc123')
+  expect(saved?.key).toBe('gh:Kirbo/ha@abc1234')
   expect(saved?.provider).toBe('github')
   expect(saved?.id).toBe(900)
   expect(saved?.state).toBe('running')
@@ -3017,10 +3022,10 @@ test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, �
   expect(world.runs.some(r => r[0] === 'glab')).toBe(false)
 
   const ui = await pane($)
-  expect(await pipeLine(ui, 'pipe:s-me:gh:Kirbo/ha@abc123')).toBe(
+  expect(await pipeLine(ui, 'pipe:s-me:gh:Kirbo/ha@abc1234')).toBe(
     '● ▸ ha #900 · main · running  ████░░░░ 1/2 · 30s / ~2m',
   )
-  await ui.press({ key: 'pipe:s-me:gh:Kirbo/ha@abc123' })
+  await ui.press({ key: 'pipe:s-me:gh:Kirbo/ha@abc1234' })
   const hrefs = (await ui.findAll({ type: 'Link' })).map(l => l.props.href)
   expect(hrefs).toEqual([
     'https://github.com/Kirbo/ha/actions/runs/900',

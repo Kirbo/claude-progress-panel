@@ -3,7 +3,7 @@
 
 import type { Dismissal, JobState, Pipeline, PipelineJob, PipelineProvider } from '../types'
 import type { Remote } from './forges'
-import { defaultHost, watchHost } from './forges'
+import { defaultHost, isHostName, watchHost } from './forges'
 import { baseName } from './paths'
 
 export type { JobState, Pipeline, PipelineJob, PipelineProvider }
@@ -279,7 +279,17 @@ export function applyWatch(
       errors.push(`watch[${i}]: give a ${isRun ? 'run' : 'pipeline'} id or a commit sha`)
       return
     }
+    // A sha is stored and fills a custom command's `{sha}`; a host is a CLI's `--hostname`: neither
+    // is ever anything but what its name says.
+    if (sha && !isCommitSha(sha)) {
+      errors.push(`watch[${i}]: ${quoted(sha)} is not a commit sha (7 to 64 hex digits)`)
+      return
+    }
     const host = provider === 'command' ? undefined : watchHost(w.host, project, remote)
+    if (host && !isHostName(host)) {
+      errors.push(`watch[${i}]: ${quoted(host)} is not a host name (like git.example.com)`)
+      return
+    }
     if (provider === 'gitea' && !host) {
       errors.push(
         `watch[${i}]: a Gitea/Forgejo pipeline needs a host (or watch it from a session in that repo)`,
@@ -363,6 +373,17 @@ export function isSafeProject(project: string, provider: PipelineProvider | unde
   if (provider === 'command') return true
   if (!/^[A-Za-z0-9._/-]+$/.test(project)) return false
   return project.split('/').every(part => part !== '' && part !== '.' && part !== '..')
+}
+
+// A refused value as its error quotes it: clipped, so an answer never carries a long one back.
+function quoted(value: string): string {
+  return JSON.stringify(value.length > 48 ? `${value.slice(0, 47)}…` : value)
+}
+
+/** A commit id as a watch may name it: 7 to 64 hex digits (abbreviated, SHA-1 or SHA-256) — never
+ *  anything a command line could read as an option. */
+export function isCommitSha(sha: unknown): sha is string {
+  return typeof sha === 'string' && /^[0-9a-f]{7,64}$/i.test(sha)
 }
 
 /** A whole commit id (SHA-1's 40 or SHA-256's 64 hex digits) — what every forge's by-commit

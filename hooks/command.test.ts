@@ -18,6 +18,16 @@ test('commandArgv: whitespace-split, ~ expanded, each placeholder filled inside 
     'a b;c',
   ])
   expect(commandArgv('   ', { project: 'p', id: 1, home: '/h' })).toEqual([])
+  // A value is never an option of the command: one that starts with "-" is left out.
+  expect(
+    commandArgv('st {project} {sha} --host={host} {host}', {
+      project: '--exec=x',
+      id: 1,
+      sha: '-rf',
+      host: '-h',
+      home: '/h',
+    }),
+  ).toEqual(['st', '', '', '--host=', ''])
 })
 
 test('parseCommandStatus: the documented JSON → a pipeline head and jobs; {} = not there yet', () => {

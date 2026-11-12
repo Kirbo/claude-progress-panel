@@ -25,13 +25,16 @@ export type CommandValues = {
   home: string
 }
 
-/** The setting → argv: `{project}`, `{id}`, `{sha}`, `{host}` filled ('' when unknown), `~/` = home. */
+/** The setting → argv: `{project}`, `{id}`, `{sha}`, `{host}` filled ('' when unknown or when the
+ *  value starts with "-"), `~/` = home. */
 export function commandArgv(template: string, v: CommandValues): string[] {
+  // A value that starts with "-" could read as an option of the command: left out ('').
+  const safe = (value: string) => (value.startsWith('-') ? '' : value)
   const values: Record<string, string> = {
-    project: v.project,
+    project: safe(v.project),
     id: v.id === null ? '' : String(v.id),
-    sha: v.sha ?? '',
-    host: v.host ?? '',
+    sha: safe(v.sha ?? ''),
+    host: safe(v.host ?? ''),
   }
   return template
     .trim()

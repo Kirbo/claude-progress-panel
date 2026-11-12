@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { apiHost, defaultHost, forgeMatches, parseRemote, watchHost } from './forges'
+import { apiHost, defaultHost, forgeMatches, isHostName, parseRemote, watchHost } from './forges'
 
 test('parseRemote: scp-style, ssh:// and https:// remotes → host + path, .git and users dropped', () => {
   expect(parseRemote('git@gitlab.com:KirboDev/agentic-coding/switchboard.git')).toEqual({
@@ -67,4 +67,31 @@ test("forgeMatches: a repo's CI runs only on its own kind of forge — a mirror 
   expect(forgeMatches('gitea', 'github.com')).toBe(false)
   expect(forgeMatches('gitea', 'gitlab.com')).toBe(false)
   expect(forgeMatches('command', 'github.com')).toBe(true)
+})
+
+test('isHostName: labels, dots and a port — never a user, a path, a space or a leading "-"', () => {
+  for (const ok of [
+    'gitlab.com',
+    'git.example.com:8443',
+    'GHE.Example.com',
+    'forge-1.example.org',
+    'localhost',
+  ])
+    expect([ok, isHostName(ok)]).toEqual([ok, true])
+  for (const bad of [
+    '',
+    '-oProxyCommand=x',
+    '--hostname',
+    'git.example.com/api',
+    'user@git.example.com',
+    'git example.com',
+    'git..example.com',
+    'git.example.com:',
+    'git.example.com:port',
+    '.example.com',
+    'a'.repeat(254),
+    7,
+    undefined,
+  ])
+    expect([bad, isHostName(bad)]).toEqual([bad, false])
 })

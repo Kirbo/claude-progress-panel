@@ -197,6 +197,43 @@ test('applyWatch adds each pipeline once, by id or by commit, and unwatch remove
   expect(errors).toEqual(['unwatch: no pipeline nope'])
 })
 
+test('applyWatch refuses a sha that is no commit id and a host that is no host name, saying why', () => {
+  const { list, errors } = applyWatch(
+    [],
+    [
+      { project: 'g/app', sha: 'ABCDEF1' },
+      { project: 'g/app', sha: '--upload-pack=touch /tmp/x' },
+      { project: 'g/app', sha: 'abc12' },
+      { project: 'g/app', sha: 'g'.repeat(40) },
+      { project: 'g/app', sha: 'a'.repeat(65) },
+      // An id is given, but the sha is still stored (and fills `{sha}`): refused too.
+      { provider: 'command', project: 'job', pipeline: 3, sha: '-rf' },
+      { project: 'g/app', pipeline: 1, host: 'https://Git.Example.com:8443/' },
+      { project: 'g/app', pipeline: 2, host: '-oProxyCommand=x' },
+      { project: 'g/app', pipeline: 2, host: 'git.example.com/api/v4' },
+      { project: 'g/app', pipeline: 2, host: 'git example.com' },
+      { provider: 'github', project: 'o/r', run: 2, host: 'user@ghe.example.com' },
+    ],
+    [],
+    iso(T0),
+  )
+  expect(list.map(p => [p.key, p.host])).toEqual([
+    ['g/app@ABCDEF1', undefined],
+    ['git.example.com:8443/g/app#1', 'git.example.com:8443'],
+  ])
+  expect(errors).toEqual([
+    'watch[1]: "--upload-pack=touch /tmp/x" is not a commit sha (7 to 64 hex digits)',
+    'watch[2]: "abc12" is not a commit sha (7 to 64 hex digits)',
+    `watch[3]: "${'g'.repeat(40)}" is not a commit sha (7 to 64 hex digits)`,
+    `watch[4]: "${'a'.repeat(47)}…" is not a commit sha (7 to 64 hex digits)`,
+    'watch[5]: "-rf" is not a commit sha (7 to 64 hex digits)',
+    'watch[7]: "-oproxycommand=x" is not a host name (like git.example.com)',
+    'watch[8]: "git.example.com/api/v4" is not a host name (like git.example.com)',
+    'watch[9]: "git example.com" is not a host name (like git.example.com)',
+    'watch[10]: "user@ghe.example.com" is not a host name (like git.example.com)',
+  ])
+})
+
 test('visiblePipelines hides a pipeline the person dismissed, for that same finish', () => {
   const done: Pipeline = {
     key: 'g/app#42',
@@ -360,9 +397,9 @@ test('applyWatch: Gitea/Forgejo needs a host; a custom CI command takes any proj
     [],
     [
       { provider: 'gitea', project: 'team/app', run: 5, host: 'codeberg.org' },
-      { provider: 'gitea', project: 'team/app', sha: 'abc' },
+      { provider: 'gitea', project: 'team/app', sha: 'abc1234' },
       { provider: 'command', project: 'jenkins/nightly', pipeline: 12 },
-      { provider: 'command', project: 'jenkins/nightly', sha: 'def', label: 'nightly' },
+      { provider: 'command', project: 'jenkins/nightly', sha: 'def5678', label: 'nightly' },
       { provider: 'command', project: '-rf', pipeline: 1 },
     ],
     [],
@@ -371,7 +408,7 @@ test('applyWatch: Gitea/Forgejo needs a host; a custom CI command takes any proj
   expect(list.map(p => [p.key, p.provider, p.host, p.label])).toEqual([
     ['gt:codeberg.org/team/app#5', 'gitea', 'codeberg.org', 'app'],
     ['ci:jenkins/nightly#12', 'command', undefined, 'nightly'],
-    ['ci:jenkins/nightly@def', 'command', undefined, 'nightly'],
+    ['ci:jenkins/nightly@def5678', 'command', undefined, 'nightly'],
   ])
   expect(errors).toEqual([
     'watch[1]: a Gitea/Forgejo pipeline needs a host (or watch it from a session in that repo)',

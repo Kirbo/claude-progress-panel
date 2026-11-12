@@ -12,7 +12,8 @@ import type {
   Step,
   Task,
 } from '../types'
-import { isSafeProject } from './pipelines'
+import { isHostName } from './forges'
+import { isCommitSha, isSafeProject } from './pipelines'
 
 export type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task }
 
@@ -318,6 +319,9 @@ function asPipelines(value: unknown): Pipeline[] {
       typeof (p as Pipeline).project === 'string' &&
       isSafeProject((p as Pipeline).project, (p as Pipeline).provider) &&
       isRunId((p as Pipeline).id) &&
+      // Both reach a command line (`{sha}`, `--hostname`): a stored one that is not what it says goes.
+      ((p as Pipeline).sha === undefined || isCommitSha((p as Pipeline).sha)) &&
+      ((p as Pipeline).host === undefined || isHostName((p as Pipeline).host)) &&
       Array.isArray((p as Pipeline).jobs),
   )
 }
