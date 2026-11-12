@@ -565,7 +565,31 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
   const isHere = (sessionId: string) => sessionId === me && !solo
   const newest = [...ordered].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
 
-  if (!newest) return <Text dimColor>{t('pane.empty')}</Text>
+  // Nothing reported yet: the pane still says which copy runs, how to check the setup, and opens
+  // Settings — a bare line left a person with a silent pane no way to tell why it is silent.
+  if (!newest)
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between" gap={2}>
+          {leftSide(
+            <Text dimColor wrap="truncate-end">
+              {t('pane.empty')}
+            </Text>,
+          )}
+          {rightSide(
+            version ? <Text dimColor>{t('pane.version', { version })}</Text> : null,
+            <Button
+              key="settings:open"
+              label={t('settings.open')}
+              plain
+              dimColor
+              onPress={() => void updateViewing($, () => 'settings')}
+            />,
+          )}
+        </Box>
+        <Text dimColor>{t('pane.emptyHint')}</Text>
+      </Box>
+    )
 
   // Every session's pipelines, newest first, minus the finished ones dismissed with ✕.
   const startedMs = (p: Pipeline) => Date.parse(p.startedAt ?? p.addedAt) || 0
@@ -1599,21 +1623,19 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
         <Box flexDirection="row" flexGrow={1} flexShrink={1} minWidth={0}>
           <Text dimColor wrap="truncate-end">
-            {`${
-              solo && newest.session.id === me
-                ? t('pane.updatedSolo', { when: formatTime(newest.updatedAt, nowMs, self.settings.clock) })
-                : t('pane.updated', {
-                    when: formatTime(newest.updatedAt, nowMs, self.settings.clock),
-                    project: sessionName(newest),
-                  })
-            } · `}
+            {solo && newest.session.id === me
+              ? t('pane.updatedSolo', { when: formatTime(newest.updatedAt, nowMs, self.settings.clock) })
+              : t('pane.updated', {
+                  when: formatTime(newest.updatedAt, nowMs, self.settings.clock),
+                  project: sessionName(newest),
+                })}
+            {/* When the pane last listed the folder — said only once that stopped (the timer or the
+                folder failed): a clock ticking every two seconds in the corner told nothing. */}
             {nowMs - lastCheck > STALE_AFTER_MS ? (
               <Text color={tint(self.settings.palette, 'yellow')}>
                 {t('pane.checkedStale', { when: formatClock(lastCheck, self.settings.clock) })}
               </Text>
-            ) : (
-              t('pane.checked', { when: formatClock(lastCheck, self.settings.clock) })
-            )}
+            ) : null}
           </Text>
         </Box>
         {/* The corner: this copy's version, and a newer release with a link to its notes. */}

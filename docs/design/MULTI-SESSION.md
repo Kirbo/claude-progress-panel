@@ -8,7 +8,7 @@
 ## Layout (top to bottom)
 
 ```
-updated 22:05 · switchboard · checked 22:08:14   ← newest update across sessions · last refresh
+updated 22:05 · switchboard                      ← newest update across sessions
 ⚠ Needs you (2)                                   ← bold magenta, only when non-empty
   • switchboard: push OK for next
   • panel: pick a name
@@ -265,10 +265,14 @@ when it began: a session's own save that landed during the scan's awaits keeps i
 (it used to be overwritten by the scan's older read until the next tick), and a tick that finds
 the previous scan still running skips, so slow disks never stack scans that land out of order
 (0.20.0).
-The header's `checked HH:MM:SS` is the end of the last successful listing; older than 10 s (five
-missed ticks) it turns yellow with "(stale)" — a failed listing keeps the last known state rather
-than blanking the pane. (Added in 0.3.0, asked for 2026-11-06: "updated" alone could not tell an
-idle status from a pane that stopped refreshing.)
+The pane keeps the end of its last successful listing; once that is older than 10 s (five missed
+ticks) the header adds a yellow "checked HH:MM:SS (stale)" — a failed listing keeps the last known
+state rather than blanking the pane. (Added in 0.3.0, asked for 2026-11-06: "updated" alone could
+not tell an idle status from a pane that stopped refreshing. While the checks run the time is not
+drawn: a clock ticking every two seconds in the pane's first line told nothing.)
+
+With no session to show, the pane is not one bare line: it names its version, opens Settings and
+points at `/progress doctor`, so a silent pane can be told from a broken one.
 
 ## Retention (settings)
 

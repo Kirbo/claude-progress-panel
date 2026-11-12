@@ -2131,10 +2131,16 @@ test('with no home directory the pane says so instead of failing', async ($, on)
   expect(answer).toMatchObject({ result: expect.stringContaining('no progress folder') })
   const ui = await pane($)
   expect((await ui.find({ type: 'Text' }))?.text).toBe('No session has reported progress yet.')
+  // An empty pane still names its version, how to check the setup, and opens Settings.
+  const lines = await texts(ui)
+  expect(lines).toContain('v0.14.0')
+  expect(lines.some(l => l.includes('/progress doctor'))).toBe(true)
+  await ui.press({ key: 'settings:open' })
+  expect(await texts(ui)).toContain('⚙ Settings')
   await ui.unmount()
 })
 
-test('the header says when the pane last checked, and flags a check that stopped', async ($, on) => {
+test('the header says when the pane last checked only once the checks stopped', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
   await start($)
@@ -2145,13 +2151,15 @@ test('the header says when the pane last checked, and flags a check that stopped
     return [d.getHours(), d.getMinutes(), d.getSeconds()].map(n => String(n).padStart(2, '0')).join(':')
   }
 
+  // While the checks run, the header carries no clock of them (it ticked every two seconds and
+  // told nothing).
   let ui = await pane($)
-  expect((await texts(ui))[0]).toMatch(new RegExp(`· checked ${clock(T0 + 2000)}$`))
+  expect((await texts(ui)).some(l => l.includes('checked'))).toBe(false)
   await ui.unmount()
 
   await world.clock.advance(4000)
   ui = await pane($)
-  expect((await texts(ui))[0]).toMatch(new RegExp(`· checked ${clock(T0 + 6000)}$`))
+  expect((await texts(ui)).some(l => l.includes('checked'))).toBe(false)
   await ui.unmount()
 
   disk.listFails = true
@@ -6056,7 +6064,7 @@ test('the only open session is never named — not in Needs you, Now, its header
   expect(lines).toContain('Writing tests')
   expect(lines.filter(l => l.includes('app'))).toEqual([])
   expect(lines.filter(l => l.includes('reply') && l.endsWith(' here'))).toEqual([])
-  expect(lines[0]).toMatch(/^updated \d\d:\d\d · checked \d\d:\d\d:\d\d$/)
+  expect(lines[0]).toMatch(/^updated \d\d:\d\d$/)
   expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ This session · /)
   expect((await ui.find({ type: 'Button', key: 'group:s-old' }))?.text).toMatch(/^▸ old · ended /)
   expect(world.status.at(-1)).toBe('⚠ 2 need you — Push 1.0? — reply yes or no')

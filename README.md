@@ -353,8 +353,10 @@ or test folder) without moving everyone else's.
   [`docs/design/MULTI-SESSION.md`](docs/design/MULTI-SESSION.md).
 - Every pane lists the folder every 2 seconds and reads a file only when it changed (plugins have
   no file-watch API). A session's own update shows at once.
-- The header carries two times: **updated** — the newest status change of any session — and
-  **checked** — when this pane last looked. A check older than 10 s turns yellow with "(stale)".
+- The header says **updated** — the newest status change of any session. When this pane itself
+  stopped looking (its last check is older than 10 s), it adds a yellow "checked HH:MM:SS (stale)".
+- Before any session has reported, the pane shows its version, **⚙ Settings** and a pointer to
+  `/progress doctor`.
 - A session marks its entry ended when it closes; ended entries are dimmed and folded, and are
   removed after `keepEndedSessionsDays`. A session that never reported anything leaves nothing.
   One that died without closing (a terminal closed, a process killed) is noticed by any pane on the
