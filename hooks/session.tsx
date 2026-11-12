@@ -659,8 +659,9 @@ export function feedAgentPrompt(
   if (!isOn(options, 'agents') || e.subagent_type === 'fork') return undefined
   if (typeof e.prompt !== 'string') return undefined
   const rule = t(SUBAGENT_RULE[self.settings.effort])
+  // Either way its prompt holds the rule: its subagent needs no copy as it starts.
+  if (typeof e.description === 'string' && e.description.trim()) promptFed.add(e.description.trim())
   if (e.prompt.includes(rule)) return undefined
-  if (typeof e.description === 'string' && e.description) promptFed.add(e.description)
   return `${e.prompt}\n\n${rule}`
 }
 
@@ -819,23 +820,33 @@ export async function autoLink(
 }
 
 // A subagent's system prompt never carries the reporting rule (`prompt.compose` builds only the
-// session's): SubagentStart hands it the subagent part of the rule as it starts and, where that
-// event never fired (an engine without it), its FIRST tool call's result carries it — once per
-// agent, and never to one that already reported.
+// session's). Its Agent call's own prompt does (`feedAgentPrompt`); one that started some other way
+// is handed the subagent part of the rule by SubagentStart (`at: 'start'`) or, failing that, by its
+// FIRST tool call's result (`at: 'call'`) — once per agent, and never to one that already reported.
+//
+// Which subagent this is can only be told from `$.agent.list()` (the start event carries no
+// description), and a starting agent is not always listed yet. While prompts have been fed, one
+// that cannot be identified is therefore NOT given a copy: at start the question is left to its
+// first tool call, and one still unlisted then is taken for a fed one. (Handing it over on a failed
+// lookup gave every subagent the rule twice — in its prompt and again as it started.)
 export async function withSubagentRule<R extends { additionalContext?: string[] }>(
   $: EngineInterface,
   options: PluginOptions,
   agentId: string,
   result: R,
+  at: 'start' | 'call',
 ): Promise<R> {
   if (subagentRuleSent.has(agentId) || !isOn(options, 'agents')) return result
-  subagentRuleSent.add(agentId)
-  // Its prompt already carried the rule (the Agent call was fed it): no second copy.
   if (promptFed.size > 0) {
     const listed = await $.agent.list().catch(() => [])
-    const description = listed.find(a => a.id === agentId)?.description
-    if (description && promptFed.has(description)) return result
+    const description = listed.find(a => a.id === agentId)?.description?.trim()
+    if (!description && at === 'start') return result
+    if (!description || promptFed.has(description)) {
+      subagentRuleSent.add(agentId)
+      return result
+    }
   }
+  subagentRuleSent.add(agentId)
   const own = await readOwnPlain($, options)
   if (own === 'nowhere') return result
   const entry = own?.agents?.find(a => a.id === agentId)

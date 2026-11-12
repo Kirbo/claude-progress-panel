@@ -3628,6 +3628,56 @@ test("an Agent call's prompt carries the subagent rule — once, not to a fork, 
   expect(prompts[3]).toBe('Do the thing.')
 })
 
+test('a subagent whose prompt carried the rule gets no second copy at start, even before the session lists it', async ($, on) => {
+  const prompts: string[] = []
+  on('tool.call', { tool: 'Agent' }, (_, e) => {
+    prompts.push((e as { prompt: string }).prompt)
+    return { result: {} } as never
+  })
+  const world = engine(on, makeDisk())
+  await start($)
+  const startOf = async (id: string) =>
+    (
+      (await $.classic.SubagentStart({ agent_id: id, agent_type: 'general-purpose' } as never)) as {
+        additionalContext?: string[]
+      }
+    ).additionalContext ?? []
+  const firstCallOf = async (id: string) =>
+    (
+      (await $.classic.PostToolUse({
+        tool_name: 'Bash',
+        tool_input: {},
+        tool_response: {},
+        tool_use_id: `u-${id}`,
+        agent_id: id,
+      } as never)) as { additionalContext?: string[] }
+    ).additionalContext ?? []
+  await $.tool.call({ tool: 'Agent', description: 'Lane A', prompt: 'Do the thing.' } as never)
+  // It starts before `$.agent.list()` names it: who it is cannot be told yet — nothing is added.
+  expect(await startOf('sub-late')).toEqual([])
+  // By its first tool call the list has it, under the description whose prompt was fed: still none.
+  world.agents.push({ id: 'sub-late', description: 'Lane A', type: 'general-purpose', status: 'running' })
+  expect(await firstCallOf('sub-late')).toEqual([])
+  expect(await firstCallOf('sub-late')).toEqual([])
+  // One the list never names at all is taken for one of the fed ones: no copy with its first call.
+  expect(await startOf('sub-ghost')).toEqual([])
+  expect(await firstCallOf('sub-ghost')).toEqual([])
+  // One started some other way (no Agent call of this session fed it), listed late: its first tool
+  // call hands the rule over, once.
+  expect(await startOf('sub-other')).toEqual([])
+  world.agents.push({ id: 'sub-other', description: 'Spawned elsewhere', type: 'x', status: 'running' })
+  expect((await firstCallOf('sub-other')).join(' ')).toContain('you are a subagent')
+  expect(await firstCallOf('sub-other')).toEqual([])
+  // …and one already listed under a description nothing fed gets it as it starts.
+  world.agents.push({ id: 'sub-known', description: 'Also elsewhere', type: 'x', status: 'running' })
+  expect((await startOf('sub-known')).join(' ')).toContain('you are a subagent')
+  // A prompt that already held the rule counts as fed: its subagent gets no copy either.
+  await $.tool.call({ tool: 'Agent', description: 'Lane H', prompt: prompts[0] } as never)
+  expect(prompts[1]).toBe(prompts[0])
+  world.agents.push({ id: 'sub-held', description: 'Lane H', type: 'general-purpose', status: 'running' })
+  expect(await startOf('sub-held')).toEqual([])
+})
+
 const memoryOf = (disk: Disk) =>
   JSON.parse(disk.files.get(`${DIR}/ci-memory.v1`)?.text ?? '{"repos":{}}').repos
 

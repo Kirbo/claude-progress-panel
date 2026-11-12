@@ -138,7 +138,7 @@ export const register: Register = (on, options) => {
   on('classic.SubagentStart', async ($, e, next) => {
     const result = await next(e)
     const id = fields(e).agent_id
-    return typeof id === 'string' && id ? withSubagentRule($, options, id, result) : result
+    return typeof id === 'string' && id ? withSubagentRule($, options, id, result, 'start') : result
   }).catch(() => undefined) // a failure here never holds a subagent up: the hook counts as absent
   on('classic.UserPromptSubmit', async ($, e, next) => {
     // The person answered: every automatic Needs-you item goes.
@@ -204,7 +204,7 @@ export const register: Register = (on, options) => {
       const told = own?.length
         ? { ...result, additionalContext: [...(result.additionalContext ?? []), ...own] }
         : result
-      return withSubagentRule($, options, agentId, told)
+      return withSubagentRule($, options, agentId, told, 'call')
     }
     if (agentId) return result
     pendingNotes.push(...takeFinishedLinks(), ...takeDeferredRule(options))

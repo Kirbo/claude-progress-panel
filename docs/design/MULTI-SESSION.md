@@ -175,9 +175,21 @@ acting on it — seen with haiku and the default model, 2026-11-09). So a `tool.
 coordinator's `Agent` tool appends `prompt.subagent` to the call's `prompt` (`next({ ...e, prompt })`,
 checked against the tool's schema) — not for a `fork` (it inherits the session's context, rule
 included), not to a prompt already holding it, not while reporting or agents are off. Its
-description is remembered (`promptFed`), and SubagentStart / the first-call fallback skip an agent
-whose `$.agent.list()` description is one of those. The rule says a job of about three tool calls
-may skip reporting; a longer one reports from its first call.
+description is remembered (`promptFed` — also when the prompt already held the rule), and
+SubagentStart / the first-call fallback skip an agent whose `$.agent.list()` description is one of
+those. The rule says a job of about three tool calls may skip reporting; a longer one reports from
+its first call.
+
+**…never twice: an agent that cannot be identified is not handed a copy.** Which subagent a
+SubagentStart is about can only be told from `$.agent.list()` — the event carries no description —
+and a starting agent is not always listed yet. The skip above then failed, and the subagent got the
+rule in its prompt AND again as it started (seen live, 2026-11-12: every subagent paid the
+paragraph twice). So while any prompt has been fed, `withSubagentRule` hands the rule only to an
+agent it can identify as not fed: one not listed at start is left to its first tool call, and one
+still unlisted then is taken for a fed one. An agent started some other way (no Agent call of this
+session) is listed under a description nothing fed, and gets the rule at start or with its first
+call as before. The cost of the rare wrong guess is a subagent without the paragraph (the tool's
+own description still tells it to report), never a second copy.
 
 **…and after a compaction (0.23.0).** A compaction keeps the system prompt but summarises the
 conversation, so a rule that only rode a prompt (the mid-way case) can be summarised away. The
