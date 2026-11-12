@@ -119,11 +119,28 @@ test('every watch property the skill names is one the tool accepts', () => {
   assert.ok(section.includes('`host`'))
 })
 
-test("the tool's own description shows only watches it accepts", async () => {
+test("the watch examples an agent sees in the tool's schema are watches it accepts", async () => {
   const { en } = await import('../locales/en.ts')
-  const found = watchExamples(en['tool.description'])
+  const found = watchExamples(INPUT_SCHEMA.properties.watch.description)
   assert.ok(found.length >= 4, `only ${found.length} examples found`)
   assertAccepted(found)
+  assertAccepted(watchExamples(en['tool.description']))
+})
+
+test("the tool's description is a few sentences: what a field means is said once, in the schema", async () => {
+  const { en } = await import('../locales/en.ts')
+  const text = en['tool.description']
+  // Every session and every subagent pays for it on every request (the tool is never deferred).
+  assert.ok(text.length <= 700, `${text.length} characters`)
+  assert.ok(text.split(/(?<=[.:]) (?=[A-Z])/).length <= 4, text)
+  // What the reporting rule and the subagent's prompt already say is not said again here.
+  assert.doesNotMatch(text, /wall-clock/)
+  assert.doesNotMatch(text, /clearAgents|dismissAgents|unwatch|glab/)
+  // …and every field the description no longer explains has its own words in the schema.
+  const fields = INPUT_SCHEMA.properties
+  for (const name of Object.keys(fields)) assert.ok(fields[name].description, `${name} has no description`)
+  for (const name of Object.keys(fields.tasks.items.properties))
+    assert.ok(fields.tasks.items.properties[name].description, `tasks.${name} has no description`)
 })
 
 test('no text an agent or a person reads names the refresh interval as a fixed number', async () => {

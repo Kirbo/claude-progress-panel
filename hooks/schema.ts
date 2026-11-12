@@ -33,6 +33,8 @@ export const INPUT_SCHEMA = {
     },
     tasks: {
       type: 'array',
+      description:
+        'Tasks to add or update (an upsert; the others stay as they are), in the order you will do them. Times are stamped for you.',
       items: {
         type: 'object',
         additionalProperties: false,
@@ -47,7 +49,12 @@ export const INPUT_SCHEMA = {
             description:
               'Needed for a new task. Without an id it names the open task of that exact title; a closed one is reopened by its id.',
           },
-          status: { type: 'string', enum: [...STATUSES] },
+          status: {
+            type: 'string',
+            enum: [...STATUSES],
+            description:
+              'todo (the default), doing, blocked, done, skipped (it will not be done) or failed (tried and could not be done).',
+          },
           note: {
             type: 'string',
             description:
@@ -93,7 +100,11 @@ export const INPUT_SCHEMA = {
         },
       },
     },
-    remove: { type: 'array', items: { type: 'string' } },
+    remove: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Task ids to delete — a mistake, not finished work (that is `done`).',
+    },
     eta: {
       type: 'number',
       description:
@@ -108,7 +119,7 @@ export const INPUT_SCHEMA = {
     watch: {
       type: 'array',
       description:
-        'CI pipelines to follow live in the pane: GitLab CI pipelines (the default), GitHub Actions or Gitea / Forgejo Actions workflow runs (provider "github" / "gitea"), or a run of the CI the user set a custom command for (provider "command"). A git push run through Bash is watched automatically; watch a run by id, another repo\'s pipeline or a push made elsewhere.',
+        'CI pipelines to follow live in the pane: GitLab CI pipelines (the default), GitHub Actions or Gitea / Forgejo Actions workflow runs (provider "github" / "gitea"), or a run of the CI the user set a custom command for (provider "command"). A git push run through Bash is watched automatically (its result says so); watch what that cannot see — a run by id, another repo\'s pipeline, a push made elsewhere: { project: "group/name", pipeline: <id> } or { project, sha }; { provider: "github", project: "owner/repo", run: <id> } or { provider: "github", project, sha }. The plugin follows each through the user\'s own CLI until it finishes.',
       items: {
         type: 'object',
         additionalProperties: false,
@@ -145,7 +156,12 @@ export const INPUT_SCHEMA = {
         },
       },
     },
-    unwatch: { type: 'array', items: { type: 'string' }, description: 'pipeline keys to stop showing' },
+    unwatch: {
+      type: 'array',
+      items: { type: 'string' },
+      description:
+        'Pipeline keys to stop showing, as the answer to `watch` named them ("group/name#<id>", "gh:owner/repo#<id>").',
+    },
     clearAgents: {
       type: 'boolean',
       description:

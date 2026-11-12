@@ -155,6 +155,16 @@ for a new task is a plain name — letters, digits, `.`, `_`, `-` (`isTaskId`): 
 id is still updated by it. An id in `cancelled` (removed in a pane) never names a new task: every
 pane would hide it at once and its own ✕ could not be folded in again.
 
+**The tool's description is a few sentences.** The tool is never deferred, so its description and
+schema ride every request of every session and every subagent. The description had grown to about
+450 words that the reporting rule, the subagent's prompt and the schema's own field descriptions
+each said again (the "estimates are your own wall-clock time" sentence reached a subagent four
+times). It now says what the tool is, the four fields that matter and when to call it; what a
+field means is said once, on the field (`hooks/schema.ts` — every top-level field and every task
+field has a description, the watch examples and key formats included), and how to behave is the
+rule's business. `scripts/docs-watch.test.mjs` holds the description to 700 characters and the
+schema's watch examples to the schema.
+
 **Reporting without being asked (0.13.0).** A tool description and an on-demand skill proved too
 passive: a session ran a diagnose → fix → push job with almost nothing in its entry until the user
 asked why (2026-11-07). So a `prompt.compose` hook appends one section, `progress-panel:reporting`
@@ -772,7 +782,7 @@ a plain read first, so a tool call with nothing to clear writes nothing. Behind 
 ## Time left: measured, not guessed (0.23.0)
 
 Asked 2026-11-09 (item 11): agents' estimates were far too pessimistic — human-effort hours for work
-an agent finished in minutes. Both ends: the rule, the subagent note, the tool description and the
+an agent finished in minutes. Both ends: the rule, the subagent note and the
 skill say an estimate is the agent's OWN wall-clock time (the calls, builds and tests left), never
 a person's; and the pane stops trusting the guess once it has data. `timeLeft` (model.ts): with at
 least one finished step, the median of the finished steps' durations (each from the previous
