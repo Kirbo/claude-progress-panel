@@ -11,7 +11,7 @@ session owns one entry in a shared folder; every pane shows all of them, grouped
 1. `updated HH:MM · project` — the newest update anywhere (and, only once this pane stopped
    refreshing, a yellow "checked HH:MM:SS (stale)").
 2. `⚠ Needs you` — every live session's asks, highlighted, also in the status line and toasted to
-   the other sessions.
+   the other sessions (sessions that only finished a turn are one dim, counted line beneath).
 3. `Now` — one line per live session.
 4. `Sessions` — one foldable group per session (this one first): open tasks, then a foldable
    Done section with done times, "Clear all" and a ✕ per item.

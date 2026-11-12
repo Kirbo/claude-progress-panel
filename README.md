@@ -64,11 +64,17 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   out its name — not Needs you, Now, its header ("This session"), the top line or the status line.
   An ask's "— reply … here" is worded by each pane: "here" shows only in the pane of the session
   that asks, and only while another session is open.
+- **Two sessions in one repo are told apart:** the one that started later is numbered (`app`,
+  `app #2`) wherever a session is named, while both are open.
 - **Claude Code's own waits are Needs you too:** a session stopped on a permission prompt, or one
   whose turn finished and waits for your next message ("Turn finished — waiting for your next
-  message": a state, nothing to answer), shows it under **Needs you**, toasted to the other sessions, until the wait
-  ends — the tool ran or was denied, the turn ended, or you answered. The agent's own asks are never
-  touched. Settings `autoNeedsPermission` / `autoNeedsIdle` (both on).
+  message": a state, nothing to answer), shows it under **Needs you** until the wait ends — the
+  tool ran or was denied, the turn ended, or you answered. **What is asked comes first:** asks and
+  permission prompts are listed (and toasted to the other sessions, and named in the status line)
+  ahead of anything else; sessions that only finished a turn are one dim line beneath them, counted
+  ("○ 3 sessions finished their turn — waiting for your next message: api, docs, site"), and raise
+  no toast. The agent's own asks are never touched. Settings `autoNeedsPermission` /
+  `autoNeedsIdle` (both on).
 - **No "needs your attention" without what, where and how.** A permission prompt says which tool
   and input ("Permission: Bash — git push origin next (agent: Lane Q)"), taken from the call
   waiting on it when Claude Code's own notice is only "Claude needs your permission"; when even that

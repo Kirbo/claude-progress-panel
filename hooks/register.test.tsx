@@ -6125,7 +6125,7 @@ test('the idle wait says "answer here" only in its own pane, and only when anoth
   await $.classic.Notification({ notification_type: 'idle_prompt', message: 'x' } as never)
   let ui = await pane($)
   // Worded as a state, never as a question left unanswered — beneath its task too.
-  expect(await texts(ui)).toContain('• Turn finished — waiting for your next message')
+  expect(await texts(ui)).toContain('○ Turn finished — waiting for your next message')
   expect(await texts(ui)).toContain('turn finished — waiting for your next message')
   await ui.unmount()
 
@@ -6142,12 +6142,135 @@ test('the idle wait says "answer here" only in its own pane, and only when anoth
     ],
   })
   await world.clock.advance(2000)
-  ui = await pane($)
+  ui = await pane($, 140)
   const lines = await texts(ui)
-  expect(lines).toContain('• app: Turn finished — waiting for your next message here')
-  expect(lines).toContain('• site: Turn finished — waiting for your next message')
+  // Sessions that only finished a turn are one line, counted — never a list that buries an ask.
+  expect(lines).toContain(
+    '○ 2 sessions finished their turn — waiting for your next message: app (here), site',
+  )
+  expect(lines.filter(l => l.includes('Needs you'))).toEqual([])
   await ui.unmount()
 })
+
+test('an ask outranks sessions that only finished a turn: first in the pane and the status line, and only it is toasted', async ($, on) => {
+  const disk = makeDisk()
+  const at = new Date(T0).toISOString()
+  const idle = (id: string, project: string, ms: number) => ({
+    ...other(id, project, ms, { now: 'Idle' }),
+    autoNeeds: [{ kind: 'idle', text: 'Turn finished — waiting for your next message', at }],
+  })
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'mine' })
+  // The ask is the OLDEST update; two sessions went idle after it.
+  put(
+    disk,
+    `${DIR}/s-ask.json`,
+    other('s-ask', 'api', T0 - 60_000, { now: 'Waiting', needsYou: ['Approve the deploy'] }),
+  )
+  put(disk, `${DIR}/s-idle1.json`, idle('s-idle1', 'site', T0 + 1000))
+  put(disk, `${DIR}/s-idle2.json`, idle('s-idle2', 'docs', T0 + 2000))
+  await world.clock.advance(2000)
+  expect(world.status.at(-1)).toBe('⚠ api: Approve the deploy')
+  // A session that finished its turn is no ask: it raises no toast.
+  expect(world.toasts).toEqual(['api needs you: Approve the deploy'])
+  const ui = await pane($, 140)
+  const lines = await texts(ui)
+  expect(lines).toContain('⚠ Needs you (1)')
+  expect(lines).toContain('• api: Approve the deploy')
+  const idleLine = lines.findIndex(l => l.startsWith('○ 2 sessions finished their turn'))
+  expect(idleLine).toBeGreaterThan(lines.indexOf('• api: Approve the deploy'))
+  expect(lines[idleLine]).toContain('docs, site')
+  expect((await ui.find({ type: 'Text', text: /^○ 2 sessions finished/ }))?.props.dimColor).toBe(true)
+  await ui.unmount()
+})
+
+test('two open sessions in one repo are told apart: the later one is numbered, and their asks fold apart', async ($, on) => {
+  const disk = makeDisk()
+  const long = `Decide: ${'which of the two release trains this fix should ride '.repeat(3)}`.trim()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'mine', needsYou: [long] })
+  put(disk, `${DIR}/s-twin.json`, other('s-twin', 'app', T0 + 1000, { now: 'theirs', needsYou: [long] }))
+  put(disk, `${DIR}/s-old.json`, {
+    ...other('s-old', 'app', T0 - HOUR, { now: 'was here' }),
+    session: { ...other('s-old', 'app', T0 - HOUR, {}).session, endedAt: new Date(T0 - 1000).toISOString() },
+  })
+  await world.clock.advance(2000)
+  const ui = await pane($)
+  const lines = await texts(ui)
+  expect(lines).toContain('app · mine')
+  expect(lines).toContain('app #2 · theirs')
+  expect((await ui.find({ type: 'Button', key: 'group:s-twin' }))?.text).toMatch(/^▾ app #2 · /)
+  expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ app \(this session\) · /)
+  // An ended session of the same repo takes no number: "ended …" already tells it apart.
+  expect((await ui.find({ type: 'Button', key: 'group:s-old' }))?.text).toMatch(/^▸ app · ended /)
+  expect(world.toasts).toEqual([`app #2 needs you: ${long}`])
+  // The same ask in both: each folds by itself.
+  const folds = (await ui.findAll({ type: 'Button' })).filter(b =>
+    String(b.props.key ?? '').startsWith('full:needs:'),
+  )
+  expect(folds).toHaveLength(2)
+  expect(new Set(folds.map(b => b.props.key)).size).toBe(2)
+  await ui.press({ key: String(folds[0]?.props.key) })
+  const after = (await ui.findAll({ type: 'Button' })).filter(b =>
+    String(b.props.key ?? '').startsWith('full:needs:'),
+  )
+  expect(after.map(b => (b.text ?? '').slice(0, 1)).sort()).toEqual(['▸', '▾'])
+  await ui.unmount()
+})
+
+test(
+  "paneScope session: other sessions' asks stay out of this pane's Needs you, its toasts and its status line",
+  { options: { paneScope: 'session' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    await start($)
+    await update($, { now: 'mine' })
+    put(
+      disk,
+      `${DIR}/s-else.json`,
+      other('s-else', 'elsewhere', T0, { now: 'other', needsYou: ['Approve elsewhere'] }),
+    )
+    await world.clock.advance(2000)
+    expect(world.toasts).toEqual([])
+    expect(world.status.at(-1)).toBeUndefined()
+    const ui = await pane($)
+    const shown = (await texts(ui)).join('\n')
+    expect(shown).not.toContain('Approve elsewhere')
+    expect(shown).not.toContain('Needs you')
+    // The only session this pane lists: it needs no name.
+    expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ This session · /)
+    await ui.unmount()
+    await update($, { needsYou: ['Mine to answer'] })
+    expect(world.status.at(-1)).toBe('⚠ Mine to answer')
+  },
+)
+
+test(
+  "paneScope repo: another repo's ask is not toasted here, the same repo's is",
+  { options: { paneScope: 'repo' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    await start($)
+    await update($, { now: 'mine' })
+    put(
+      disk,
+      `${DIR}/s-else.json`,
+      other('s-else', 'elsewhere', T0, { now: 'other', needsYou: ['Approve elsewhere'] }),
+    )
+    put(
+      disk,
+      `${DIR}/s-same.json`,
+      other('s-same', 'app', T0 + 1000, { now: 'same', needsYou: ['Approve here'] }),
+    )
+    await world.clock.advance(2000)
+    expect(world.toasts).toEqual(['app #2 needs you: Approve here'])
+    expect(world.status.at(-1)).toBe('⚠ app #2: Approve here')
+  },
+)
 
 test("another session's malformed file never breaks the pane: what is unreadable in it is left out", async ($, on) => {
   const disk = makeDisk()

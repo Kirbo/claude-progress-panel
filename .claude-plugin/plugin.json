@@ -139,7 +139,7 @@
     "paneScope": {
       "type": "string",
       "title": "Sessions the pane lists",
-      "description": "all; only the sessions in this session's repo; or this session only.",
+      "description": "all; only the sessions in this session's repo; or this session only. Applies to the list, Needs you, the toasts and the status line.",
       "options": ["all", "repo", "session"],
       "default": "all",
       "required": false

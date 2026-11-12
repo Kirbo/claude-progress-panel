@@ -35,6 +35,18 @@ Sessions                              [Sort: status]
 - The pane scrolls when taller than its window (the engine's own scrolling).
 - With anything in Needs you, the status line reads `⚠ N need you`; an item that appears from
   another session also raises a toast once.
+- **What is asked comes first** (`liveNeeds`): asks and permission prompts, by the newest session;
+  then the sessions that only finished a turn (`autoNeeds` of kind `idle`). Every session idle for
+  a minute used to add its own Needs-you line, toast every other pane and — sorted by update time
+  — take the status line's first slot ahead of a real ask. Now the idle ones are ONE dim line under
+  the asks, counted and named ("○ 3 sessions finished their turn — …: api, docs, site"; the
+  magenta header counts asks only, and is not drawn for idle sessions alone), they raise no toast,
+  and the status line counts them only when nothing is asked.
+- **A name is one session's** (`nameIn`): two OPEN sessions that carry one name (two in one repo)
+  were the same word in Now, Needs you and their headers. The one that started later is numbered
+  (`app`, `app #2`; by `startedAt`, then id); an ended one takes no number ("ended …" tells it
+  apart). An ask's fold is keyed by its session and text, so the same ask in two sessions folds
+  separately.
 
 ## Store
 
@@ -779,8 +791,9 @@ Asked 2026-11-09 (item 8). Every option is read once per module load by `readSet
 `settings` — the one place a value and its default live (the switches' defaults stay
 `defaultsFrom`'s). Their effects: `toastNeedsYou` + `bell` (`$.ui.notify`, the person's own
 channel) on Needs-you toasts; `pipelineNotify` (never / failures / always) on a watched pipeline
-that finishes in a poll round (`notifiesFinish`); `paneScope` filters the listed sessions (this one
-always stays); `autoOpen` never = no open at start (`always` is not offered: the engine seats an
+that finishes in a poll round (`notifiesFinish`); `paneScope` filters the sessions the pane is about (this one
+always stays) — its list and pipelines, and equally Needs you, the toasts and the status line
+(`scoped`: a pane set to one session is not interrupted by the others' asks); `autoOpen` never = no open at start (`always` is not offered: the engine seats an
 unasked pane only from ~144 columns); `doneShown` / `agentsShown` / `successFoldHours` replace the
 old constants; `clock` (`formatClock` / `formatTime`: 24h default, 12h, or the locale's via Intl);
 `reportingEffort` picks the rule's bullets (`ruleKeys(eff, effort)`: `rule.milestones`, or

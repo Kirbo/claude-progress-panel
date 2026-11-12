@@ -3,7 +3,7 @@
 import type { EngineInterface, MatchedHook, PluginOptions, RenderChildren } from 'claude-code'
 import type { AgentEntry, Loaded } from '../types'
 import { cancellable, cancelPipeline } from './forge'
-import { t } from './i18n'
+import { t, tn } from './i18n'
 import type { SessionFile, SortBy, Status, Task } from './model'
 import {
   agentDismissal,
@@ -30,7 +30,6 @@ import {
   visibleAgents,
   visibleTasks,
 } from './model'
-import { baseName } from './paths'
 import type { JobState, Pipeline } from './pipelines'
 import {
   formatDuration,
@@ -50,8 +49,9 @@ import {
   isSolo,
   liveNeeds,
   minutesSince,
+  nameIn,
   ownManifest,
-  sessionName,
+  scoped,
   setToggle,
   toggle,
 } from './session'
@@ -366,7 +366,11 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
   // Too long → a fold: folded, ONE line cut with "…" (inside a shrinkable row, so the cut holds
   // instead of the line wrapping); unfolded, the same header line shows the whole text wrapped —
   // once, never repeated beneath it.
-  const cutLine = (key: string, text: string, style: { bold?: boolean; color?: string }) => {
+  const cutLine = (
+    key: string,
+    text: string,
+    style: { bold?: boolean; color?: string; dimColor?: boolean },
+  ) => {
     if (!wouldCut(text, INDENT * 2, 0)) return <Text {...style}>{text}</Text>
     const foldKey = `full:${key}`
     const isOpen = folded[foldKey] ?? false
@@ -521,10 +525,11 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       </Box>
     )
   }
-  const all = await readSessions($)
+  const me = await $.session.id()
+  // The sessions this pane is about (its scope setting): everything below is drawn from these.
+  const all = await scoped($, await readSessions($), me)
   const folded = await readFolds($)
   const lastCheck = await readChecked($)
-  const me = await $.session.id()
   const nowMs = await $.clock.now()
   const by = await sortBy($, options)
   const query = await readFiltering($)
@@ -548,21 +553,17 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
   }
   const release = await readReleasing($)
   const version = (await ownManifest($)).version
-  // The sessions this pane lists (a setting): all, the ones in this session's repo, or this one.
-  const myProject =
-    all[me]?.file.session.project ??
-    baseName((await $.session.repo().catch(() => null))?.root ?? (await $.session.cwd()))
-  const ordered = orderSessions(all, me).filter(
-    f =>
-      self.settings.paneScope === 'all' ||
-      f.session.id === me ||
-      (self.settings.paneScope === 'repo' && f.session.project === myProject),
-  )
+  const ordered = orderSessions(all, me)
   const live = ordered.filter(f => f.session.endedAt === null)
   const needs = liveNeeds(all, me)
   // The only open session: nothing names it, and its asks need no "here".
   const solo = isSolo(all, me)
   const isHere = (sessionId: string) => sessionId === me && !solo
+  // A session's name among the others shown (two in one repo: `app`, `app #2`).
+  const nameOf = (f: SessionFile) => nameIn(all, f)
+  // What is asked, and — apart from it — the sessions that only finished a turn.
+  const asks = needs.filter(n => n.kind !== 'idle')
+  const idle = needs.filter(n => n.kind === 'idle')
   const newest = [...ordered].sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
 
   // Nothing reported yet: the pane still says which copy runs, how to check the setup, and opens
@@ -1455,10 +1456,10 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     const isDoneOpen = folded[doneKey] ?? false
     const name =
       id !== me
-        ? sessionName(file)
+        ? nameOf(file)
         : solo
           ? t('pane.thisSessionSolo')
-          : t('pane.thisSession', { project: sessionName(file) })
+          : t('pane.thisSession', { project: nameOf(file) })
     const label =
       t(ended === null ? 'pane.groupLive' : 'pane.groupEnded', {
         fold: isOpen ? '▾' : '▸',
@@ -1627,7 +1628,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
               ? t('pane.updatedSolo', { when: formatTime(newest.updatedAt, nowMs, self.settings.clock) })
               : t('pane.updated', {
                   when: formatTime(newest.updatedAt, nowMs, self.settings.clock),
-                  project: sessionName(newest),
+                  project: nameOf(newest),
                 })}
             {/* When the pane last listed the folder — said only once that stopped (the timer or the
                 folder failed): a clock ticking every two seconds in the corner told nothing. */}
@@ -1700,13 +1701,16 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       ) : null}
       {needs.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text bold inverse color={tint(self.settings.palette, 'magenta')}>
-            {t('pane.needsYou', { count: needs.length })}
-          </Text>
-          <Box flexDirection="column" paddingLeft={INDENT}>
-            {needs.map(n =>
+          {asks.length > 0 ? (
+            <Text bold inverse color={tint(self.settings.palette, 'magenta')}>
+              {t('pane.needsYou', { count: asks.length })}
+            </Text>
+          ) : null}
+          <Box flexDirection="column" paddingLeft={asks.length > 0 ? INDENT : 0}>
+            {/* Each ask folds by its own session and text: the same ask in two sessions is two. */}
+            {asks.map(n =>
               cutLine(
-                `needs:${n.project}:${n.item}`,
+                `needs:${n.key}`,
                 solo
                   ? t('pane.needsYouItemSolo', { item: n.item })
                   : t('pane.needsYouItem', { project: n.project, item: n.item }),
@@ -1716,6 +1720,24 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                 },
               ),
             )}
+            {/* Sessions that only finished a turn: one dim line, counted — a list of them buried
+                the asks, and nothing is asked there. */}
+            {idle.length > 0
+              ? cutLine(
+                  'idle',
+                  solo
+                    ? t('pane.idleSolo')
+                    : tn('pane.idle', idle.length, {
+                        names: idle
+                          .map(n =>
+                            n.sessionId === me ? t('pane.idleHere', { project: n.project }) : n.project,
+                          )
+                          .sort((a, b) => a.localeCompare(b))
+                          .join(', '),
+                      }),
+                  { dimColor: true },
+                )
+              : null}
           </Box>
         </Box>
       ) : null}
@@ -1731,7 +1753,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                   `now:${f.session.id}`,
                   solo
                     ? t('pane.nowItemSolo', { now: f.now ?? '' })
-                    : t('pane.nowItem', { project: sessionName(f), now: f.now ?? '' }),
+                    : t('pane.nowItem', { project: nameOf(f), now: f.now ?? '' }),
                   {},
                 ),
               )}

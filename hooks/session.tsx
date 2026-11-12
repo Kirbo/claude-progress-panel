@@ -324,6 +324,45 @@ export function sessionName(file: SessionFile): string {
   return file.session.title || file.session.project
 }
 
+/**
+ * A session's name among the others: its own, and — when another OPEN session carries the same
+ * name (two sessions in one repo) — a number after it, by the order they started (`app`, `app #2`).
+ * Without it the two were one name in Now, in Needs you and in their headers. An ended session
+ * takes no number: "ended …" already tells it apart.
+ */
+export function nameIn(all: Loaded, file: SessionFile): string {
+  const name = sessionName(file)
+  if (file.session.endedAt !== null) return name
+  const twins = Object.values(all)
+    .map(s => s.file)
+    .filter(f => f.session.endedAt === null && !isBlank(f) && sessionName(f) === name)
+    .sort(
+      (a, b) =>
+        Date.parse(a.session.startedAt) - Date.parse(b.session.startedAt) ||
+        (a.session.id < b.session.id ? -1 : 1),
+    )
+  const at = twins.findIndex(f => f.session.id === file.session.id)
+  return at > 0 ? t('pane.sessionTwin', { name, n: at + 1 }) : name
+}
+
+/**
+ * The sessions this pane is about, by its scope setting: all of them, the ones in this session's
+ * repo, or this one alone. Everything the pane says — its list, Needs you, the toasts, the status
+ * line — is about these only: a pane set to one session is not interrupted by the others' asks.
+ */
+export async function scoped($: EngineInterface, all: Loaded, me: string): Promise<Loaded> {
+  const scope = self.settings.paneScope
+  if (scope === 'all') return all
+  const keep = (file: SessionFile, project: string) =>
+    file.session.id === me || (scope === 'repo' && file.session.project === project)
+  const project =
+    scope === 'session'
+      ? ''
+      : (all[me]?.file.session.project ??
+        baseName((await $.session.repo().catch(() => null))?.root ?? (await $.session.cwd())))
+  return Object.fromEntries(Object.entries(all).filter(([, s]) => keep(s.file, project)))
+}
+
 /** Whether `me` is the only open session: then nothing needs its name, and "here" goes without saying. */
 export function isSolo(all: Loaded, me: string): boolean {
   return Object.values(all).every(s => s.file.session.endedAt !== null || s.file.session.id === me)
@@ -336,37 +375,56 @@ export function askLine(file: SessionFile, text: string, isHere: boolean): strin
   return reply ? t(isHere ? 'need.replyHere' : 'need.reply', { text, reply }) : text
 }
 
+/** What waits on the person: an agent's ask, a permission prompt — or only a session whose turn
+ *  ended (`idle`: nothing is asked, it waits for the next message). */
+export type Need = {
+  sessionId: string
+  project: string
+  item: string
+  key: string
+  kind: 'ask' | 'permission' | 'idle'
+}
+
 /** Every open session's asks as `me`'s pane words them. `key` holds the ask as stored, so it is the
- *  same ask in every pane. */
-export function liveNeeds(all: Loaded, me: string): { project: string; item: string; key: string }[] {
+ *  same ask in every pane. What is really asked comes first (by the newest session): a session that
+ *  only finished its turn never stands before an ask or a permission prompt. */
+export function liveNeeds(all: Loaded, me: string): Need[] {
   const solo = isSolo(all, me)
-  return Object.values(all)
+  const needs = Object.values(all)
     .filter(s => s.file.session.endedAt === null)
     .sort((a, b) => Date.parse(b.file.updatedAt) - Date.parse(a.file.updatedAt))
     .flatMap(s => {
       const isHere = s.file.session.id === me && !solo
       return [
-        ...s.file.needsYou.map(text => ({ text, item: askLine(s.file, text, isHere) })),
+        ...s.file.needsYou.map(text => ({ text, kind: 'ask' as const, item: askLine(s.file, text, isHere) })),
         // The idle wait is worded per pane too; a permission keeps the words it was raised with.
         ...(s.file.autoNeeds ?? []).map(a => ({
           text: a.text,
+          kind: a.kind,
           item: a.kind === 'idle' ? t(isHere ? 'auto.idleHere' : 'auto.idle') : a.text,
         })),
       ].map(n => ({
-        project: sessionName(s.file),
+        sessionId: s.file.session.id,
+        project: nameIn(all, s.file),
         item: n.item,
+        kind: n.kind,
         key: `${s.file.session.id}\u0000${n.text}`,
       }))
     })
+  return [...needs.filter(n => n.kind !== 'idle'), ...needs.filter(n => n.kind === 'idle')]
 }
 
 // The status line, and a toast for each ask another session raised since the last look.
-export async function announce($: EngineInterface, all: Loaded, me: string): Promise<void> {
+export async function announce($: EngineInterface, known: Loaded, me: string): Promise<void> {
+  const all = await scoped($, known, me)
   const needs = liveNeeds(all, me)
   // The status line names the ask itself (cut with "…"), never only a count — and the session it
-  // comes from only while more than one is open.
+  // comes from only while more than one is open. Sessions that only finished a turn are counted
+  // only when nothing is asked: "3 need you" means three things to answer.
   const first = needs[0]
-  const one = needs.length === 1
+  const asked = needs.filter(n => n.kind !== 'idle').length
+  const count = asked > 0 ? asked : needs.length
+  const one = count === 1
   const statusKey = isSolo(all, me)
     ? one
       ? 'status.needsYouOneSolo'
@@ -377,7 +435,7 @@ export async function announce($: EngineInterface, all: Loaded, me: string): Pro
   await $.ui.status(
     first
       ? t(statusKey, {
-          count: needs.length,
+          count,
           project: first.project,
           item: cutText(first.item, 60),
         })
@@ -385,6 +443,8 @@ export async function announce($: EngineInterface, all: Loaded, me: string): Pro
   )
   if (self.seenNeeds) {
     for (const n of needs) {
+      // A turn that ended is a state, not an ask: the pane and the status line show it, no toast.
+      if (n.kind === 'idle') continue
       if (!self.seenNeeds.has(n.key) && !n.key.startsWith(`${me}\u0000`) && self.settings.toastNeedsYou) {
         const text = t('toast.needsYou', { project: n.project, item: n.item })
         await $.ui.toast(text)
