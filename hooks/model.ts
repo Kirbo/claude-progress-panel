@@ -207,9 +207,20 @@ export function applyUpdate(
     const old = tasks[at] as Task
     const next = status ?? old.status
     const doneAt = isClosed(next) ? (isClosed(old.status) ? old.doneAt : nowIso) : null
-    const { detail: _d, steps: _s, repo: _r, agent: _a, pipeline: _p, unconfirmed: _u, ...kept } = old
+    const {
+      detail: _d,
+      steps: _s,
+      repo: _r,
+      agent: _a,
+      pipeline: _p,
+      unconfirmed: _u,
+      stopAsked,
+      ...kept
+    } = old
     tasks[at] = {
       ...kept,
+      // Asked about at the end of a turn: once per spell of `doing` — it holds while the task stays so.
+      ...(stopAsked && old.status === 'doing' && next === 'doing' ? { stopAsked } : {}),
       ...extras(old, patch, i, errors, nowIso),
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.note !== undefined ? { note: patch.note } : {}),
@@ -1644,12 +1655,15 @@ export function markUnconfirmed(file: SessionFile, ids: readonly string[]): Sess
   }
 }
 
-/** One signature per list (ids and the state they were seen in): the same list never blocks twice. */
-export function listSignature(tasks: readonly Task[]): string {
-  return tasks
-    .map(t => `${t.id}@${t.updatedAt}`)
-    .sort()
-    .join('|')
+/** The end-of-turn check stopped a turn on these: each is asked about once per spell of `doing`
+ *  (`stopAsked` holds until the task leaves `doing`), however often it is touched in between. Their
+ *  `updatedAt` stays: being asked is no update. */
+export function markStopAsked(file: SessionFile, ids: readonly string[]): SessionFile {
+  if (!file.tasks.some(t => ids.includes(t.id) && !t.stopAsked)) return file
+  return {
+    ...file,
+    tasks: file.tasks.map(t => (ids.includes(t.id) ? { ...t, stopAsked: true as const } : t)),
+  }
 }
 
 // --- Agents under their repo (0.23.2) -------------------------------------------------------------

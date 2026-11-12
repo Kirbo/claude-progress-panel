@@ -79,6 +79,9 @@ export type Task = {
   /** Still open, not updated in a turn that ended past the end-of-turn check (0.23.2): the pane
    *  marks it, until the next update to the task. */
   unconfirmed?: true
+  /** The end-of-turn check stopped a turn on it in this spell of `doing`: it is not asked about
+   *  again until it has left `doing` and come back. Absent in older files (= not asked yet). */
+  stopAsked?: true
   /** Made by the plugin for a subagent that reported while working on no task (0.23.0): replaced
    *  as soon as the coordinator links a task of its own to that agent. */
   auto?: true

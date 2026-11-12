@@ -304,10 +304,8 @@ export const self: {
    *  every change). */
   sessionToggles: Toggles | undefined
   /** A task never stays in a state that is no longer true (0.23.2): when this turn began (the
-   *  person's prompt), and the last list the end-of-turn check stopped on (the same list never
-   *  stops a turn twice). */
+   *  person's prompt). */
   turnStartMs: number | undefined
-  lastBlocked: string
   /** The switches as the agent last heard of them, while a change since is not handed over yet
    *  (undefined: nothing owed), and the options to read them with then. */
   toldSwitches: Effective | undefined
@@ -342,7 +340,6 @@ export const self: {
   settings: readSettings({}),
   sessionToggles: undefined,
   turnStartMs: undefined,
-  lastBlocked: '',
   toldSwitches: undefined,
   togglesOptions: undefined,
   ownProcess: undefined,

@@ -5407,8 +5407,33 @@ test('a `doing` task untouched this turn stops the turn once — never twice for
     ((await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }).block,
   ).toBeUndefined()
   // An update in the turn confirms it: the mark goes, and the stop passes.
-  await update($, { tasks: [{ id: 'w', status: 'done' }] })
+  await update($, { tasks: [{ id: 'w', note: 'still writing' }] })
   expect(read(disk, `${DIR}/s-me.json`).tasks.find(t => t.id === 'w')?.unconfirmed).toBeUndefined()
+  // The task's age, set by hand (never minutes of simulated ticks): last updated `min` minutes ago.
+  const aged = (min: number) => {
+    const file = read(disk, `${DIR}/s-me.json`)
+    const at = new Date(T0 - min * 60_000).toISOString()
+    put(disk, `${DIR}/s-me.json`, {
+      ...file,
+      tasks: file.tasks.map(t => (t.id === 'w' ? { ...t, updatedAt: at } : t)),
+    })
+  }
+  const stop = async () => {
+    await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)
+    return ((await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }).block
+  }
+  // Still `doing` many turns later, touched in between (long background work): it was asked about
+  // once in this spell of `doing` — a later turn that leaves it untouched passes, marked.
+  aged(12)
+  expect(await stop()).toBeUndefined()
+  expect(read(disk, `${DIR}/s-me.json`).tasks.find(t => t.id === 'w')?.unconfirmed).toBe(true)
+  // It leaves `doing` and comes back: a new spell, asked about once again.
+  await update($, { tasks: [{ id: 'w', status: 'blocked', note: 'waiting' }] })
+  await update($, { tasks: [{ id: 'w', status: 'doing' }] })
+  aged(12)
+  expect(await stop()).toContain('w "Write docs"')
+  aged(12)
+  expect(await stop()).toBeUndefined()
 })
 
 test(

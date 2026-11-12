@@ -250,8 +250,9 @@ folded "Finished" row.
   `pipeline` field.
 - **The end of a turn checks.** A `doing` task not touched during the turn (and for 10 min), with no
   running pipeline or agent behind it, stops the turn once with the list, so the agent updates each
-  to its true state. The same list never stops a turn twice — the next stop passes and those tasks
-  are marked **unconfirmed** in the pane until their next update.
+  to its true state. A task stops a turn once for as long as it stays `doing` — the next stop
+  passes, and a later turn that leaves it untouched again marks it **unconfirmed** in the pane
+  until its next update instead of asking again.
 - **Staleness nudge.** An open task untouched for 20 min is asked about once with your next prompt
   ("has been blocked for 40 min with no update — is that still true?"), never again in that state.
 

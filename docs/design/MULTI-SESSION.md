@@ -649,9 +649,13 @@ and pushed, only to wait for CI. Three mechanisms, each closing a path:
    through `pendingNotes`. The pane shows the pipeline's state on the task.
 2. **End of turn** (`classic.Stop`, main loop): `doing` tasks with `updatedAt` before the turn's start
    (the last UserPromptSubmit) and ≥ 10 min old, nothing tracking them (a running linked pipeline or
-   agent), return `{ block }` once with the list. No loop: `stop_hook_active` (the stop right after a
-   block) or the same list signature (`listSignature`: ids + `updatedAt`) passes and marks them
-   `unconfirmed` (cleared by their next update). `todo` (not started) and `blocked` (its reason
+   agent), return `{ block }` once with the list. A task is asked about **once per spell of
+   `doing`**: the block marks it `stopAsked` on the task itself (kept across touches and reloads,
+   dropped when the task leaves `doing`), and a turn that finds only tasks already asked about —
+   or `stop_hook_active`, the stop right after a block — passes and marks them `unconfirmed`
+   (cleared by their next update). Before, "once" was one list signature (ids + `updatedAt`) held
+   in memory: a long `doing` task that the agent touched and left `doing` (background work) drew a
+   new block at every later turn, and a reload forgot the signature. `todo` (not started) and `blocked` (its reason
    given) never block a turn — they get (3). Off when reporting or tasks is off. Subagents: an agent
    that stops ends its open steps `unfinished` (0.23.0), so they need no stop check.
 3. **Staleness nudge** (UserPromptSubmit): open tasks untouched ≥ 20 min, untracked, get one

@@ -29,7 +29,7 @@ import {
   isSessionId,
   linkedAgent,
   linkPushedPipeline,
-  listSignature,
+  markStopAsked,
   markUnconfirmed,
   mergeScan,
   needsLivenessCheck,
@@ -156,9 +156,11 @@ export async function staleNudges($: EngineInterface, options: PluginOptions): P
 }
 
 // The end of the turn: a `doing` task untouched this turn (and for 10 min), nothing tracking it,
-// stops the turn ONCE with the list — the agent updates each to its true state. The same list never
-// stops twice (a second stop passes and the tasks are marked unconfirmed in the pane), so it can
-// never loop.
+// stops the turn ONCE with the list — the agent updates each to its true state. A task stops a turn
+// once per spell of `doing` (`stopAsked`, kept on the task until it leaves `doing`): one the agent
+// touched and left `doing` — long background work — is not asked about again at every later turn.
+// A turn that ends past the check (the stop right after a block, or nothing new to ask about) marks
+// the untouched tasks unconfirmed in the pane, so it can never loop.
 export async function endOfTurnCheck(
   $: EngineInterface,
   options: PluginOptions,
@@ -168,29 +170,26 @@ export async function endOfTurnCheck(
     return undefined
   const dir = await progressDir($, options)
   if (!dir) return undefined
-  const own = await ownFile($, dir)
+  const turnStartMs = self.turnStartMs
   const nowMs = await $.clock.now()
-  const list = untouchedDoing(own, self.turnStartMs, nowMs, UNTOUCHED_AFTER_MS, task => isTracked(own, task))
-  if (list.length === 0) {
-    self.lastBlocked = ''
-    return undefined
-  }
-  const signature = listSignature(list)
   const again = fields(e).stop_hook_active === true
-  if (again || signature === self.lastBlocked) {
-    await exclusive(async () => {
-      const file = await ownFile($, dir)
-      const marked = markUnconfirmed(
-        file,
-        list.map(task => task.id),
-      )
-      if (marked !== file) await save($, dir, marked)
-    })
-    return undefined
-  }
-  self.lastBlocked = signature
+  // Read and marked under the one lock: what is asked about is what is marked asked.
+  const asked = await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const list = untouchedDoing(own, turnStartMs, nowMs, UNTOUCHED_AFTER_MS, task => isTracked(own, task))
+    if (list.length === 0) return []
+    const fresh = again ? [] : list.filter(task => !task.stopAsked)
+    const ask = fresh.map(task => task.id)
+    const marked = markUnconfirmed(
+      markStopAsked(own, ask),
+      list.filter(task => !ask.includes(task.id)).map(task => task.id),
+    )
+    if (marked !== own) await save($, dir, marked)
+    return fresh
+  })
+  if (asked.length === 0) return undefined
   return t('stop.untouched', {
-    list: list
+    list: asked
       .map(task =>
         t('stop.untouchedLine', { id: task.id, task: task.title, min: minutesSince(task.updatedAt, nowMs) }),
       )

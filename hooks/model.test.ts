@@ -28,7 +28,7 @@ import {
   isClosed,
   isGenericPermission,
   linkPushedPipeline,
-  listSignature,
+  markStopAsked,
   markUnconfirmed,
   matchesTask,
   mergeScan,
@@ -1080,7 +1080,7 @@ test('stale tasks: open, untouched for the window, nothing tracking them, asked 
   expect(staleTasks(file, Date.parse(at(10)), 20 * 60_000, new Map(), tracked)).toEqual([])
 })
 
-test('the end-of-turn list: `doing` only, untouched since the turn began and for 10 min; a signature per list', () => {
+test('the end-of-turn list: `doing` only, untouched since the turn began and for 10 min; asked once per spell', () => {
   const file = withTasks([
     { id: 'd', title: 'D', status: 'doing' },
     { id: 'b', title: 'B', status: 'blocked' },
@@ -1095,7 +1095,17 @@ test('the end-of-turn list: `doing` only, untouched since the turn began and for
   )
   // Tracked (a running pipeline / agent): not listed.
   expect(untouchedDoing(file, Date.parse(at(20)), Date.parse(at(21)), 10 * 60_000, () => true)).toEqual([])
-  expect(listSignature(list)).toBe(`d@${at(0)}`)
+  // Asked about once per spell of `doing`: the mark survives a touch, and goes when it leaves `doing`.
+  const asked = markStopAsked(file, ['d'])
+  expect(asked.tasks[0]).toMatchObject({ stopAsked: true, updatedAt: at(0) })
+  expect(markStopAsked(asked, ['d'])).toBe(asked)
+  const still = applyUpdate(asked, { tasks: [{ id: 'd', note: 'still on it' }] }, at(5)).file
+  expect(still.tasks[0]?.stopAsked).toBe(true)
+  const left = applyUpdate(still, { tasks: [{ id: 'd', status: 'blocked' }] }, at(6)).file
+  expect(left.tasks[0]?.stopAsked).toBeUndefined()
+  expect(
+    applyUpdate(left, { tasks: [{ id: 'd', status: 'doing' }] }, at(7)).file.tasks[0]?.stopAsked,
+  ).toBeUndefined()
   const marked = markUnconfirmed(file, ['d'])
   expect(marked.tasks[0]?.unconfirmed).toBe(true)
   expect(markUnconfirmed(marked, ['d'])).toBe(marked)
