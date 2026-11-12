@@ -169,6 +169,14 @@ export function waitReasons(file: SessionFile, isHere: boolean) {
   }
 }
 
+/** How the line beneath a row reads: why something is blocked or failed, and what waits on the
+ *  person, is the text that matters most on the pane — plain (a wait in the Needs-you colour),
+ *  never dimmed like a note on work that goes on or was set aside. */
+export function reasonStyle(status: Status, waits: boolean): { dimColor?: true; color?: string } {
+  if (waits) return { color: tint(self.settings.palette, 'magenta') }
+  return status === 'blocked' || status === 'failed' ? {} : { dimColor: true }
+}
+
 export function reasonOf(item: { status: Status; note?: string }): string | undefined {
   if (item.note) return item.note
   return item.status === 'unfinished' ? t('pane.unfinishedReason') : undefined
@@ -850,7 +858,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     const reason = wait ?? reasonOf(task)
     const note = reason ? (
       <Box paddingLeft={INDENT}>
-        <Text dimColor>{hl(reason)}</Text>
+        <Text {...reasonStyle(task.status, wait !== undefined)}>{hl(reason)}</Text>
       </Box>
     ) : null
     // The pipeline it waits on (0.23.2): its state here — the task closes when it finishes.
@@ -1010,7 +1018,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                     </Box>
                     {why ? (
                       <Box paddingLeft={INDENT}>
-                        <Text dimColor>{hl(why)}</Text>
+                        <Text {...reasonStyle(step.status, false)}>{hl(why)}</Text>
                       </Box>
                     ) : null}
                   </Box>
@@ -1063,7 +1071,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         </Box>
         {why ? (
           <Box paddingLeft={INDENT}>
-            <Text dimColor>{hl(why)}</Text>
+            <Text {...reasonStyle(task.status, false)}>{hl(why)}</Text>
           </Box>
         ) : null}
       </Box>
@@ -1117,7 +1125,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             </Box>
             {why ? (
               <Box paddingLeft={INDENT}>
-                <Text dimColor>{why}</Text>
+                <Text {...reasonStyle(step.status, agentWait !== undefined)}>{why}</Text>
               </Box>
             ) : null}
           </Box>

@@ -242,7 +242,9 @@ Status values: `todo`, `doing`, `blocked`, `done`, `skipped`, `failed` (0.23.0),
 own `unfinished` (0.23.0: never accepted from a report). Closed = done / skipped / failed /
 unfinished. Each row's `note` shows beneath it (a step's too, since 0.23.0 — `Step.note`): the
 outcome of a done one, WHY for blocked (⚠ magenta), skipped (– dim), failed (✗ red) — the reason
-is never folded away. A subagent that stops for good (SubagentStop or the list sync, not a
+is never folded away, and never dimmed where it matters most: why a row is blocked or failed
+reads as plain text, what waits on the person in the Needs-you colour (`reasonStyle`); only a
+note on work that goes on, is done or was set aside is dim. A subagent that stops for good (SubagentStop or the list sync, not a
 background-work pause) turns its `doing` steps `unfinished` (– dim, "agent stopped before
 finishing" unless noted); a resume turns them back to `doing`. A finished subagent folds open
 under Done → Agents to the same step list, without ✕. The plugin stamps `createdAt`,

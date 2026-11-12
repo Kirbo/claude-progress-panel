@@ -1369,8 +1369,11 @@ test('every session shows: newest update, needs-you from all, one now line each,
   expect(lines).toContain('⚠ Deploy')
   expect((await ui.find({ type: 'Text', text: '⚠ Deploy' }))?.props.color).toBe('magenta')
   expect(lines).toContain('waits for approval')
+  // Why it is blocked is what the person must read: never dimmed.
+  expect((await exactText(ui, 'waits for approval'))?.props.dimColor).toBeFalsy()
   expect(lines).toContain('● Build')
-  expect(lines[0]).toMatch(/^updated \d\d:\d\d · app · checked \d\d:\d\d:\d\d$/)
+  // No clock of the last check while the checks run: only a check that stopped is said.
+  expect(lines[0]).toMatch(/^updated \d\d:\d\d · app$/)
   // The status line names the ask itself, never only a count.
   expect(world.status.at(-1)).toBe('⚠ 2 need you — app: Push OK')
   expect(await ui.find({ type: 'Button', key: 'group:s-me' })).toBeTruthy()
