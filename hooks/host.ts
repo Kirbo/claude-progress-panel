@@ -74,9 +74,18 @@ export async function processAlive(
   return !pidStart || !startedNow || startedNow === pidStart
 }
 
-// The plugin API has no file delete: the platform's own command removes the file.
+/** A path `cmd /c del` would read as more than a path: `cmd` parses its line again, so `&`, `|`,
+ *  `<`, `>`, `^`, `%`, `!`, a quote or a line break in it ends the `del` or expands inside it. */
+export function isUnsafeForCmd(path: string): boolean {
+  return /[&|<>^%!"\r\n]/.test(path)
+}
+
+// The plugin API has no file delete: the platform's own command removes the file. On Windows a path
+// `cmd` would not read as one path (`isUnsafeForCmd` — a profile folder named "R&D") is never handed
+// to it: the file stays (an ended session's row comes back at the next scan), nothing else runs.
 export async function deleteFile($: EngineInterface, path: string): Promise<void> {
   const isWindows = (await $.env.get('OS')) === 'Windows_NT'
+  if (isWindows && isUnsafeForCmd(path)) return
   const argv = isWindows ? ['cmd', '/c', 'del', '/q', path.replace(/\//g, '\\')] : ['rm', '-f', path]
   await $.process.run(argv).catch(() => undefined)
 }

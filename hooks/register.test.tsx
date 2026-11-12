@@ -2114,6 +2114,23 @@ test('an ended session can be forgotten with its ✕; Windows deletes with del',
   await ui.unmount()
 })
 
+test('Windows never hands cmd a path it would read as more than a path: the file stays', async ($, on) => {
+  // `cmd /c del <path>`: cmd reads the line again, so `&` in a profile folder's name ("R&D") would
+  // end the `del` there and run the rest as a command of its own.
+  const disk = makeDisk()
+  const ended = other('s-old', 'old', T0 - HOUR, { now: 'Was here' })
+  ended.session.endedAt = new Date(T0 - HOUR / 2).toISOString()
+  put(disk, '/Users/R&D/.claude/progress/s-old.json', ended)
+  const world = engine(on, disk, { env: { USERPROFILE: '/Users/R&D', OS: 'Windows_NT' } })
+  await start($)
+
+  const ui = await pane($)
+  await ui.press({ key: 'forget:s-old' })
+  expect(world.runs.filter(argv => argv[0] === 'cmd')).toEqual([])
+  expect(disk.files.has('/Users/R&D/.claude/progress/s-old.json')).toBe(true)
+  await ui.unmount()
+})
+
 test('my own asks never toast; skipped tasks list under Done with a dash', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
