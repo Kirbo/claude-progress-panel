@@ -1,6 +1,6 @@
 import type { TestBody } from 'claude-code/testing'
 import { expect, mock, test } from 'claude-code/testing'
-
+import { en } from '../locales/en'
 import { STILL_RUNS, WHO_AM_I } from './host'
 import type { SessionFile } from './model'
 import { applyUpdate, formatTime, newSession, REMOVAL_DUE_MS, stepCounts, UNDO_MS } from './model'
@@ -9,6 +9,8 @@ import type { Pipeline } from './pipelines'
 import { INPUT_SCHEMA, schemaProblems } from './schema'
 
 type On = Parameters<TestBody>[1]
+const TOOL_DESCRIPTION = en['tool.description']
+const SUBAGENT_RULE_TEXT = en['prompt.subagent']
 type $Test = Parameters<TestBody>[0]
 
 const T0 = Date.UTC(2026, 10, 6, 20, 0, 0)
@@ -3801,6 +3803,55 @@ test('/progress doctor names what is wrong with the setup, with its fix — and 
   expect(after).toContain('✓ Forge CLI: glab reads group/app on gitlab.com')
   expect(after).toContain('✓ Git remote: git reaches')
   expect(after).not.toContain('✗')
+})
+
+test('/progress doctor says what the plugin costs the agent: in every request, and handed over so far', async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  const doctor = async () =>
+    ((await $.command.run({ command: 'progress', args: 'doctor' } as never)) as { text: string }).text
+  const cost = (text: string) => text.split('\n').find(line => line.includes('Cost to the agent')) ?? ''
+  // Before any prompt was composed: the tool and its schema ride every request; no rule yet.
+  const tool = Math.round((JSON.stringify(INPUT_SCHEMA).length + TOOL_DESCRIPTION.length) / 4)
+  expect(cost(await doctor())).toBe(
+    `✓ Cost to the agent: about ${tool} tokens in every request (the tool and its schema ~${tool}, the reporting rule ~0); handed over since the plugin loaded: nothing yet — estimates, 4 characters to a token`,
+  )
+  const composed = await $.prompt.compose({
+    model: 'claude-opus-5-5',
+    promptModel: 'claude-opus-5-5',
+    surfaces: ['terminal'],
+    tools: ['Bash', TOOL],
+    outputStyle: null,
+    traits: ['skills'],
+  })
+  const ruleText = composed.sections.find(x => x.id === 'progress-panel:reporting')?.text ?? ''
+  const rule = Math.round(ruleText.length / 4)
+  expect(rule).toBeGreaterThan(100)
+  // Two answers, a note with a tool call's result, and the rule appended to an Agent call's prompt.
+  const first = (await update($, { now: 'x', tasks: [{ title: 'Write the docs', status: 'doing' }] })) as {
+    result: string
+  }
+  const second = (await update($, { tasks: [{ id: 't1', status: 'blocked' }] })) as { result: string }
+  const answers = Math.round((first.result.length + second.result.length) / 4)
+  const spawned = (await $.tool.call({
+    tool: 'Agent',
+    description: 'Lane A',
+    prompt: 'Do the thing.',
+    subagent_type: 'general-purpose',
+  } as never)) as unknown
+  expect(spawned).toBeDefined()
+  const noted = (await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: {},
+    tool_response: {},
+    tool_use_id: 'x1',
+  } as never)) as { additionalContext?: string[] }
+  const notes = Math.round((noted.additionalContext ?? []).join('').length / 4)
+  expect(notes).toBeGreaterThan(0)
+  const prompts = Math.round(('\n\n'.length + SUBAGENT_RULE_TEXT.length) / 4)
+  expect(cost(await doctor())).toBe(
+    `✓ Cost to the agent: about ${tool + rule} tokens in every request (the tool and its schema ~${tool}, the reporting rule ~${rule}); handed over since the plugin loaded: about ${answers + notes + prompts} tokens (2 tool answers ~${answers}, notes ~${notes}, subagent prompts ~${prompts}) — estimates, 4 characters to a token`,
+  )
 })
 
 test('/progress doctor outside a repository checks only what applies; a missing CLI says to install it', async ($, on) => {

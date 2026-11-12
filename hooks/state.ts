@@ -323,6 +323,11 @@ export const self: {
   /** The jobs of a finished run of a watch by commit (`<key>#<run id>`), as last read: a run that
    *  is still in that state is not asked for its jobs again. Memory only — a reload asks once more. */
   runJobs: Map<string, { state: JobState; jobs: PipelineJob[] }>
+  /** What this copy has put in front of the agent so far, in characters (`/progress doctor` says it
+   *  as tokens): the rule as last composed into a system prompt (it rides every request), the tool's
+   *  answers and how many, the notes handed over with hook results, and the rule appended to Agent
+   *  calls' prompts. Memory only: a reload starts it over. */
+  cost: { ruleChars: number; answers: number; answerChars: number; noteChars: number; promptChars: number }
 } = {
   manifest: undefined,
   seenNeeds: undefined,
@@ -346,6 +351,7 @@ export const self: {
   ownUnreadable: undefined,
   teaLogins: undefined,
   runJobs: new Map(),
+  cost: { ruleChars: 0, answers: 0, answerChars: 0, noteChars: 0, promptChars: 0 },
 }
 
 // The conversation ended but the process goes on under another session id (`/clear`, a resume in
@@ -365,6 +371,7 @@ export function forgetSessionMemory(): void {
   self.ruleDeferred = false
   self.freshStart = false
   self.ownUnreadable = undefined
+  self.cost = { ruleChars: self.cost.ruleChars, answers: 0, answerChars: 0, noteChars: 0, promptChars: 0 }
   pendingNotes.length = 0
   finishedLinks.length = 0
   self.owes = undefined

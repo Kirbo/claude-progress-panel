@@ -18,10 +18,12 @@ import { renderPane } from './pane'
 import { INPUT_SCHEMA } from './schema'
 import type { ToolInput } from './session'
 import {
+  answered,
   autoLink,
   callSummary,
   checkRelease,
   clearAutoNeeds,
+  countNotes,
   detached,
   doctor,
   endOfTurnCheck,
@@ -115,9 +117,9 @@ export const register: Register = (on, options) => {
     if (!e.tools.includes(TOOL_ID) || e.traits.includes('teammate')) return composed
     if (!isOn(options, 'reporting')) return composed
     self.ruleComposed = true
-    return {
-      sections: [...composed.sections, { id: REPORTING_SECTION, text: ruleText(options), scope: 'session' }],
-    }
+    const text = ruleText(options)
+    self.cost.ruleChars = text.length
+    return { sections: [...composed.sections, { id: REPORTING_SECTION, text, scope: 'session' }] }
   })
 
   // The session's name (the plugin API has none): SessionStart carries a resumed session's title,
@@ -136,28 +138,37 @@ export const register: Register = (on, options) => {
     if (start.source !== 'compact' || start.agent_id || self.ruleComposed || !isOn(options, 'reporting'))
       return result
     self.ruleSent = true
-    return { ...result, additionalContext: [...(result.additionalContext ?? []), ruleText(options)] }
+    return countNotes(result, {
+      ...result,
+      additionalContext: [...(result.additionalContext ?? []), ruleText(options)],
+    })
   }).catch(() => undefined)
   // A subagent starts: the subagent part of the rule, once (its tool calls then carry none).
   on('classic.SubagentStart', async ($, e, next) => {
     const result = await next(e)
     const id = fields(e).agent_id
-    return typeof id === 'string' && id ? withSubagentRule($, options, id, result, 'start') : result
+    return typeof id === 'string' && id
+      ? countNotes(result, await withSubagentRule($, options, id, result, 'start'))
+      : result
   }).catch(() => undefined) // a failure here never holds a subagent up: the hook counts as absent
   on('classic.UserPromptSubmit', async ($, e, next) => {
     // The person answered: every automatic Needs-you item goes.
     await clearAutoNeeds($, options, () => true).catch(() => undefined)
     await noteTitle($, options, fields(e).session_title)
     const stale = await staleNudges($, options).catch(() => [] as string[])
-    const result = withPendingNotes(await next(e))
+    const beneath = await next(e)
+    const result = withPendingNotes(beneath)
     const nudged =
       stale.length > 0
         ? { ...result, additionalContext: [...(result.additionalContext ?? []), ...stale] }
         : result
-    return withReportingNudge(
-      $,
-      options,
-      isOn(options, 'reporting') ? await withOwedNotices($, options, nudged) : nudged,
+    return countNotes(
+      beneath,
+      await withReportingNudge(
+        $,
+        options,
+        isOn(options, 'reporting') ? await withOwedNotices($, options, nudged) : nudged,
+      ),
     )
   }).catch(() => undefined)
   // After every main-loop tool call: a task the person removed reaches the agent at its next step
@@ -201,7 +212,8 @@ export const register: Register = (on, options) => {
     const pushed = isOn(options, 'pipelines')
       ? await watchPushes($, options, e, pushNotes).catch(() => [] as string[])
       : []
-    const result = withPushNote(pushed, await next(e), pushNotes)
+    const beneath = await next(e)
+    const result = withPushNote(pushed, beneath, pushNotes)
     const agentId = fields(e).agent_id
     if (typeof agentId === 'string' && agentId) {
       await reopenIfActive($, options, agentId).catch(() => undefined)
@@ -209,12 +221,12 @@ export const register: Register = (on, options) => {
       await noteAgentActivity($, options, e).catch(() => undefined)
       // What the person removed of ITS work (a step, all of it) is told to it, not the main loop.
       const told = await withOwedNotices($, options, result, agentId)
-      return withSubagentRule($, options, agentId, told, 'call')
+      return countNotes(beneath, await withSubagentRule($, options, agentId, told, 'call'))
     }
-    if (agentId) return result
+    if (agentId) return countNotes(beneath, result)
     pendingNotes.push(...takeFinishedLinks(), ...takeDeferredRule(options))
     const noted = withPendingNotes(result)
-    return isOn(options, 'reporting') ? withOwedNotices($, options, noted) : noted
+    return countNotes(beneath, isOn(options, 'reporting') ? await withOwedNotices($, options, noted) : noted)
   }).catch(() => undefined)
 
   // Claude Code waits on the person: a permission prompt or the idle prompt becomes a Needs-you item.
@@ -255,6 +267,7 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     if (result.block) return result
     const block = await endOfTurnCheck($, options, e).catch(() => undefined)
+    if (block) self.cost.noteChars += block.length
     return block ? { ...result, block } : result
   }).catch(() => undefined)
 
@@ -307,11 +320,11 @@ export const register: Register = (on, options) => {
     // One entry per session, kept by its main loop: a subagent's report would mix into it.
     // A subagent's report goes to ITS entry under the session (its steps, what it is on, its
     // estimate) — never the session's own tasks, which its coordinator keeps.
-    if (!isOn(options, 'reporting')) return { result: t('tool.reportingOff') }
+    if (!isOn(options, 'reporting')) return answered(t('tool.reportingOff'))
     const agentId = fields(e).agentId
     if (typeof agentId === 'string' && agentId) {
-      if (!isOn(options, 'agents')) return { result: t('tool.agentsOff') }
-      return { result: await runAgentUpdate($, options, agentId, e as unknown as ToolInput) }
+      if (!isOn(options, 'agents')) return answered(t('tool.agentsOff'))
+      return answered(await runAgentUpdate($, options, agentId, e as unknown as ToolInput))
     }
     const input = e as unknown as ToolInput
     // A switched-off part of the call is dropped, and the answer says so.
@@ -333,7 +346,7 @@ export const register: Register = (on, options) => {
       clearAgents: input.clearAgents,
       dismissAgents: input.dismissAgents,
     })
-    return { result: dropped.length ? `${dropped.join('\n')}\n${text}` : text }
+    return answered(dropped.length ? `${dropped.join('\n')}\n${text}` : text)
   }).catch(() => ({ result: t('tool.failed') }))
 
   // The transcript: a progress_update call is bookkeeping, not work — one quiet line instead of its

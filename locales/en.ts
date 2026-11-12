@@ -15,6 +15,14 @@ export const en = {
   'doctor.process.ok': 'pid {pid} on {host} — a session that dies without ending is noticed',
   'doctor.process.none':
     "not recorded (Claude Code's process could not be told for sure) — a session that dies without ending stays live until it is removed",
+  'doctor.cost': 'Cost to the agent',
+  'doctor.cost.detail':
+    'about {standing} tokens in every request (the tool and its schema ~{tool}, the reporting rule ~{rule}); handed over since the plugin loaded: {given} — estimates, 4 characters to a token',
+  'doctor.cost.nothing': 'nothing yet',
+  'doctor.cost.given':
+    'about {given} tokens ({answers} ~{answerTokens}, notes ~{notes}, subagent prompts ~{prompts})',
+  'doctor.cost.answers_one': '{count} tool answer',
+  'doctor.cost.answers_other': '{count} tool answers',
   'doctor.folder': 'Progress folder',
   'doctor.folder.none': 'no folder resolves (no home directory)',
   'doctor.folder.noneFix': 'set the progressDir option (claude plugin configure progress-panel)',

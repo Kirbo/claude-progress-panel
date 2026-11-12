@@ -56,6 +56,7 @@ import { baseName } from './paths'
 import type { WatchInput } from './pipelines'
 import { applyWatch, newlyWatched, oneLine } from './pipelines'
 import { ciProvider, parsePushes, pushedRef, resolvePath } from './push'
+import { INPUT_SCHEMA } from './schema'
 import { NUMBER_DEFAULTS } from './settings'
 import {
   ACTIVITY_EVERY_MS,
@@ -796,6 +797,7 @@ export function feedAgentPrompt(
   // Either way its prompt holds the rule: its subagent needs no copy as it starts.
   if (typeof e.description === 'string' && e.description.trim()) promptFed.add(e.description.trim())
   if (e.prompt.includes(rule)) return undefined
+  self.cost.promptChars += rule.length + 2
   return `${e.prompt}\n\n${rule}`
 }
 
@@ -1271,6 +1273,57 @@ export function toggleStatus(options: PluginOptions): string {
   return t('toggle.status', { list })
 }
 
+/** Characters as tokens, roughly (4 to a token): an estimate, and said to be one. */
+export function asTokens(chars: number): number {
+  return Math.round(chars / 4)
+}
+
+// A progress_update answer on its way to the agent: counted (`self.cost`), then the tool's result.
+export function answered(text: string): { result: string } {
+  self.cost.answers += 1
+  self.cost.answerChars += text.length
+  return { result: text }
+}
+
+// The notes a hook's result carries beyond what the hooks beneath it answered: counted as handed to
+// the agent (`self.cost`), and passed on unchanged.
+export function countNotes<R extends { additionalContext?: string[] }>(before: R, after: R): R {
+  const added = (after.additionalContext ?? []).slice(before.additionalContext?.length ?? 0)
+  for (const note of added) self.cost.noteChars += note.length
+  return after
+}
+
+// What the plugin costs the agent, for `/progress doctor`: what rides every request (the tool with
+// its schema, and the rule once a system prompt carries it), and what this copy has handed over
+// since it loaded (the tool's answers, notes, the rule on Agent calls' prompts).
+export function costCheck(): Check {
+  const tool = asTokens(t('tool.description').length + JSON.stringify(INPUT_SCHEMA).length)
+  const rule = asTokens(self.ruleComposed ? self.cost.ruleChars : 0)
+  const answers = asTokens(self.cost.answerChars)
+  const notes = asTokens(self.cost.noteChars)
+  const prompts = asTokens(self.cost.promptChars)
+  const given = answers + notes + prompts
+  return {
+    state: 'ok',
+    label: t('doctor.cost'),
+    detail: t('doctor.cost.detail', {
+      standing: tool + rule,
+      tool,
+      rule,
+      given:
+        given === 0
+          ? t('doctor.cost.nothing')
+          : t('doctor.cost.given', {
+              given,
+              answers: tn('doctor.cost.answers', self.cost.answers),
+              answerTokens: answers,
+              notes,
+              prompts,
+            }),
+    }),
+  }
+}
+
 // `/progress doctor`: one line per check, each failed one with its fix. Cheap and read-only: one
 // probe file in the progress folder, one API call through the forge's own CLI (installed, logged in
 // for the host AND able to read this project — a token scoped to other projects fails exactly
@@ -1295,6 +1348,7 @@ export async function doctor($: EngineInterface, options: PluginOptions): Promis
       ? { state: 'ok', label: t('doctor.process'), detail: t('doctor.process.ok', self.ownProcess) }
       : { state: 'skip', label: t('doctor.process'), detail: t('doctor.process.none') },
   )
+  checks.push(costCheck())
   const dir = await progressDir($, options)
   if (!dir) {
     checks.push({
