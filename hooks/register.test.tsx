@@ -640,6 +640,80 @@ test('a removal reaches the agent with the next prompt too, or in the next progr
   expect(JSON.stringify(answer)).toContain('t2 \\"Beta\\"')
 })
 
+const mainCall = async ($: $Test, id: string, agentId?: string) =>
+  (
+    (
+      (await $.classic.PostToolUse({
+        tool_name: 'Bash',
+        tool_input: {},
+        tool_response: {},
+        tool_use_id: id,
+        ...(agentId ? { agent_id: agentId } : {}),
+      } as never)) as { additionalContext?: string[] }
+    ).additionalContext ?? []
+  ).join(' ')
+
+test('a removal the agent was not told about yet is kept in the file: a reload in between loses no notice', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-o', description: 'Lane O', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, {
+    tasks: [{ title: 'Alpha' }, { title: 'Beta', steps: [{ title: 'one' }, { title: 'two' }] }],
+  })
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-o',
+    now: 'w',
+    tasks: [{ title: 'mine' }, { title: 'more' }],
+  } as never)
+  put(disk, `${DIR}/s-me.dismissed.json`, {
+    version: 1,
+    sessionId: 's-me',
+    entries: [],
+    cancelled: ['t1', 'step:t2:one', 'agent:sub-o:t1'],
+  })
+  // The refresh folds the removals in and saves them — with what each loop is still owed.
+  await world.clock.advance(2100)
+  const folded = read(disk, `${DIR}/s-me.json`)
+  expect(folded.cancelled).toEqual(['t1', 'step:t2:one', 'agent:sub-o:t1'])
+  expect(folded.owed).toEqual([
+    { removed: { id: 't1', title: 'Alpha' } },
+    { text: expect.stringContaining('step "one" of "Beta" was removed') },
+    { agentId: 'sub-o', text: expect.stringContaining('your step "mine" was removed') },
+  ])
+  // Each is handed to its own loop once, and leaves the file as it is.
+  expect(await mainCall($, 's1', 'sub-o')).toContain('your step "mine" was removed')
+  expect(read(disk, `${DIR}/s-me.json`).owed).toHaveLength(2)
+  const told = await mainCall($, 'm1')
+  expect(told).toContain('t1 "Alpha"')
+  expect(told).toContain('step "one" of "Beta" was removed')
+  expect(read(disk, `${DIR}/s-me.json`).owed).toBeUndefined()
+  expect(await mainCall($, 'm2')).toBe('')
+  expect(await mainCall($, 's2', 'sub-o')).toBe('')
+})
+
+test('a session that starts with a notice still owed in its file (the module was reloaded) hands it over', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  // As the copy before the reload left it: the removal folded in and saved, the agent not told yet.
+  const before = other('s-me', 'app', T0, { now: 'n', tasks: [{ title: 'Alpha', status: 'skipped' }] })
+  put(disk, `${DIR}/s-me.json`, {
+    ...before,
+    cancelled: ['t1'],
+    owed: [
+      { removed: { id: 't1', title: 'Alpha' } },
+      { agentId: 'sub-gone', text: 'for an agent that is gone' },
+      'junk',
+    ],
+  })
+  await start($)
+  expect(await mainCall($, 'm1')).toContain('t1 "Alpha"')
+  // …and what was owed to an agent that no longer runs goes with it.
+  expect(read(disk, `${DIR}/s-me.json`).owed).toBeUndefined()
+  expect(await mainCall($, 'm2')).toBe('')
+})
+
 test('a removal read before the session saved its fold is still told only once', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)

@@ -2,6 +2,7 @@
 // through `$.fs` — the only place a session file or a sidecar is written.
 
 import type { EngineInterface, PluginOptions } from 'claude-code'
+import type { Owed } from '../types'
 import type { CiMemory } from './cimemory'
 import { CI_MEMORY_FILE, parseCiMemory } from './cimemory'
 import { deleteFile } from './host'
@@ -18,22 +19,13 @@ import {
   parseSessionFile,
   parseSidecar,
   removalKey,
+  takeOwedFor,
+  withOwed,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
 import type { Pipeline } from './pipelines'
 import { overlayPipelines, visiblePipelines } from './pipelines'
-import {
-  firstFold,
-  OWN_UNREADABLE_MS,
-  optionString,
-  pendingAgentNotices,
-  pendingNotes,
-  pendingRemovals,
-  SIDECAR,
-  self,
-  sidecarChains,
-  updateSessions,
-} from './state'
+import { OWN_UNREADABLE_MS, optionString, SIDECAR, self, sidecarChains, updateSessions } from './state'
 
 export function exclusive<T>(work: () => Promise<T>): Promise<T> {
   const run = self.ownChain.then(work, work)
@@ -59,6 +51,7 @@ export async function nowIso($: EngineInterface): Promise<string> {
 export async function save($: EngineInterface, dir: string, file: SessionFile): Promise<void> {
   const path = `${dir}/${file.session.id}.json`
   await $.fs.write(path, `${JSON.stringify(file, null, 2)}\n`)
+  if (file.session.id === (await $.session.id())) self.owes = (file.owed?.length ?? 0) > 0
   const stat = await $.fs.stat(path).catch(() => undefined)
   await updateSessions($, all => ({
     ...all,
@@ -178,8 +171,11 @@ export async function ownFile($: EngineInterface, dir: string): Promise<SessionF
       await nowIso($),
       t('task.removedNote'),
     )
-    for (const task of folded.removed)
-      if (firstFold(`${id}:task:${task.id}`)) pendingRemovals.set(task.id, task.title)
+    // What the fold found new is owed to an agent — the main loop, or the subagent it belongs to.
+    // It rides the returned file beside the removal itself (`cancelled`): a read that is not saved
+    // finds the same again next time, and the save that keeps the removal keeps the notice, so each
+    // is told exactly once, whatever happens to this copy's memory in between.
+    const owed: Owed[] = folded.removed.map(task => ({ removed: { id: task.id, title: task.title } }))
     // A removed task's running agent stops too: its whole work, as if its own ✕ was pressed.
     const before = crossLinks(folded.file, folded.removed, [])
     const keys = [
@@ -187,33 +183,51 @@ export async function ownFile($: EngineInterface, dir: string): Promise<SessionF
       ...before.stop.map(s => removalKey({ kind: 'agent', agentId: s.agentId })),
     ]
     for (const s of before.stop)
-      if (firstFold(`${id}:stop:${s.agentId}:${s.task}`))
-        pendingNotes.push(t('notice.linkedAgentStopped', { task: s.task, agent: s.agent }))
+      owed.push({ text: t('notice.linkedAgentStopped', { task: s.task, agent: s.agent }) })
     // The deeper removals: steps, a subagent's tasks, a whole subagent — each told to its own loop.
     const deeper = cancelDeeper(folded.file, keys, await nowIso($), t('task.removedNote'))
     // A stopped agent (or its last step gone) leaves its linked task without a worker: the
     // coordinator decides — the task is not skipped. (A task the person removed is not orphaned.)
     for (const o of crossLinks(deeper.file, [], deeper.notices).orphaned)
-      if (!before.stop.some(s => s.task === o.task) && firstFold(`${id}:orphan:${JSON.stringify(o)}`))
-        pendingNotes.push(t('notice.taskUnassigned', o))
+      if (!before.stop.some(s => s.task === o.task)) owed.push({ text: t('notice.taskUnassigned', o) })
     for (const n of deeper.notices) {
-      if (!firstFold(`${id}:deeper:${JSON.stringify(n)}`)) continue
       const text =
         n.what === 'step'
           ? t('notice.stepRemoved', { step: n.step, task: n.task })
           : n.what === 'agentTask'
             ? t('notice.agentTaskRemoved', { task: n.task })
             : t('notice.agentCancelled')
-      if (n.agentId) pendingAgentNotices.set(n.agentId, [...(pendingAgentNotices.get(n.agentId) ?? []), text])
-      else pendingNotes.push(text)
+      owed.push(n.agentId ? { agentId: n.agentId, text } : { text })
     }
-    return withProcess(deeper.file)
+    if (owed.length > 0) self.owes = true
+    return withProcess(withOwed(deeper.file, [...(deeper.file.owed ?? []), ...owed]))
   }
   const cwd = await $.session.cwd()
   const repo = await $.session.repo().catch(() => null)
   return withProcess(
     withTitle(newSession({ id, project: baseName(repo?.root ?? cwd), cwd }, await nowIso($))),
   )
+}
+
+// What this session's file still owes one loop (the main loop, or the subagent `agentId`), taken
+// out of the file and returned as the lines to hand it: read fresh under the lock, saved without
+// them. While nothing is owed (`self.owes` false) it costs nothing — no read at all.
+export async function takeOwed(
+  $: EngineInterface,
+  options: PluginOptions,
+  agentId?: string,
+): Promise<string[]> {
+  if (self.owes === false) return []
+  const dir = await progressDir($, options)
+  if (!dir) return []
+  return exclusive(async () => {
+    const own = await ownFile($, dir)
+    const taken = takeOwedFor(own, agentId)
+    if (taken.file !== own) await save($, dir, taken.file)
+    else self.owes = (own.owed?.length ?? 0) > 0
+    const removed = taken.removed.map(r => `${r.id} "${r.title}"`).join(', ')
+    return [...taken.texts, ...(removed ? [t('notice.removed', { list: removed })] : [])]
+  })
 }
 
 export function withProcess(file: SessionFile): SessionFile {

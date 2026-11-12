@@ -4,6 +4,7 @@ import type {
   AgentEntry,
   Dismissal,
   Loaded,
+  Owed,
   Pipeline,
   PipelineJob,
   PipelineRun,
@@ -1052,8 +1053,10 @@ export function parseSessionFile(text: string): SessionFile | undefined {
       typeof (a as AgentEntry).id === 'string' &&
       Array.isArray((a as AgentEntry).tasks),
   )
+  const { owed: _owed, ...rest } = f as unknown as SessionFile
+  const owed = asOwed(f.owed)
   return {
-    ...(f as unknown as SessionFile),
+    ...rest,
     session: info,
     needsYou,
     dismissed,
@@ -1062,6 +1065,52 @@ export function parseSessionFile(text: string): SessionFile | undefined {
     pipelines,
     ...(cancelled.length > 0 ? { cancelled } : {}),
     ...(agents.length > 0 ? { agents } : {}),
+    ...(owed.length > 0 ? { owed } : {}),
+  }
+}
+
+// The stored notices still owed to an agent: each a ready text or a removed task, anything else dropped.
+function asOwed(value: unknown): Owed[] {
+  const out: Owed[] = []
+  for (const raw of Array.isArray(value) ? value : []) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const o = raw as Record<string, unknown>
+    const to = typeof o.agentId === 'string' && o.agentId ? { agentId: o.agentId } : {}
+    const removed = o.removed as Record<string, unknown> | null | undefined
+    if (typeof o.text === 'string' && o.text) out.push({ ...to, text: o.text })
+    else if (removed && typeof removed.id === 'string' && typeof removed.title === 'string')
+      out.push({ ...to, removed: { id: removed.id, title: removed.title } })
+  }
+  return out
+}
+
+/** The file with these notices owed (none: without the field). The same file when nothing changes. */
+export function withOwed(file: SessionFile, owed: readonly Owed[]): SessionFile {
+  if (owed.length === 0 && file.owed === undefined) return file
+  const { owed: _was, ...rest } = file
+  return owed.length > 0 ? { ...rest, owed: [...owed] } : rest
+}
+
+/**
+ * The notices owed to one loop — the main loop (`agentId` undefined) or a subagent — taken out of
+ * the file. Taking the main loop's also drops what is owed to subagents that no longer run (nobody
+ * is left to tell). `removed`: the main loop's removed tasks, for one line; `texts`: the rest.
+ */
+export function takeOwedFor(
+  file: SessionFile,
+  agentId: string | undefined,
+): { file: SessionFile; removed: { id: string; title: string }[]; texts: string[] } {
+  const owed = file.owed ?? []
+  const running = new Set((file.agents ?? []).filter(a => a.endedAt === null).map(a => a.id))
+  const mine = owed.filter(o => o.agentId === agentId)
+  const rest = owed.filter(
+    o =>
+      o.agentId !== agentId && (agentId !== undefined || o.agentId === undefined || running.has(o.agentId)),
+  )
+  return {
+    file: rest.length === owed.length ? file : withOwed(file, rest),
+    removed: mine.flatMap(o => (o.removed ? [o.removed] : [])),
+    texts: mine.flatMap(o => (o.text ? [o.text] : [])),
   }
 }
 

@@ -68,15 +68,6 @@ export const RELEASE_KEY = 'latest-release'
 // same this long after it was first seen so is damaged, not in flight, and is started over.
 export const OWN_UNREADABLE_MS = 10_000
 
-// Tasks the person removed with ✕ that this session's agent has not been told about yet (id → title):
-// the next main-loop tool call, prompt or progress_update answer carries the note, once.
-export const pendingRemovals = new Map<string, string>()
-
-// What a fold of the sidecar's removals already queued for an agent. The fold is redone on every read
-// until the session saves it (`cancelled` in its file), and not every read saves — a prompt's look
-// at stale tasks, the end-of-turn check, a poll — so each removal is queued by its first fold only (per session id: a /clear starts its ids over).
-export const foldsQueued = new Set<string>()
-
 // The subagent rule at each reporting effort.
 export const SUBAGENT_RULE = {
   detailed: 'prompt.subagent',
@@ -95,9 +86,6 @@ export const staleTold = new Map<string, string>()
 // Linked agents that finished, not yet told to the coordinator (its next progress_update answer, or
 // its next main-loop tool call — once).
 export const finishedLinks: string[] = []
-
-// A subagent's own removal notices (its tasks, or all its work), handed to IT at its next tool call.
-export const pendingAgentNotices = new Map<string, string[]>()
 
 // A pane's change to a session's sidecar: read fresh, change, write whole, so a ✕ and a pipeline
 // refresh never drop each other's part. Two guards, since the plugin API has no file lock or rename:
@@ -320,6 +308,10 @@ export const self: {
   /** A watch was added while a poll round ran: the round looks once more (at what is new) before
    *  it ends, so a new watch never waits a whole interval for its first check. */
   pollWanted: boolean
+  /** Whether this session's file holds notices still owed to an agent (`owed`), as of this copy's
+   *  last look: `false` spares every tool call a read; `undefined` (a fresh copy, a new session)
+   *  means look. */
+  owes: boolean | undefined
   /** This session's own file as it was last found unreadable (see OWN_UNREADABLE_MS): whose, what it
    *  held ('' for a read that failed) and since when. */
   ownUnreadable: { id: string; text: string; sinceMs: number } | undefined
@@ -346,6 +338,7 @@ export const self: {
   scanning: false,
   polling: false,
   pollWanted: false,
+  owes: undefined,
   ownUnreadable: undefined,
   teaLogins: undefined,
   runJobs: new Map(),
@@ -367,10 +360,9 @@ export function forgetSessionMemory(): void {
   self.ruleDeferred = false
   self.freshStart = false
   self.ownUnreadable = undefined
-  pendingRemovals.clear()
   pendingNotes.length = 0
   finishedLinks.length = 0
-  pendingAgentNotices.clear()
+  self.owes = undefined
   staleTold.clear()
   toldNoCi.clear()
   promptFed.clear()
@@ -381,19 +373,6 @@ export function forgetSessionMemory(): void {
   agentCalls.clear()
   agentActivityAt.clear()
   pendingCall.clear()
-}
-
-export function firstFold(key: string): boolean {
-  if (foldsQueued.has(key)) return false
-  foldsQueued.add(key)
-  return true
-}
-
-export function takeRemovalNotice(): string | undefined {
-  if (pendingRemovals.size === 0) return undefined
-  const list = [...pendingRemovals].map(([id, title]) => `${id} "${title}"`).join(', ')
-  pendingRemovals.clear()
-  return t('notice.removed', { list })
 }
 
 export function takeFinishedLinks(): string[] {

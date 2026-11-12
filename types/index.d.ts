@@ -234,7 +234,14 @@ export type SessionFile = {
   cancelled?: string[]
   /** The session's subagents' own progress (0.17.0), apart from the session's tasks. */
   agents?: AgentEntry[]
+  /** What the session's agent has not been told yet about removals the person made in a pane:
+   *  written with the removal itself (`cancelled`), dropped when handed over — so a reload of the
+   *  plugin in between loses no notice. `removed`: a task of the main loop's (several are told in
+   *  one line); `text`: a ready notice; `agentId`: the subagent it is for (absent: the main loop). */
+  owed?: Owed[]
 }
+
+export type Owed = { agentId?: string; text?: string; removed?: { id: string; title: string } }
 
 /** One person's ✕ on a finished task: hides that task while it stays the same completion (`doneAt`). */
 export type Dismissal = { id: string; doneAt: string | null }

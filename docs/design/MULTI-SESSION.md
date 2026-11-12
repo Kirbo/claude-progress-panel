@@ -637,9 +637,23 @@ a plain task id; `step:<task>:<step title>`; `agent:<agent>:<task>` (a subagent'
 task list); `agentall:<agent>` (its whole work). `cancelDeeper` (after `cancelTasks`) folds each
 once (the key joins `cancelled`): a step → `skipped` + `removedByUser` (out of `stepCounts`), a
 subagent's task → skipped in its list + its own `cancelled`, a whole subagent → its open tasks
-skipped + `cancelledAt`. Notices are routed: the main loop's go with the next prompt or main-loop
-tool call; a subagent's (`pendingAgentNotices`) with ITS next tool call (`PostToolUse` carries
-`agent_id`). Nothing comes back: `applyUpdate` keeps a removed task skipped on any upsert (an error
+skipped + `cancelledAt`. Notices are routed: the main loop's go with the next prompt, main-loop
+tool call or `progress_update` answer; a subagent's with ITS next tool call (`PostToolUse` carries
+`agent_id`).
+
+**What is owed is kept in the file, not in memory.** The fold used to queue its notices in the
+module's memory while the removal itself was saved to the file: a module reload in between (any
+settings change reloads it) dropped the queue, the saved removal was never folded again, and the
+agent was never told. Now the fold puts each notice into the session file's `owed` list — beside
+`cancelled`, in the same returned object: `{ removed: { id, title } }` for a main-loop task (several
+are told in one line), `{ text }` for a ready notice, `agentId` naming the subagent it is for
+(`ownFile`, store.ts). A read that is not saved finds the same removal again and computes the same
+notice; the save that keeps the removal keeps the notice; handing it over removes it from the file
+under the lock (`takeOwed` / `takeOwedFor`) — so each is told exactly once, and the per-fold memory
+guard this needed before is gone. `self.owes` only spares the tool calls a read while nothing is
+owed (unknown after a reload = look once). Taking the main loop's notices also drops those owed to
+subagents that no longer run. Other notes (a pipeline's outcome, a switch change, a linked agent's
+finish) are still queued in memory. Nothing comes back: `applyUpdate` keeps a removed task skipped on any upsert (an error
 line says so; a new title or id is a new task), a removed step stays as it was in every resent
 `steps` list, and a subagent's list runs with its own `cancelled`. Panes hide a removal at once
 (`removedHere`) before the fold. The engine has no call to stop a subagent: the whole-agent ✕ is the

@@ -50,9 +50,9 @@ import {
   toggleStatus,
   unreadable,
   watchPushes,
+  withOwedNotices,
   withPendingNotes,
   withPushNote,
-  withRemovalNotice,
   withReportingNudge,
   withSubagentRule,
 } from './session'
@@ -63,7 +63,6 @@ import {
   forgetSessionMemory,
   isOn,
   PANE,
-  pendingAgentNotices,
   pendingNotes,
   REFRESH_MS,
   REPORTING_SECTION,
@@ -155,7 +154,11 @@ export const register: Register = (on, options) => {
       stale.length > 0
         ? { ...result, additionalContext: [...(result.additionalContext ?? []), ...stale] }
         : result
-    return withReportingNudge($, options, isOn(options, 'reporting') ? withRemovalNotice(nudged) : nudged)
+    return withReportingNudge(
+      $,
+      options,
+      isOn(options, 'reporting') ? await withOwedNotices($, options, nudged) : nudged,
+    )
   }).catch(() => undefined)
   // After every main-loop tool call: a task the person removed reaches the agent at its next step
   // (a subagent's calls never take the note — it is the coordinator's).
@@ -204,17 +207,14 @@ export const register: Register = (on, options) => {
       await reopenIfActive($, options, agentId).catch(() => undefined)
       await noteAgentRepo($, options, e).catch(() => undefined)
       await noteAgentActivity($, options, e).catch(() => undefined)
-      const own = pendingAgentNotices.get(agentId)
-      pendingAgentNotices.delete(agentId)
-      const told = own?.length
-        ? { ...result, additionalContext: [...(result.additionalContext ?? []), ...own] }
-        : result
+      // What the person removed of ITS work (a step, all of it) is told to it, not the main loop.
+      const told = await withOwedNotices($, options, result, agentId)
       return withSubagentRule($, options, agentId, told, 'call')
     }
     if (agentId) return result
     pendingNotes.push(...takeFinishedLinks(), ...takeDeferredRule(options))
     const noted = withPendingNotes(result)
-    return isOn(options, 'reporting') ? withRemovalNotice(noted) : noted
+    return isOn(options, 'reporting') ? withOwedNotices($, options, noted) : noted
   }).catch(() => undefined)
 
   // Claude Code waits on the person: a permission prompt or the idle prompt becomes a Needs-you item.

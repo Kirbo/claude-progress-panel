@@ -85,7 +85,6 @@ import {
   switches,
   TOOL_ID,
   takeFinishedLinks,
-  takeRemovalNotice,
   toldNoCi,
   updateChecked,
   updateFolds,
@@ -104,6 +103,7 @@ import {
   readCiMemory,
   readOwnPlain,
   save,
+  takeOwed,
   updateCiMemory,
 } from './store'
 import type { Feature } from './toggles'
@@ -552,7 +552,9 @@ export async function runUpdate(
   const added = newlyWatched(updated.file.pipelines ?? [], watched.list)
   // Their first check starts now, but the answer does not wait for a forge (`pollSoon`).
   if (added.length > 0) pollSoon($, options)
-  const notice = [takeRemovalNotice(), ...takeFinishedLinks()].filter(Boolean).join('\n')
+  // What the person removed in a pane since, told here once (kept in the file until now).
+  const owed = await takeOwed($, options).catch(() => [] as string[])
+  const notice = [...owed, ...takeFinishedLinks()].filter(Boolean).join('\n')
   const clearedLines = [
     agentClearing.dismissed.length
       ? t('tool.agentsCleared', { list: agentClearing.dismissed.join(', ') })
@@ -1405,9 +1407,18 @@ export function withPushNote<R extends { additionalContext?: string[] }>(
   return { ...result, additionalContext: [...(result.additionalContext ?? []), ...lines] }
 }
 
-export function withRemovalNotice<R extends { additionalContext?: string[] }>(result: R): R {
-  const note = takeRemovalNotice()
-  return note ? { ...result, additionalContext: [...(result.additionalContext ?? []), note] } : result
+// What the session's file still owes this loop about removals in a pane (`takeOwed`), handed over
+// with a hook's result. A failure here never holds the hook up: the notice stays owed.
+export async function withOwedNotices<R extends { additionalContext?: string[] }>(
+  $: EngineInterface,
+  options: PluginOptions,
+  result: R,
+  agentId?: string,
+): Promise<R> {
+  const notes = await takeOwed($, options, agentId).catch(() => [] as string[])
+  return notes.length > 0
+    ? { ...result, additionalContext: [...(result.additionalContext ?? []), ...notes] }
+    : result
 }
 
 export async function markEnded($: EngineInterface, options: PluginOptions): Promise<void> {
