@@ -2156,7 +2156,9 @@ test('a Gitea/Forgejo run is read through tea, with the login on its host', asyn
   const byCommit = '/repos/team/app/actions/runs?head_sha=abc1234&limit=1'
   world.tea.api.set(`cb ${byCommit}`, {
     total_count: 1,
-    workflow_runs: [{ id: 77, status: 'running', commit_sha: 'abc1234', prettyref: 'main', html_url: 'u77' }],
+    workflow_runs: [
+      { id: 77, status: 'running', commit_sha: 'abc1234', prettyref: 'main', html_url: 'https://cb/u77' },
+    ],
   })
   world.tea.api.set('cb /repos/team/app/actions/runs/77/jobs', [{ id: 1, name: 'build', status: 'running' }])
   await start($)
@@ -2172,7 +2174,7 @@ test('a Gitea/Forgejo run is read through tea, with the login on its host', asyn
     id: 77,
     state: 'running',
     ref: 'main',
-    url: 'u77',
+    url: 'https://cb/u77',
     jobs: [{ name: 'build', state: 'running' }],
   })
   expect(unknown?.error).toBe('tea: no login for gitea.example.com (tea login add)')
@@ -2189,14 +2191,19 @@ test(
     const world = engine(on, disk)
     world.programs.set(
       '/home/me/bin/ci-status jenkins/nightly 12',
-      JSON.stringify({ id: 12, state: 'running', url: 'u12', jobs: [{ name: 'build', state: 'success' }] }),
+      JSON.stringify({
+        id: 12,
+        state: 'running',
+        url: 'https://ci/u12',
+        jobs: [{ name: 'build', state: 'success' }],
+      }),
     )
     await start($)
     await update($, { watch: [{ provider: 'command', project: 'jenkins/nightly', pipeline: 12 }] })
     expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({
       key: 'ci:jenkins/nightly#12',
       state: 'running',
-      url: 'u12',
+      url: 'https://ci/u12',
       jobs: [{ name: 'build', state: 'success' }],
     })
     expect(world.runs).toContainEqual(['/home/me/bin/ci-status', 'jenkins/nightly', '12'])

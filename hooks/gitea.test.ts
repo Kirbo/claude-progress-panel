@@ -76,7 +76,13 @@ test("parseGiteaJobs reads Gitea's { jobs } and Forgejo's plain list, in job ord
   const gitea = {
     total_count: 2,
     jobs: [
-      { id: 2, name: 'test', status: 'in_progress', started_at: '2026-11-07T10:01:00Z', html_url: 'u2' },
+      {
+        id: 2,
+        name: 'test',
+        status: 'in_progress',
+        started_at: '2026-11-07T10:01:00Z',
+        html_url: 'https://g/u2',
+      },
       {
         id: 1,
         name: 'lint',
@@ -95,16 +101,16 @@ test("parseGiteaJobs reads Gitea's { jobs } and Forgejo's plain list, in job ord
       state: 'running',
       durationS: null,
       startedAt: '2026-11-07T10:01:00Z',
-      url: 'u2',
+      url: 'https://g/u2',
     },
   ])
   const forgejo = [
-    { id: 9, name: 'build', status: 'running', html_url: 'u9' },
+    { id: 9, name: 'build', status: 'running', html_url: 'https://g/u9' },
     { id: 8, name: 'setup', status: 'success' },
   ]
   expect(parseGiteaJobs(JSON.stringify(forgejo))).toEqual([
     { name: 'setup', stage: '', state: 'success', durationS: null },
-    { name: 'build', stage: '', state: 'running', durationS: null, url: 'u9' },
+    { name: 'build', stage: '', state: 'running', durationS: null, url: 'https://g/u9' },
   ])
   expect(parseGiteaJobs('{}')).toBeUndefined()
 })

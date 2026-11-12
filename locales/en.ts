@@ -295,6 +295,7 @@ export const en = {
     'Progress pane: task "{task}" now waits on pipeline {key} — it closes by itself (done on green, failed on red); do not keep it open by hand.',
   'task.pipelineGreen': 'pipeline {id} green',
   'task.pipelineRed': 'pipeline {id} failed: {jobs}',
+  'task.pipelineRedMore': 'pipeline {id} failed: {jobs} and {more} more',
   'task.pipelineCanceled': 'pipeline {id} canceled',
   'notice.taskPipelineDone': 'Progress pane: task "{task}" is done — {note}.',
   'notice.taskPipelineFailed': 'Progress pane: task "{task}" failed — {note}. Fix it, or re-plan it.',

@@ -261,7 +261,7 @@ export function merged(
   jobsError: string | undefined,
   at: string,
 ): Pipeline {
-  const { error: _cleared, ...kept } = p
+  const { error: _cleared, noPipeline: _found, ...kept } = p
   // Back to running (a retry of a failed or canceled pipeline): its old finish times go, so it reads
   // as live again and its fold resets with the new run.
   const { finishedAt: _f, pipelineFinishedAt: _g, ...live } = kept
@@ -369,7 +369,7 @@ export async function pollPipelines($: EngineInterface, options: PluginOptions):
   }
   // A watched commit that never got a pipeline (the 10-minute hint): its repo runs no CI on that
   // forge — remembered, so its next pushes are not watched for nothing.
-  const none = fresh.filter(p => p.id === null && p.error === noneYet(p))
+  const none = fresh.filter(p => p.id === null && p.noPipeline)
   if (none.length > 0)
     await updateCiMemory($, dir, m =>
       none.reduce((acc, p) => markNoPipeline(acc, apiHost(p), p.project, Date.parse(at)), m),
@@ -385,7 +385,8 @@ export async function pollPipelines($: EngineInterface, options: PluginOptions):
 export function settleTasks(file: SessionFile, at: string): SessionFile {
   const { file: next, settled } = settleLinkedTasks(file, at, {
     green: id => t('task.pipelineGreen', { id }),
-    red: (id, jobs) => t('task.pipelineRed', { id, jobs }),
+    red: (id, jobs, more) =>
+      more > 0 ? t('task.pipelineRedMore', { id, jobs, more }) : t('task.pipelineRed', { id, jobs }),
     canceled: id => t('task.pipelineCanceled', { id }),
   })
   for (const s of settled)

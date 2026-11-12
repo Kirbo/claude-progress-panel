@@ -4,6 +4,7 @@
 
 import type { JobState, PipelineJob } from '../types'
 import type { PipelineHead } from './pipelines'
+import { cleanText, httpUrl, JOB_NAME_MAX } from './pipelines'
 
 /** GitHub splits a run's (or job's) state into `status` and, once completed, `conclusion`. */
 export function ghState(status: string, conclusion: string | null | undefined): JobState {
@@ -66,7 +67,7 @@ export function parseGhRun(text: string): GhRunHead | undefined {
     state,
     ...(str(r.head_branch) ? { ref: r.head_branch as string } : {}),
     ...(str(r.head_sha) ? { sha: r.head_sha as string } : {}),
-    ...(str(r.html_url) ? { url: r.html_url as string } : {}),
+    ...(httpUrl(r.html_url) ? { url: r.html_url as string } : {}),
     ...(str(r.run_started_at) ? { startedAt: r.run_started_at as string } : {}),
     ...(done && str(r.updated_at) ? { pipelineFinishedAt: r.updated_at as string } : {}),
     ...(durationS !== undefined ? { durationS } : {}),
@@ -96,12 +97,12 @@ export function parseGhJobs(text: string): PipelineJob[] | undefined {
       const started = j.status === 'in_progress' || j.status === 'completed'
       const durationS = j.status === 'completed' ? seconds(j.started_at, j.completed_at) : undefined
       return {
-        name: j.name as string,
+        name: cleanText(j.name, JOB_NAME_MAX),
         stage: '',
         state: ghState(j.status as string, str(j.conclusion)),
         durationS: durationS ?? null,
         ...(started && str(j.started_at) ? { startedAt: j.started_at as string } : {}),
-        ...(str(j.html_url) ? { url: j.html_url as string } : {}),
+        ...(httpUrl(j.html_url) ? { url: j.html_url as string } : {}),
       }
     })
 }

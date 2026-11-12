@@ -6,6 +6,7 @@
 import type { JobState, PipelineJob } from '../types'
 import { ghState, json, parseGhJobs, seconds, str } from './github'
 import type { PipelineHead } from './pipelines'
+import { cleanText, httpUrl, JOB_NAME_MAX } from './pipelines'
 
 /** Forgejo's run/job status → the pane's state (anything unknown reads as queued). */
 export function forgejoState(status: string): JobState {
@@ -59,7 +60,7 @@ export function parseGiteaRun(text: string): PipelineHead | undefined {
     state,
     ...(ref ? { ref } : {}),
     ...(sha ? { sha } : {}),
-    ...(str(r.html_url) ? { url: r.html_url as string } : {}),
+    ...(httpUrl(r.html_url) ? { url: r.html_url as string } : {}),
     ...(startedAt ? { startedAt } : {}),
     ...(finishedAt ? { pipelineFinishedAt: finishedAt } : {}),
     ...(durationS !== undefined ? { durationS } : {}),
@@ -79,12 +80,12 @@ export function parseGiteaJobs(text: string): PipelineJob[] | undefined {
     )
     .sort((a, b) => id(a) - id(b))
     .map(j => ({
-      name: j.name as string,
+      name: cleanText(j.name, JOB_NAME_MAX),
       stage: '',
       state: forgejoState(j.status as string),
       // Forgejo's job list carries no times (only a single job's steps do).
       durationS: null,
-      ...(str(j.html_url) ? { url: j.html_url as string } : {}),
+      ...(httpUrl(j.html_url) ? { url: j.html_url as string } : {}),
     }))
 }
 

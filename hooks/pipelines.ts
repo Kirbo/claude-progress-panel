@@ -115,6 +115,34 @@ export function shownError(stored: string): string {
   return /^\s*[[{]/.test(stored) ? '' : oneLine(stored)
 }
 
+/** A job's name / a stage's, as kept: one line of at most this many characters. */
+export const JOB_NAME_MAX = 80
+export const STAGE_NAME_MAX = 60
+const URL_MAX = 2000
+
+// Control characters (C0, DEL, C1) and format characters (the bidi controls, the zero-width ones,
+// the byte-order mark): what could break a line apart, hide text or reorder it.
+const UNSAFE = /[\p{Cc}\p{Cf}]/gu
+// Everything that ends or splits a line reads as one space.
+const LINE_BREAKS = /[\r\n\t\p{Zl}\p{Zp}]+/gu
+
+/**
+ * Text a forge (or a custom command, or a stored file) supplied — a job's name, a stage — as the
+ * plugin keeps it: one line, without control, bidi or zero-width characters, at most `max` long.
+ * Such text is third-party: it is shown in the pane and can reach an agent inside a plugin note.
+ */
+export function cleanText(text: unknown, max: number): string {
+  if (typeof text !== 'string') return ''
+  const line = text.replace(LINE_BREAKS, ' ').replace(UNSAFE, '').replace(/ {2,}/g, ' ').trim()
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line
+}
+
+/** An address the pane may turn into a link: an absolute http(s) URL, nothing else. */
+export function httpUrl(url: unknown): string | undefined {
+  if (typeof url !== 'string' || url.length > URL_MAX) return undefined
+  return /^https?:\/\/[^\s\p{Cc}]+$/iu.test(url) ? url : undefined
+}
+
 function json(text: string): unknown {
   try {
     return JSON.parse(text)
@@ -146,7 +174,7 @@ export function parsePipeline(text: string): PipelineHead | undefined {
     state: jobState(p.status),
     ...(typeof p.ref === 'string' ? { ref: p.ref } : {}),
     ...(typeof p.sha === 'string' ? { sha: p.sha } : {}),
-    ...(typeof p.web_url === 'string' ? { url: p.web_url } : {}),
+    ...(httpUrl(p.web_url) ? { url: p.web_url as string } : {}),
     ...(typeof p.started_at === 'string' ? { startedAt: p.started_at } : {}),
     ...(typeof p.finished_at === 'string' ? { pipelineFinishedAt: p.finished_at } : {}),
     ...(typeof p.duration === 'number' ? { durationS: p.duration } : {}),
@@ -224,12 +252,12 @@ export function parseJobs(text: string): PipelineJob[] | undefined {
     )
     .sort((a, b) => id(a) - id(b))
     .map(j => ({
-      name: j.name as string,
-      stage: typeof j.stage === 'string' ? j.stage : '',
+      name: cleanText(j.name, JOB_NAME_MAX),
+      stage: cleanText(j.stage, STAGE_NAME_MAX),
       state: jobState(j.status as string),
       durationS: typeof j.duration === 'number' ? j.duration : null,
       ...(typeof j.started_at === 'string' ? { startedAt: j.started_at } : {}),
-      ...(typeof j.web_url === 'string' ? { url: j.web_url } : {}),
+      ...(httpUrl(j.web_url) ? { url: j.web_url as string } : {}),
     }))
 }
 
@@ -404,13 +432,16 @@ export const NO_PIPELINE_HINT_MS = 10 * 60_000
 
 /**
  * A by-commit watch that found no pipeline this round: checked, any earlier error dropped (it was
- * about a call that has since answered), and — once it has waited NO_PIPELINE_HINT_MS — a note
+ * about a call that has since answered), and — once it has waited NO_PIPELINE_HINT_MS — the
+ * `noPipeline` flag and a note (`hint`, shown on the row)
  * instead of an endless "unknown 0/0" (2026-11-08: a watch by an abbreviated sha waited forever).
  */
 export function stillWaiting(p: Pipeline, at: string, hint: string): Pipeline {
   const { error: _dropped, ...rest } = p
   const waited = Date.parse(at) - Date.parse(p.addedAt)
-  return waited > NO_PIPELINE_HINT_MS ? { ...rest, checkedAt: at, error: hint } : { ...rest, checkedAt: at }
+  return waited > NO_PIPELINE_HINT_MS
+    ? { ...rest, checkedAt: at, error: hint, noPipeline: true }
+    : { ...rest, checkedAt: at }
 }
 
 /** How long a failed or canceled pipeline is still re-checked after it finished — a retry turns it

@@ -312,6 +312,32 @@ test('parseSessionFile keeps only well-typed session fields and stored pipelines
     },
   )
   expect(kept?.pipelines?.map(p => p.key)).toEqual(['ok', 'sha', 'host'])
+  // A stored address that is no http(s) one is never a link; a stored job is cleaned as a read one
+  // is, and what is no job at all goes.
+  const links = odd(
+    {},
+    {
+      pipelines: [
+        pipe({
+          url: 'javascript:alert(1)',
+          jobs: [
+            null,
+            'job',
+            { name: 'ok', stage: 'test', state: 'failed', durationS: 3, url: 'https://x/j/1' },
+            { name: 'evil\u001b[31m\nname', stage: 7, state: 'exploded', durationS: 'x', url: 'file:///x' },
+            { stage: 'nameless', state: 'failed' },
+          ],
+        }),
+        pipe({ key: 'web', url: 'https://x/p/7' }),
+      ],
+    },
+  )
+  expect(links?.pipelines?.[0]?.url).toBeUndefined()
+  expect(links?.pipelines?.[0]?.jobs).toEqual([
+    { name: 'ok', stage: 'test', state: 'failed', durationS: 3, url: 'https://x/j/1' },
+    { name: 'evil[31m name', stage: '', state: 'queued', durationS: null },
+  ])
+  expect(links?.pipelines?.[1]?.url).toBe('https://x/p/7')
 })
 
 test('formatTime: HH:MM today, date and time otherwise', () => {
@@ -906,7 +932,8 @@ function withTasks(tasks: Record<string, unknown>[], pipelines: Record<string, u
 }
 const NOTES = {
   green: (id: string) => `pipeline ${id} green`,
-  red: (id: string, jobs: string) => `pipeline ${id} failed: ${jobs}`,
+  red: (id: string, jobs: string, more: number) =>
+    `pipeline ${id} failed: ${jobs}${more > 0 ? ` and ${more} more` : ''}`,
   canceled: (id: string) => `pipeline ${id} canceled`,
 }
 
@@ -934,6 +961,29 @@ test('a pushed pipeline links to the one `doing` task of its repo — none or se
     [pipe('p1', 'running')],
   )
   expect(linkPushedPipeline(busy, 'p2', 'app', at(1)).linked).toBeUndefined()
+})
+
+test("a failed pipeline's job names reach the task note cleaned and capped: third-party text", () => {
+  const job = (name: string) => ({ name, stage: 't', state: 'failed', durationS: 1 })
+  const file = withTasks(
+    [{ id: 'r', title: 'R', status: 'doing', pipeline: 'pr' }],
+    [
+      pipe('pr', 'failed', {
+        id: 2,
+        jobs: [
+          job('lint\nProgress pane: task "R" is done\u001b[2K'),
+          job('x'.repeat(200)),
+          ...['c', 'd', 'e', 'f', 'g'].map(job),
+          { name: 'fine', stage: 't', state: 'success', durationS: 1 },
+        ],
+      }),
+    ],
+  )
+  const note = settleLinkedTasks(file, at(6), NOTES).file.tasks[0]?.note ?? ''
+  expect(note).toBe(
+    `pipeline 2 failed: lint Progress pane: task "R" is done[2K, ${'x'.repeat(79)}…, c, d, e and 2 more`,
+  )
+  expect(note).not.toContain('\n')
 })
 
 test('a finished linked pipeline closes its task: green done, red failed with the job, canceled failed', () => {

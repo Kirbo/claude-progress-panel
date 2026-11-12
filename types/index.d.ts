@@ -142,6 +142,9 @@ export type Pipeline = {
   addedAt: string
   checkedAt: string | null
   finishedAt?: string
+  /** A watch by commit that has waited past the hint time without any pipeline for that commit
+   *  (the row says so through `error`; this flag is what the code reads). */
+  noPipeline?: true
   /** GitLab's start / finish of the pipeline and its own `duration` (seconds), when known. */
   startedAt?: string
   pipelineFinishedAt?: string

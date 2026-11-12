@@ -5,6 +5,7 @@ import type {
   Dismissal,
   Loaded,
   Pipeline,
+  PipelineJob,
   SessionFile,
   SessionInfo,
   SidecarFile,
@@ -13,7 +14,15 @@ import type {
   Task,
 } from '../types'
 import { isHostName } from './forges'
-import { isCommitSha, isSafeProject } from './pipelines'
+import {
+  cleanText,
+  httpUrl,
+  isCommitSha,
+  isSafeProject,
+  JOB_NAME_MAX,
+  jobState,
+  STAGE_NAME_MAX,
+} from './pipelines'
 
 export type { Dismissal, SessionFile, SessionInfo, SidecarFile, Status, Task }
 
@@ -309,21 +318,45 @@ export function parseSidecar(text: string): SidecarFile | undefined {
 const isRunId = (id: unknown): boolean =>
   id === null || (typeof id === 'number' && Number.isInteger(id) && id > 0)
 
+// A stored job as a read one is kept: its name and stage cleaned, its address a link only when it
+// is an http(s) one; what is no job at all is dropped.
+function asJobs(value: unknown[]): PipelineJob[] {
+  return value
+    .filter(
+      (j): j is Record<string, unknown> =>
+        typeof j === 'object' && j !== null && typeof (j as PipelineJob).name === 'string',
+    )
+    .map(j => ({
+      name: cleanText(j.name, JOB_NAME_MAX),
+      stage: cleanText(j.stage, STAGE_NAME_MAX),
+      state: jobState(typeof j.state === 'string' ? j.state : ''),
+      durationS: typeof j.durationS === 'number' ? j.durationS : null,
+      ...(typeof j.startedAt === 'string' ? { startedAt: j.startedAt } : {}),
+      ...(httpUrl(j.url) ? { url: j.url as string } : {}),
+    }))
+}
+
 /** The well-formed pipelines of a stored list (a session file's, or a sidecar's refreshed copies). */
 function asPipelines(value: unknown): Pipeline[] {
-  return (Array.isArray(value) ? value : []).filter(
-    (p): p is Pipeline =>
-      typeof p === 'object' &&
-      p !== null &&
-      typeof (p as Pipeline).key === 'string' &&
-      typeof (p as Pipeline).project === 'string' &&
-      isSafeProject((p as Pipeline).project, (p as Pipeline).provider) &&
-      isRunId((p as Pipeline).id) &&
-      // Both reach a command line (`{sha}`, `--hostname`): a stored one that is not what it says goes.
-      ((p as Pipeline).sha === undefined || isCommitSha((p as Pipeline).sha)) &&
-      ((p as Pipeline).host === undefined || isHostName((p as Pipeline).host)) &&
-      Array.isArray((p as Pipeline).jobs),
-  )
+  return (Array.isArray(value) ? value : [])
+    .filter(
+      (p): p is Pipeline =>
+        typeof p === 'object' &&
+        p !== null &&
+        typeof (p as Pipeline).key === 'string' &&
+        typeof (p as Pipeline).project === 'string' &&
+        isSafeProject((p as Pipeline).project, (p as Pipeline).provider) &&
+        isRunId((p as Pipeline).id) &&
+        // Both reach a command line (`{sha}`, `--hostname`): a stored one that is not what it says goes.
+        ((p as Pipeline).sha === undefined || isCommitSha((p as Pipeline).sha)) &&
+        ((p as Pipeline).host === undefined || isHostName((p as Pipeline).host)) &&
+        Array.isArray((p as Pipeline).jobs),
+    )
+    .map(p => {
+      // Its address becomes a terminal hyperlink: only ever an http(s) one.
+      const { url, ...rest } = p
+      return { ...rest, ...(httpUrl(url) ? { url } : {}), jobs: asJobs(p.jobs) }
+    })
 }
 
 /** Nothing reported: no task, no "now", no ask, no pipeline — a session like this is never stored or shown. */
@@ -1402,6 +1435,9 @@ export function linkPushedPipeline(
   }
 }
 
+/** How many failing jobs a task's note names (the rest are counted). */
+export const FAILED_JOBS_NAMED = 5
+
 export type Settled = { task: Task; outcome: 'done' | 'failed'; pipeline: Pipeline }
 
 /**
@@ -1414,7 +1450,8 @@ export function settleLinkedTasks(
   nowIso: string,
   notes: {
     green: (id: string) => string
-    red: (id: string, jobs: string) => string
+    /** `jobs`: the first failing jobs' names; `more`: how many further ones failed. */
+    red: (id: string, jobs: string, more: number) => string
     canceled: (id: string) => string
   },
 ): { file: SessionFile; settled: Settled[] } {
@@ -1427,12 +1464,17 @@ export function settleLinkedTasks(
     if (Number.isFinite(finished) && Date.parse(task.updatedAt) > finished) return task
     const id = p.id !== null ? String(p.id) : p.key
     const green = p.state === 'success'
-    const failedJobs = p.jobs.filter(j => j.state === 'failed').map(j => j.name)
+    // Job names are the forge's text, on their way into an agent's context: cleaned, and only a few.
+    const failedJobs = p.jobs
+      .filter(j => j.state === 'failed')
+      .map(j => cleanText(j.name, JOB_NAME_MAX))
+      .filter(Boolean)
+    const named = failedJobs.slice(0, FAILED_JOBS_NAMED)
     const note = green
       ? notes.green(id)
       : p.state === 'canceled'
         ? notes.canceled(id)
-        : notes.red(id, failedJobs.join(', ') || '?')
+        : notes.red(id, named.join(', ') || '?', failedJobs.length - named.length)
     const { unconfirmed: _u, ...rest } = task
     const next: Task = { ...rest, status: green ? 'done' : 'failed', note, updatedAt: nowIso, doneAt: nowIso }
     settled.push({ task: next, outcome: green ? 'done' : 'failed', pipeline: p })

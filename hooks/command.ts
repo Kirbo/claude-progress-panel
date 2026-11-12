@@ -6,6 +6,7 @@
 import type { JobState, PipelineJob } from '../types'
 import { json, str } from './github'
 import type { PipelineHead } from './pipelines'
+import { cleanText, httpUrl, JOB_NAME_MAX, STAGE_NAME_MAX } from './pipelines'
 
 const STATES: readonly JobState[] = [
   'queued',
@@ -64,7 +65,7 @@ export function parseCommandStatus(
   const head: PipelineHead = {
     id: raw.id,
     state: state(raw.state),
-    ...(str(raw.url) ? { url: raw.url as string } : {}),
+    ...(httpUrl(raw.url) ? { url: raw.url as string } : {}),
     ...(str(raw.ref) ? { ref: raw.ref as string } : {}),
     ...(str(raw.startedAt) ? { startedAt: raw.startedAt as string } : {}),
     ...(str(raw.finishedAt) ? { pipelineFinishedAt: raw.finishedAt as string } : {}),
@@ -75,12 +76,12 @@ export function parseCommandStatus(
       (j): j is Record<string, unknown> => typeof j === 'object' && j !== null && typeof j.name === 'string',
     )
     .map(j => ({
-      name: j.name as string,
-      stage: str(j.stage) ?? '',
+      name: cleanText(j.name, JOB_NAME_MAX),
+      stage: cleanText(j.stage, STAGE_NAME_MAX),
       state: state(j.state),
       durationS: typeof j.durationS === 'number' ? j.durationS : null,
       ...(str(j.startedAt) ? { startedAt: j.startedAt as string } : {}),
-      ...(str(j.url) ? { url: j.url as string } : {}),
+      ...(httpUrl(j.url) ? { url: j.url as string } : {}),
     }))
   return { head, jobs }
 }
