@@ -16,11 +16,13 @@ import {
   dismissAgents,
   dismissTasks,
   displayWidth,
+  dropEndedAutoTasks,
   endAgent,
   endDeadSession,
   formatClock,
   formatTime,
   groupWorkByRepo,
+  hasLinkableTask,
   isBlank,
   isClosed,
   isGenericPermission,
@@ -1336,4 +1338,40 @@ test('a task id an agent chooses is a plain name; one the person removed is neve
   expect(again.errors).toEqual([
     'tasks[0]: id "deploy" was removed in the Progress pane and is not reused — leave the id out (the tool assigns one)',
   ])
+})
+
+test('a stand-in task goes once its agent is not at work; a namesake that still runs keeps it', () => {
+  const agent = (id: string, endedAt: string | null) => ({
+    id,
+    label: 'Lane A',
+    now: null,
+    tasks: [],
+    seq: 0,
+    startedAt: iso(T0),
+    updatedAt: iso(T0),
+    endedAt,
+  })
+  const withStandIn: SessionFile = {
+    ...fresh(),
+    tasks: [
+      task({ id: 't1', title: 'Mine', status: 'doing' }),
+      task({ id: 't2', title: '↳ Lane A', status: 'doing', agent: 'Lane A', auto: true }),
+    ],
+  }
+  const running = { ...withStandIn, agents: [agent('a1', null)] }
+  expect(dropEndedAutoTasks(running)).toBe(running)
+  expect(dropEndedAutoTasks({ ...withStandIn, agents: [agent('a1', iso(T0))] }).tasks.map(t => t.id)).toEqual(
+    ['t1'],
+  )
+  // Its row cleared altogether: nothing left to stand in for.
+  expect(dropEndedAutoTasks(withStandIn).tasks.map(t => t.id)).toEqual(['t1'])
+  // The lane ran twice under one description: the first ended, the second works — it is that one's.
+  const again = { ...withStandIn, agents: [agent('a1', iso(T0)), agent('a2', null)] }
+  expect(dropEndedAutoTasks(again)).toBe(again)
+  // The checks that ask after a task's state never list a stand-in.
+  const late = T0 + 2 * HOUR
+  expect(staleTasks(withStandIn, late, 60_000, new Map(), () => false).map(t => t.id)).toEqual(['t1'])
+  expect(untouchedDoing(withStandIn, late, late, 60_000, () => false).map(t => t.id)).toEqual(['t1'])
+  expect(hasLinkableTask(withStandIn)).toBe(true)
+  expect(hasLinkableTask({ ...withStandIn, tasks: withStandIn.tasks.slice(1) })).toBe(false)
 })

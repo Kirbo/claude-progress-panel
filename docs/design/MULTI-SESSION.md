@@ -568,10 +568,20 @@ still has work is the agent's alone: the session task's status stays the coordin
 Asked 2026-11-09 (item 18), on top of the links: a linked task's steps ARE its agent's — `extras`
 drops `steps` sent to a task with `agent` (one error line in the answer), and the pane draws the
 agent's own steps for it (n/m included). An Agent call whose description no open task is linked to
-(and no unambiguous auto-link) queues one `notice.agentUnlinked` for the coordinator; if the agent
-then reports while still on no task, a stand-in `↳ <label>` task (`auto`, doing, linked) appears
-(`withAutoTask`), and `dropReplacedAutoTasks` removes it once the coordinator links a task of its
-own to that agent. A stand-in is never marked done by the plugin either.
+(and no unambiguous auto-link) queues one `notice.agentUnlinked` for the coordinator — only when
+the session has a task that could be the agent's (open, its own, linked to none: `hasLinkableTask`);
+a session with no such task, an ad-hoc agent's, is told nothing. If the agent then reports while
+still on no task, a stand-in `↳ <label>` task (`auto`, doing, linked) appears (`withAutoTask`), and
+`dropReplacedAutoTasks` removes it once the coordinator links a task of its own to that agent.
+
+**A stand-in lives only while its agent works.** Nobody made it, so nobody closes it: left `doing`
+after its agent ended it drew a "verify and update task ↳ …" note, then the end-of-turn stop and the
+stale nudge, for a task the coordinator never planned. When the agent ends for good (its
+SubagentStop, the list sync, its row cleared) the stand-in is removed with it
+(`dropEndedAutoTasks`; the finished agent itself is listed under Done → Agents) and no "agent
+finished — verify" note is sent for it; a scan clears one an older version left behind. A waiting
+agent (background work) keeps its stand-in, and one resumed after it ended gets a new one with its
+next report. The end-of-turn check and the stale nudge never list an `auto` task.
 
 ## Tasks linked to subagents (0.23.0)
 

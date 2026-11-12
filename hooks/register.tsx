@@ -5,7 +5,15 @@ import { fields } from './events'
 import { pollAll } from './forge'
 import { whoAmI } from './host'
 import { t } from './i18n'
-import { endAgent, isBlank, isClosed, linkedAgent, ownBackground, waitingOnFrom } from './model'
+import {
+  dropEndedAutoTasks,
+  endAgent,
+  isBlank,
+  isClosed,
+  linkedAgent,
+  ownBackground,
+  waitingOnFrom,
+} from './model'
 import { renderPane } from './pane'
 import { INPUT_SCHEMA } from './schema'
 import type { ToolInput } from './session'
@@ -160,12 +168,16 @@ export const register: Register = (on, options) => {
         // so only tasks this agent's own calls started count; anything else is not its, and it ended.
         const background = ownBackground(fields(e).background_tasks, agentBackground.get(id) ?? new Set())
         const waiting = background.length > 0
-        const ended = endAgent(own, id, at, waiting, waiting ? waitingOnFrom(background) : undefined)
+        // Ended for good: a stand-in task the plugin made for it goes with it.
+        const ended = dropEndedAutoTasks(
+          endAgent(own, id, at, waiting, waiting ? waitingOnFrom(background) : undefined),
+        )
         if (ended !== own) await save($, dir, ended)
         if (waiting) return
         // A task linked to it: the coordinator is told to verify and update it — never done for it.
+        // (Its own task: a stand-in is nobody's to verify.)
         for (const task of own.tasks)
-          if (!isClosed(task.status) && linkedAgent(own, task)?.id === id)
+          if (!task.auto && !isClosed(task.status) && linkedAgent(own, task)?.id === id)
             finishedLinks.push(
               t('notice.agentFinished', { agent: linkedAgent(own, task)?.label ?? id, task: task.title }),
             )

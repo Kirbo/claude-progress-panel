@@ -19,8 +19,10 @@ import {
   askReply,
   autoLinkTarget,
   dismissAgents,
+  dropEndedAutoTasks,
   dropReplacedAutoTasks,
   endDeadSession,
+  hasLinkableTask,
   isBlank,
   isClosed,
   isGenericPermission,
@@ -459,7 +461,8 @@ export async function scan($: EngineInterface, options: PluginOptions): Promise<
     if (file.session.id === me) {
       await exclusive(async () => {
         const own = await ownFile($, dir)
-        const pruned = pruneDone(own, doneHours, nowMs)
+        // …and a stand-in task whose agent is no longer at work goes (`dropEndedAutoTasks`).
+        const pruned = dropEndedAutoTasks(pruneDone(own, doneHours, nowMs))
         // The fold of a removal changed it too: save, so the pane shows it skipped.
         const folded = (own.cancelled?.length ?? 0) !== (file.cancelled?.length ?? 0)
         if (pruned !== own || folded) await save($, dir, pruned)
@@ -520,7 +523,8 @@ export async function runUpdate(
         : { file: applied.file, dismissed: [], running: [] }
     agentClearing = cleared
     // A task of its own linked to an agent replaces the plugin's stand-in for it.
-    const updated = { ...applied, file: dropReplacedAutoTasks(cleared.file) }
+    // …and one whose agent's row was just cleared has nothing left to stand in for.
+    const updated = { ...applied, file: dropEndedAutoTasks(dropReplacedAutoTasks(cleared.file)) }
     const watched = applyWatch(
       updated.file.pipelines ?? [],
       input.watch ?? [],
@@ -594,7 +598,7 @@ export async function syncOwnAgents($: EngineInterface, dir: string): Promise<vo
   await exclusive(async () => {
     const own = await ownFile($, dir)
     const synced = syncAgents(own, listed, at)
-    if (synced !== own) await save($, dir, synced)
+    if (synced !== own) await save($, dir, dropEndedAutoTasks(synced))
   })
 }
 
@@ -802,8 +806,9 @@ export async function autoLink(
     if (agentHasTask(own, { id: '', label: description })) return
     const task = autoLinkTarget(own, description)
     if (!task) {
-      // Working on no task of the session: the coordinator is told once to link the one it serves.
-      finishedLinks.push(t('notice.agentUnlinked', { agent: description }))
+      // Working on no task of the session: the coordinator is told once to link the one it serves —
+      // when it has a task that could be it. A session with none (an ad-hoc agent) has nothing to link.
+      if (hasLinkableTask(own)) finishedLinks.push(t('notice.agentUnlinked', { agent: description }))
       return
     }
     await save($, dir, {

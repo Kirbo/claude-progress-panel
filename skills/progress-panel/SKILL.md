@@ -110,9 +110,11 @@ plugin links it on its own when the description names exactly one task you have 
 pane shows the agent's own steps under the task — never copy or mirror them into the task (steps
 sent to a linked task are dropped); send it only its status and note. Work you send a running agent
 later needs no copy either: its new steps show there as it adds them. An agent that works on no
-task of yours is shown as a stand-in task "↳ <agent>" until you link the real one (you are told
-once). When it finishes you are told once ("agent … finished — verify its result and update task
-…"): check its result, then mark the task done yourself — the plugin never does.
+task of yours is shown as a stand-in task "↳ <agent>" while it runs, or until you link the real
+one (you are told once, when you have a task it could be); the stand-in is the plugin's and goes
+when the agent ends — never update or close it. When an agent linked to a task of yours finishes
+you are told once ("agent … finished — verify its result and update task …"): check its result,
+then mark the task done yourself — the plugin never does.
 
 ## Removed in the pane
 

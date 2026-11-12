@@ -943,7 +943,9 @@ test('a subagent that stops is marked finished and folded under Agents — and s
   await ui.press({ key: 'done:s-me' })
   expect((await ui.find({ type: 'Button', key: 'doneagents:s-me' }))?.text).toBe('▸ Agents  1')
   await ui.press({ key: 'doneagents:s-me' })
-  expect((await texts(ui)).some(l => l.startsWith('✓ Lane B: the rest'))).toBe(true)
+  expect((await ui.find({ type: 'Button', key: 'doneagent:s-me:sub-2' }))?.text).toContain(
+    '✓ Lane B: the rest  finished',
+  )
   await ui.unmount()
   const mine = await update($, { now: 'still here' })
   // A finished agent leaves the coordinator's "Subagents:" line.
@@ -1021,7 +1023,9 @@ test('skipped, failed and unfinished read differently — each with its reason b
   )
   expect(failedRow?.props.color).toBe('red')
   // The finished agent folds open to its steps: skipped with its reason, unfinished with the default.
-  await ui.press({ key: 'doneagents:s-me' })
+  // (It served no task and ran no command the plugin saw: its repo is not known, so Done groups it
+  // under "other", beside the session's own repo.)
+  await ui.press({ key: 'doneagents:s-me:\u0000other' })
   await ui.press({ key: 'doneagent:s-me:sub-9' })
   lines = await texts(ui)
   expect(lines).toContain('– 17. Full-width pane toggle')
@@ -4364,17 +4368,86 @@ test('an agent on no task: the coordinator is told, a stand-in task appears on i
   await $.tool.call({ tool: TOOL, agentId: 'sub-u', now: 'w', tasks: [{ title: 'x' }] } as never)
   const stand = read(disk, `${DIR}/s-me.json`).tasks.find(x => x.auto)
   expect(stand).toMatchObject({ title: '↳ Lane U', status: 'doing', agent: 'Lane U' })
-  // It stops: the stand-in stays doing (the coordinator's to close).
-  await $.classic.SubagentStop({
-    agent_id: 'sub-u',
+  // The coordinator links its own task: the stand-in goes.
+  await update($, { tasks: [{ title: 'Real work', status: 'doing', agent: 'Lane U' }] })
+  expect(read(disk, `${DIR}/s-me.json`).tasks.some(x => x.auto)).toBe(false)
+})
+
+const stopAgent = ($: $Test, id: string) =>
+  $.classic.SubagentStop({
+    agent_id: id,
     agent_type: 'general-purpose',
     stop_hook_active: false,
     agent_transcript_path: '/t',
   } as never)
-  expect(read(disk, `${DIR}/s-me.json`).tasks.find(x => x.auto)?.status).toBe('doing')
-  // The coordinator links its own task: the stand-in goes.
-  await update($, { tasks: [{ title: 'Real work', status: 'doing', agent: 'Lane U' }] })
-  expect(read(disk, `${DIR}/s-me.json`).tasks.some(x => x.auto)).toBe(false)
+
+test('a stand-in task lives only while its agent works: gone when the agent ends, and nobody is asked to close it', async ($, on) => {
+  on('tool.call', { tool: 'Agent' }, () => ({ result: {} }) as never)
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-u', description: 'Lane U', type: 'general-purpose', status: 'running' })
+  await start($)
+  // A session with no task that could be the agent's: nothing to link, so no note about linking.
+  await update($, { now: 'coordinating' })
+  await $.tool.call({ tool: 'Agent', description: 'Lane U', prompt: 'p' } as never)
+  expect(JSON.stringify(await update($, { now: 'n' }))).not.toContain('works on no task')
+  await $.tool.call({ tool: TOOL, agentId: 'sub-u', now: 'w', tasks: [{ title: 'x' }] } as never)
+  expect(read(disk, `${DIR}/s-me.json`).tasks.map(x => x.title)).toEqual(['↳ Lane U'])
+  // While it runs, the stand-in is never what an end-of-turn check or a stale nudge asks about.
+  await world.clock.advance(30 * 60_000)
+  const prompted = (await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)) as {
+    additionalContext?: string[]
+  }
+  expect((prompted.additionalContext ?? []).join('\n')).not.toContain('Lane U')
+  // It stops: the stand-in goes with it (the agent itself is listed under Done → Agents), and the
+  // coordinator is told nothing about a task it never made.
+  await stopAgent($, 'sub-u')
+  const after = read(disk, `${DIR}/s-me.json`)
+  expect(after.tasks).toEqual([])
+  expect(after.agents?.[0]?.endedAt).not.toBeNull()
+  const answer = JSON.stringify(await update($, { now: 'next' }))
+  expect(answer).not.toContain('Lane U')
+  const stopped = (await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }
+  expect(stopped.block).toBeUndefined()
+})
+
+test('a stand-in left behind by an agent that already ended is cleared by the next scan', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  const at = new Date(T0).toISOString()
+  const old = other('s-me', 'app', T0, { now: 'coordinating', tasks: [{ title: 'Mine', status: 'doing' }] })
+  put(disk, `${DIR}/s-me.json`, {
+    ...old,
+    seq: 2,
+    tasks: [
+      ...old.tasks,
+      {
+        id: 't2',
+        title: '↳ Lane X',
+        status: 'doing',
+        agent: 'Lane X',
+        auto: true,
+        createdAt: at,
+        updatedAt: at,
+        doneAt: null,
+      },
+    ],
+    agents: [
+      {
+        id: 'sub-x',
+        label: 'Lane X',
+        now: null,
+        tasks: [],
+        seq: 0,
+        startedAt: at,
+        updatedAt: at,
+        endedAt: at,
+      },
+    ],
+  })
+  await start($)
+  await world.clock.advance(2100)
+  expect(read(disk, `${DIR}/s-me.json`).tasks.map(x => x.title)).toEqual(['Mine'])
 })
 
 test('a message sent to a running agent shows on its row as queued until the agent picks it up', async ($, on) => {

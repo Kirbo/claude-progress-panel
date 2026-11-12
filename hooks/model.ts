@@ -1310,7 +1310,12 @@ export function linkedAgent(file: SessionFile, task: Pick<Task, 'agent'>): Agent
   const name = task.agent?.trim()
   if (!name) return undefined
   const agents = file.agents ?? []
-  return agents.find(a => a.id === name) ?? agents.find(a => a.label === name)
+  // Several agents may carry one description (a lane run again): the one at work, else the newest.
+  return (
+    agents.find(a => a.id === name) ??
+    agents.find(a => a.label === name && a.endedAt === null) ??
+    agents.findLast(a => a.label === name)
+  )
 }
 
 /**
@@ -1357,6 +1362,21 @@ export function withAutoTask(file: SessionFile, label: string, nowIso: string): 
     ],
     updatedAt: nowIso,
   }
+}
+
+/**
+ * A stand-in lives only while its agent works: once that agent ended (or its row is gone), the
+ * stand-in goes too — nobody made it, so nobody would close it, and the finished agent is listed
+ * under Done → Agents. The same file when nothing goes.
+ */
+export function dropEndedAutoTasks(file: SessionFile): SessionFile {
+  const kept = file.tasks.filter(t => !t.auto || linkedAgent(file, t)?.endedAt === null)
+  return kept.length === file.tasks.length ? file : { ...file, tasks: kept }
+}
+
+/** A task of the session's own that an agent could be working on: open, and linked to none yet. */
+export function hasLinkableTask(file: SessionFile): boolean {
+  return file.tasks.some(t => !isClosed(t.status) && !t.auto && !t.agent)
 }
 
 /** Auto tasks whose agent the coordinator linked a task of its own to are no longer needed. */
@@ -1566,6 +1586,8 @@ export function staleTasks(
   return file.tasks.filter(
     t =>
       OPEN.includes(t.status) &&
+      // A stand-in is the plugin's own: its agent's row says how it is doing.
+      !t.auto &&
       nowMs - Date.parse(t.updatedAt) >= minAgeMs &&
       told.get(t.id) !== t.updatedAt &&
       !tracked(t),
@@ -1584,7 +1606,7 @@ export function untouchedDoing(
 ): Task[] {
   return file.tasks.filter(t => {
     const at = Date.parse(t.updatedAt)
-    return t.status === 'doing' && at < turnStartMs && nowMs - at >= minAgeMs && !tracked(t)
+    return t.status === 'doing' && !t.auto && at < turnStartMs && nowMs - at >= minAgeMs && !tracked(t)
   })
 }
 
