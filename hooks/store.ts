@@ -267,6 +267,13 @@ export async function forgetSession($: EngineInterface, options: PluginOptions, 
   })
 }
 
+// The session this process now runs (after a `/clear` or a resume in place) may have a file of its
+// own already — a resumed one does: its switches apply again. A plain read; nothing is written.
+export async function adoptSession($: EngineInterface, options: PluginOptions): Promise<void> {
+  const own = await readOwnPlain($, options)
+  self.sessionToggles = own === 'nowhere' ? undefined : own?.toggles
+}
+
 // Whether this session's own file holds anything yet — a plain read, nothing folded or queued.
 export async function hasReported($: EngineInterface, options: PluginOptions): Promise<boolean> {
   const own = await readOwnPlain($, options)

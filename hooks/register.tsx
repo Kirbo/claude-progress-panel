@@ -60,6 +60,7 @@ import { readSettings } from './settings'
 import {
   agentBackground,
   finishedLinks,
+  forgetSessionMemory,
   isOn,
   PANE,
   pendingAgentNotices,
@@ -73,7 +74,7 @@ import {
   takeFinishedLinks,
   updateViewing,
 } from './state'
-import { exclusive, noteTitle, nowIso, ownFile, progressDir, save } from './store'
+import { adoptSession, exclusive, noteTitle, nowIso, ownFile, progressDir, save } from './store'
 import { parseProgressCommand } from './toggles'
 
 export const register: Register = (on, options) => {
@@ -127,6 +128,9 @@ export const register: Register = (on, options) => {
   // compaction (SessionStart `compact`, never a subagent's) hands it over again.
   on('classic.SessionStart', async ($, e, next) => {
     const start = fields(e)
+    // The process goes on under another session (no `session.start` for it): that one's own switches.
+    if ((start.source === 'clear' || start.source === 'resume') && !start.agent_id)
+      await adoptSession($, options).catch(() => undefined)
     await noteTitle($, options, start.session_title)
     if (start.source === 'startup' && !start.agent_id) self.freshStart = true
     const result = await next(e)
@@ -256,6 +260,9 @@ export const register: Register = (on, options) => {
 
   on('session.end', async ($, e, next) => {
     await markEnded($, options)
+    // `/clear` (or a resume in place): the process lives on under a new session id, and what this
+    // copy remembers of the ended session must not follow it there.
+    if (e.reason === 'clear' || e.reason === 'resume') forgetSessionMemory()
     return next(e)
   })
 

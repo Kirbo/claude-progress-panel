@@ -351,6 +351,38 @@ export const self: {
   runJobs: new Map(),
 }
 
+// The conversation ended but the process goes on under another session id (`/clear`, a resume in
+// place — no `session.start` fires for it): what this copy remembers about the session that ended
+// is not the next one's. Its switches, its name, the notes it was owed, what it was told, its
+// subagents. What belongs to the process or the machine stays (settings, the manifest, the locks,
+// its own pid, what the panes have announced, whether a composed prompt carries the rule).
+export function forgetSessionMemory(): void {
+  self.sessionToggles = undefined
+  self.sessionTitle = undefined
+  self.turnStartMs = undefined
+  self.toldSwitches = undefined
+  self.togglesOptions = undefined
+  // A rule that only rode a prompt went with the conversation: the next prompt carries it again.
+  self.ruleSent = false
+  self.ruleDeferred = false
+  self.freshStart = false
+  self.ownUnreadable = undefined
+  pendingRemovals.clear()
+  pendingNotes.length = 0
+  finishedLinks.length = 0
+  pendingAgentNotices.clear()
+  staleTold.clear()
+  toldNoCi.clear()
+  promptFed.clear()
+  subagentRuleSent.clear()
+  agentBackground.clear()
+  agentRepoAsked.clear()
+  agentRunNoted.clear()
+  agentCalls.clear()
+  agentActivityAt.clear()
+  pendingCall.clear()
+}
+
 export function firstFold(key: string): boolean {
   if (foldsQueued.has(key)) return false
   foldsQueued.add(key)

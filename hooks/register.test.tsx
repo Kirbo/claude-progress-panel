@@ -3641,6 +3641,39 @@ const ctx = (r: unknown) => ((r as { additionalContext?: string[] }).additionalC
 const cmd = async ($: $Test, args: string) =>
   ((await $.command.run({ command: 'progress', args } as never)) as { text: string }).text
 
+test("after /clear the new entry starts over: the old session's switches, name and pending notes stay behind", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await $.classic.UserPromptSubmit({ prompt: 'go', session_title: 'Old name' } as never)
+  await cmd($, 'tasks off')
+  await update($, { now: 'before clear' })
+  expect(read(disk, `${DIR}/s-me.json`)).toMatchObject({
+    toggles: { tasks: false },
+    session: { title: 'Old name' },
+  })
+  // /clear: the conversation ends, the process goes on under a new id — no session.start for it.
+  await $.session.end({ reason: 'clear' } as never)
+  world.switchId('s-next')
+  const cleared = (await $.classic.SessionStart({ source: 'clear' } as never)) as {
+    additionalContext?: string[]
+  }
+  // The switch change the old conversation was owed is not handed to the new one.
+  expect((cleared.additionalContext ?? []).join(' ')).not.toContain('tasks are off')
+  expect(await cmd($, 'status')).toContain('tasks on (default)')
+  const answer = JSON.stringify(await update($, { now: 'after clear', tasks: [{ title: 'Fresh' }] }))
+  expect(answer).not.toContain('Tasks are off')
+  const next = read(disk, `${DIR}/s-next.json`)
+  expect(next.toggles).toBeUndefined()
+  expect(next.session.title).toBeUndefined()
+  expect(next.tasks.map(x => x.title)).toEqual(['Fresh'])
+  // Resumed in the same process, the first session's own switches apply again.
+  await $.session.end({ reason: 'resume' } as never)
+  world.switchId('s-me')
+  await $.classic.SessionStart({ source: 'resume', session_title: 'Old name' } as never)
+  expect(await cmd($, 'status')).toContain('tasks off (this session)')
+})
+
 test(
   'autoStart off: a new session stays dormant until /progress on — then the whole rule, once',
   { options: { autoStart: 'off' } },

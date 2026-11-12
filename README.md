@@ -314,7 +314,8 @@ Change them with `/plugin configure progress-panel@claude-progress-panel` (or
 `claude plugin configure …`, or `--config KEY=VALUE` at install).
 
 **Per session**, four switches override those defaults for the rest of that session — kept in its
-own file, so a `/reload-plugins` or a resume keeps them; a new session starts from the defaults:
+own file, so a `/reload-plugins` or a resume keeps them; a new session (a `/clear` starts one)
+starts from the defaults:
 
 - **reporting** — the master switch: off = no reporting rule, no reminders, no automatic watches,
   and `progress_update` writes nothing; the entry stays, shown *paused* in every pane.

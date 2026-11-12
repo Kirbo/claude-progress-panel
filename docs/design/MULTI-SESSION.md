@@ -794,6 +794,18 @@ agents", dims a paused one, tasks off hides its tasks, agents off its Agents sec
 `/progress on|off` (also enable/disable, resume/pause), `/progress <feature> on|off`,
 `/progress status`.
 
+**A `/clear` starts the next entry over.** `/clear` ends the session (`session.end`, reason
+`clear`) but the process — and this module's memory — goes on under a new session id, and no
+`session.start` fires for it. What the module remembered of the ended session used to follow it:
+the new entry took the old `/rename` title and behaved under the old switches while its file said
+defaults, and notes owed to the old conversation reached the new one. On `session.end` with reason
+`clear` or `resume` the module now forgets everything that belonged to that session
+(`forgetSessionMemory`: switches, title, owed notes, what was told, its subagents' bookkeeping, a
+rule that only rode a prompt — the next prompt carries it again); what belongs to the process stays.
+The classic SessionStart that follows (source `clear` / `resume`) reads the switches of the session
+the process now runs from its own file, if it has one (`adoptSession`): a session resumed in place
+gets its own switches back, a cleared one starts from the defaults.
+
 ## `/progress doctor` (0.23.0)
 
 `/progress doctor` (the `progress` command's argument, case and spaces ignored) answers one line per
