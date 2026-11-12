@@ -3915,18 +3915,24 @@ test('agents off: a subagent gets no rule and its report is refused; pipelines o
   expect(await cmd($, 'pipelines maybe')).toContain('Usage')
 })
 
-test("the pane's switches row turns this session's features off and on", async ($, on) => {
+test("a switch is turned off in Settings; the pane's switches row shows while one is off and turns it back on", async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
   await start($)
   await update($, { now: 'n', tasks: [{ title: 'Visible task' }] })
   const ui = await pane($)
   expect((await texts(ui)).join('\n')).toContain('Visible task')
-  await ui.press({ key: 'switch:tasks' })
+  // Everything on: no switches row (it said nothing and took the pane's second line).
+  expect(await ui.find({ type: 'Button', key: 'switch:tasks' })).toBeUndefined()
+  await ui.press({ key: 'settings:open' })
+  await ui.press({ key: 'setting:session:tasks' })
+  await ui.press({ key: 'settings:back' })
   expect(read(disk, `${DIR}/s-me.json`).toggles).toEqual({ tasks: false })
   expect((await texts(ui)).join('\n')).not.toContain('Visible task')
+  // One is off: the row is there, and turns it back on with one press — then goes again.
   await ui.press({ key: 'switch:tasks' })
   expect((await texts(ui)).join('\n')).toContain('Visible task')
+  expect(await ui.find({ type: 'Button', key: 'switch:tasks' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -5366,27 +5372,36 @@ test('a Now line too long for the pane is cut and folds open to its whole text',
   await wide.unmount()
 })
 
-test('the switches sit under the header, say their state, and reporting off takes a second press', async ($, on) => {
+test('the switches sit under the header while one is off, say their state, and reporting off takes a second press', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
   await start($)
   await update($, { now: 'working', tasks: [{ title: 'one' }] })
   let ui = await pane($)
+  expect(await texts(ui)).not.toContain('Switches:')
+  const inSettings = async (key: string) => {
+    await ui.press({ key: 'settings:open' })
+    await ui.press({ key })
+    await ui.press({ key: 'settings:back' })
+  }
+  // Tasks switch off at once: OFF in yellow, and the session header says what is off.
+  await inSettings('setting:session:tasks')
   let lines = await texts(ui)
   // Right under the header line, before Now: labelled as switches, each with its state.
   const header = lines.findIndex(l => l.startsWith('updated '))
   const label = lines.indexOf('Switches:')
   expect(label).toBeGreaterThan(header)
   expect(label).toBeLessThan(lines.indexOf('Now'))
-  expect(lines).toContain('● tasks on')
-  // Tasks switch off at once: OFF in yellow, and the session header says what is off.
-  await ui.press({ key: 'switch:tasks' })
+  expect(lines).toContain('● agents on')
   expect((await exactText(ui, '○ tasks OFF'))?.props.color).toBe('yellow')
-  expect((await texts(ui)).some(l => l.includes('off: tasks'))).toBe(true)
-  await ui.press({ key: 'switch:tasks' })
-  expect(await exactText(ui, '● tasks on')).toBeDefined()
-  // Reporting: the first press only asks…
-  await ui.press({ key: 'switch:reporting' })
+  expect(lines.some(l => l.includes('off: tasks'))).toBe(true)
+  // Reporting, in Settings too: the first press only asks…
+  await ui.press({ key: 'settings:open' })
+  await ui.press({ key: 'setting:session:reporting' })
+  expect(await exactText(ui, 'press again to turn OFF')).toBeDefined()
+  expect(read(disk, `${DIR}/s-me.json`).toggles).toEqual({ tasks: false })
+  await ui.press({ key: 'settings:back' })
+  // …and the row in the pane asks the same, in its place.
   expect(await exactText(ui, 'reporting: press again to turn OFF')).toBeDefined()
   expect(await exactText(ui, '● reporting on')).toBeUndefined()
   // …a second within the window turns it off, and the header shows the pause.
@@ -5403,7 +5418,7 @@ test('the switches sit under the header, say their state, and reporting off take
   await ui.press({ key: 'switch:reporting' })
   expect(await exactText(ui, 'reporting: press again to turn OFF')).toBeDefined()
   // Each switch carries what turning it changes, shown on hover.
-  expect((await texts(ui)).some(l => l.startsWith('turns tasks off for this session'))).toBe(true)
+  expect((await texts(ui)).some(l => l.startsWith('turns agents off for this session'))).toBe(true)
   await ui.unmount()
   // Too narrow for the label: the switches stay, the prefix goes.
   ui = await pane($, 40)
@@ -5424,7 +5439,9 @@ test('many presses between two prompts reach the agent as the net change: one li
   const ui = await pane($)
   // The user's run: agents off/on, pipelines off/on, tasks off, reporting off, on, tasks on, off,
   // reporting off, on, tasks on — net: nothing changed.
-  const press = (k: string) => ui.press({ key: `switch:${k}` })
+  // In Settings, where every switch is always there (the pane's own row shows only while one is off).
+  await ui.press({ key: 'settings:open' })
+  const press = (k: string) => ui.press({ key: `setting:session:${k}` })
   await press('agents')
   await press('agents')
   await press('pipelines')

@@ -262,6 +262,7 @@ export const en = {
   'settings.defaultMark': '(default)',
   'settings.on': 'on',
   'settings.off': 'OFF',
+  'settings.confirmOff': 'press again to turn OFF',
   'settings.sourceSession': '(this session)',
   'settings.sourceDefault': '(default)',
   'settings.group.reporting': 'Reporting',

@@ -393,6 +393,10 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     await readConfigTick($)
     const eff = switches(options)
     const defaultsByField = (await ownManifest($)).defaults
+    // Reporting pressed once: its row asks for the second press (`pressSwitch`).
+    const armedAt = await readArmed($)
+    const settingsNow = await $.clock.now()
+    const armedOff = (f: Feature) => armedAt?.key === `switch:${f}` && settingsNow <= armedAt.untilMs
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" gap={2}>
@@ -425,7 +429,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                       source: t(own ? 'toggle.overridden' : 'toggle.default'),
                     })}
                     plain
-                    onPress={() => void setToggle($, options, f, !eff[f])}
+                    onPress={() => void pressSwitch($, options, f, !eff[f])}
                   >
                     <Text wrap="truncate-end">{t(`toggle.feature.${f}`)}</Text>
                   </Button>,
@@ -442,10 +446,10 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                   ) : null,
                   <Text
                     key={`setting:state:${f}`}
-                    color={tint(self.settings.palette, eff[f] ? 'green' : 'yellow')}
-                    bold={own || !eff[f]}
+                    color={tint(self.settings.palette, armedOff(f) ? 'red' : eff[f] ? 'green' : 'yellow')}
+                    bold={own || !eff[f] || armedOff(f)}
                   >
-                    {t(eff[f] ? 'settings.on' : 'settings.off')}
+                    {armedOff(f) ? t('settings.confirmOff') : t(eff[f] ? 'settings.on' : 'settings.off')}
                   </Text>,
                   <Text key={`setting:source:${f}`} dimColor>
                     {t(own ? 'settings.sourceSession' : 'settings.sourceDefault')}
@@ -1588,6 +1592,8 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       t(mine[f] ? 'pane.switchOn' : 'pane.switchOff', { feature: t(`toggle.feature.${f}`) }),
     ),
   ].join(' ')
+  const switchesShown =
+    FEATURES.some(f => !mine[f]) || (armedNow?.key === 'switch:reporting' && nowMs <= armedNow.untilMs)
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" justifyContent="space-between" gap={2}>
@@ -1630,42 +1636,46 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
           />
         </Box>
       </Box>
-      {/* This session's SWITCHES, right under the header — not filters (Filter / Sort sit with the
-            list below): each names its state ("tasks on" / "tasks OFF", OFF in yellow), a hover says
-            what turning it changes, and turning reporting off — it silences the whole session — takes
-            a second press within a few seconds. Whole switches wrap, never mid-label; the prefix goes
-            where the pane is too narrow for it. */}
-      <Box flexDirection="row" gap={1} flexWrap="wrap">
-        {wouldCut(switchesLine, 0, 0) ? null : <Text dimColor>{t('pane.switchesLabel')}</Text>}
-        {FEATURES.map(f => {
-          const isArmed = armedNow?.key === `switch:${f}` && nowMs <= armedNow.untilMs
-          const label = isArmed
-            ? t('pane.switchConfirmOff', { feature: t(`toggle.feature.${f}`) })
-            : t(mine[f] ? 'pane.switchOn' : 'pane.switchOff', { feature: t(`toggle.feature.${f}`) })
-          return (
-            <Box key={`switchbox:${f}`} flexDirection="column">
-              <Button
-                key={`switch:${f}`}
-                label={label}
-                plain
-                onPress={() => void pressSwitch($, options, f, !mine[f])}
-              >
-                <Text
-                  color={tint(self.settings.palette, isArmed ? 'red' : mine[f] ? undefined : 'yellow')}
-                  bold={isArmed || !mine[f]}
-                  dimColor={mine[f] && !isArmed}
+      {/* This session's SWITCHES, right under the header — only while one of them is off (or
+            reporting is one press from it): with everything on, the row said nothing and took the
+            pane's second line; a switch is turned off in Settings or with /progress. Not filters
+            (Filter / Sort sit with the list below): each names its state ("tasks on" / "tasks OFF",
+            OFF in yellow), a hover says what turning it changes, and turning reporting off — it
+            silences the whole session — takes a second press within a few seconds. Whole switches
+            wrap, never mid-label; the prefix goes where the pane is too narrow for it. */}
+      {switchesShown ? (
+        <Box flexDirection="row" gap={1} flexWrap="wrap">
+          {wouldCut(switchesLine, 0, 0) ? null : <Text dimColor>{t('pane.switchesLabel')}</Text>}
+          {FEATURES.map(f => {
+            const isArmed = armedNow?.key === `switch:${f}` && nowMs <= armedNow.untilMs
+            const label = isArmed
+              ? t('pane.switchConfirmOff', { feature: t(`toggle.feature.${f}`) })
+              : t(mine[f] ? 'pane.switchOn' : 'pane.switchOff', { feature: t(`toggle.feature.${f}`) })
+            return (
+              <Box key={`switchbox:${f}`} flexDirection="column">
+                <Button
+                  key={`switch:${f}`}
+                  label={label}
+                  plain
+                  onPress={() => void pressSwitch($, options, f, !mine[f])}
                 >
-                  {label}
-                </Text>
-              </Button>
-              {/* Shown while the pointer is on this switch: what turning it changes. */}
-              <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }}>
-                <Text dimColor>{t(mine[f] ? `switch.hintOff.${f}` : `switch.hintOn.${f}`)}</Text>
+                  <Text
+                    color={tint(self.settings.palette, isArmed ? 'red' : mine[f] ? undefined : 'yellow')}
+                    bold={isArmed || !mine[f]}
+                    dimColor={mine[f] && !isArmed}
+                  >
+                    {label}
+                  </Text>
+                </Button>
+                {/* Shown while the pointer is on this switch: what turning it changes. */}
+                <Box position="absolute" top={1} left={0} display="none" hover={{ display: 'flex' }}>
+                  <Text dimColor>{t(mine[f] ? `switch.hintOff.${f}` : `switch.hintOn.${f}`)}</Text>
+                </Box>
               </Box>
-            </Box>
-          )
-        })}
-      </Box>
+            )
+          })}
+        </Box>
+      ) : null}
       {needs.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
           <Text bold inverse color={tint(self.settings.palette, 'magenta')}>

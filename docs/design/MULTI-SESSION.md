@@ -841,8 +841,10 @@ agents off: a subagent's call refused; tasks off: `tasks`/`order`/`remove` dropp
 `watch` dropped — each with a one-line note in the answer). What the agent hears is the NET change since it was last told (0.23.0, `netChange`):
 presses between two hand-overs coalesce — a switch toggled back says nothing, one that really
 changed one line (`changeNote`), reporting off one line, reporting back on the whole rule once
-(it already says what else is on) — handed over with the next prompt or main-loop tool call. The pane: a "Switches:" row right under the header (0.23.0, always drawn, so
-a dormant session can switch itself on). They read as switches, not filters (people pressed the
+(it already says what else is on) — handed over with the next prompt or main-loop tool call. The pane: a "Switches:" row right under the header — drawn only while a switch is off, or
+reporting is one press from it (a dormant session has reporting off, so it can still switch itself
+on there); with everything on it said nothing and took the pane's second line, and a switch is
+turned off in Settings (the same two presses for reporting) or with `/progress`. They read as switches, not filters (people pressed the
 old "This session: ● tasks" row as a list filter): each names its state ("● tasks on" / "○ tasks
 OFF", OFF in yellow, bold), a hover explains what turning it changes, and turning REPORTING off —
 it silences the whole session — asks a second press within 5 s (the pipeline ✕'s `armed` pattern);

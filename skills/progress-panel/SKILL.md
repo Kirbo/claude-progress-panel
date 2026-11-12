@@ -143,7 +143,7 @@ pane shows the pace it has measured instead of your guess; until then your guess
 ## When the person switched parts off
 
 The person can switch this session's reporting, tasks, agents and pipelines off (`/progress …`,
-the pane's switches). Each change reaches you once as a one-line note. While **reporting** is off,
+the pane's Settings; a row of switches shows under the header while one is off). Each change reaches you once as a one-line note. While **reporting** is off,
 do not call `progress_update` (it writes nothing); **tasks** off: send only `now` and `needsYou`;
 **agents** off: subagents do not report; **pipelines** off: send no `watch`. A switch turned back
 on hands you the rule again.

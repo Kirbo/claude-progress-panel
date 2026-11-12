@@ -264,8 +264,8 @@ folded "Finished" row.
 — no commands needed; **← Back** returns:
 
 - **This session** — the four switches (reporting, tasks, agents, pipelines), each showing on/off
-  and whether that is the default or this session's own choice; press to change, **reset to
-  default** to drop the session's own choice.
+  and whether that is the default or this session's own choice; press to change (turning reporting
+  off asks for a second press), **reset to default** to drop the session's own choice.
 - **Defaults for new sessions** — every option below, grouped under Reporting, Pipelines,
   Notifications, Pane and Storage & updates: press a row to step through its values; a text field
   (progress folder, custom CI command) takes what you type on Enter.
@@ -326,9 +326,10 @@ starts from the defaults:
   session's Agents section is hidden.
 - **pipelines** — off = no automatic watches, and the agent's `watch` is ignored.
 
-Switch them with the pane's **Switches:** row under its header (`● tasks on` / `○ tasks OFF` — press
-one; turning reporting off asks for a second press, since it silences the whole session; a session
-with something off says so in its header in every pane), or
+Switch them in the pane's **⚙ Settings** (turning reporting off asks for a second press, since it
+silences the whole session). While one is off, a **Switches:** row shows under the pane's header
+(`● agents on` / `○ tasks OFF` — press one to turn it), and the session says so in its header in
+every pane; with everything on, the row is not drawn. Or use
 `/progress on` / `/progress off` (reporting), `/progress <reporting|tasks|agents|pipelines> on|off`,
 and see them with `/progress status`. The agent hears the net change at its next step, however many
 presses lay between: one line per switch that really changed (none for one toggled back), and the
