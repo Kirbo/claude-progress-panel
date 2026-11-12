@@ -37,8 +37,16 @@ export const INPUT_SCHEMA = {
         type: 'object',
         additionalProperties: false,
         properties: {
-          id: { type: 'string' },
-          title: { type: 'string' },
+          id: {
+            type: 'string',
+            description:
+              'The task to update (the tool assigns t1, t2, … and its answer names them). Leave it out for a new task.',
+          },
+          title: {
+            type: 'string',
+            description:
+              'Needed for a new task. Without an id it names the open task of that exact title; a closed one is reopened by its id.',
+          },
           status: { type: 'string', enum: [...STATUSES] },
           note: {
             type: 'string',

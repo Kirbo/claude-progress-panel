@@ -121,9 +121,19 @@ in the prompt from the start). Input — every field optional, a patch, not the 
 | ---------- | ------------------------------------------------------------------------ |
 | `now`      | replaces the "now" line                                                  |
 | `needsYou` | replaces the list (`[]` clears it)                                       |
-| `tasks`    | upserts by `id` (or exact `title` when no id); new tasks get `t<n>` ids  |
+| `tasks`    | upserts by `id` (or, with no id, the exact `title` of an open task); new tasks get `t<n>` ids |
 | `remove`   | task ids to delete                                                       |
 | `clearAgents` / `dismissAgents` | remove finished (or only waiting) subagent rows — all, or by description / id (0.23.1) |
+
+**Which task a patch means.** With an `id`: that task. Without one: the OPEN task of that exact
+title — a closed one only when the patch itself closes (a result sent again), or when the person
+removed it in a pane (it stays skipped, and the answer says so). So "Verify" sent again in a second
+round is a new task, never the first round's left `done` (`titleMatch`). An id the agent chooses
+for a new task is a plain name — letters, digits, `.`, `_`, `-` (`isTaskId`): `step:…` and
+`agent:…` are how a pane's removal of a step or of a subagent's task is keyed in the sidecar
+(`removalKey`), and an id of that shape would be read as one. A stored task under an older, freer
+id is still updated by it. An id in `cancelled` (removed in a pane) never names a new task: every
+pane would hide it at once and its own ✕ could not be folded in again.
 
 **Reporting without being asked (0.13.0).** A tool description and an on-demand skill proved too
 passive: a session ran a diagnose → fix → push job with almost nothing in its entry until the user

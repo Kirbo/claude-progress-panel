@@ -25,7 +25,7 @@ send only what changed:
 | ---------- | -------------------------------------------------------------------------- |
 | `now`      | replaces your one-line summary: what you are doing, what comes next        |
 | `needsYou` | replaces your asks — only what the USER must do/decide; `[]` once answered |
-| `tasks`    | upserts `{ id?, title?, status?, note? }` — by `id`, or by exact `title`   |
+| `tasks`    | upserts `{ id?, title?, status?, note? }` — by `id`, or by the exact `title` of an open task |
 | `remove`   | task ids to delete (mistakes, not finished work — finish with `done`)      |
 | `tasks[].steps`  | subtasks `{ title, status? }`, the whole list each time (`[]` clears); the pane shows n/m |
 | `tasks[].repo`   | the repo it belongs to, when the session works in several; the pane groups by it — the agents linked to its tasks too (`""` clears) |
@@ -41,7 +41,10 @@ send only what changed:
   that stops for good leaves its open steps `unfinished` (–, "agent stopped before finishing"); the
   plugin sets that one, never send it.
 - New tasks need a `title`; the tool assigns ids (`t1`, `t2`, …) and answers with the full list —
-  use the ids afterwards.
+  use the ids afterwards. A title alone reaches only an OPEN task of that title: the same title
+  again after it closed is a new task (a second "Verify" round), so reopen a closed task by its
+  `id`. An id of your own is a plain name (letters, digits, `.`, `_`, `-`), and one the person
+  removed in the pane is never reused.
 - Timestamps (created, updated, done) are stamped for you. Never write the files yourself.
 
 ## Pipelines

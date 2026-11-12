@@ -132,8 +132,12 @@ export function applyUpdate(
       return
     }
     const status = patch.status as Status | undefined
-    const at = tasks.findIndex(t => (patch.id ? t.id === patch.id : t.title === patch.title))
-    const wasDismissed = patch.id !== undefined && dismissed.includes(patch.id)
+    // A blank id is no id.
+    const givenId = patch.id || undefined
+    const at = givenId
+      ? tasks.findIndex(t => t.id === givenId)
+      : titleMatch(tasks, patch.title, status, file.cancelled ?? [])
+    const wasDismissed = givenId !== undefined && dismissed.includes(givenId)
     // The person removed it in a pane: it stays skipped — a new id or title is a new task.
     const found = tasks[at]
     if (found && (file.cancelled ?? []).includes(found.id)) {
@@ -147,8 +151,8 @@ export function applyUpdate(
       // The person removed it: a done copy stays gone, reopening brings it back.
       if (status === undefined || isClosed(status)) return
       dismissed = dismissed.filter(id => id !== patch.id)
-    } else if (at < 0 && patch.id && !patch.title) {
-      errors.push(`tasks[${i}]: no task ${patch.id} (give a title to create one)`)
+    } else if (at < 0 && givenId && !patch.title) {
+      errors.push(`tasks[${i}]: no task ${givenId} (give a title to create one)`)
       return
     }
 
@@ -159,7 +163,23 @@ export function applyUpdate(
       }
       // An open task with nearly the same title is that task re-added under a new name: refused,
       // pointed at the id to update — a list never carries the same step twice.
-      const twin = patch.id
+      // An id the agent chooses is a plain name: `step:…` / `agent:…` are how a pane's removal of a
+      // step or of a subagent's task is written down (`removalKey`), and would be read as one.
+      if (givenId && !isTaskId(givenId)) {
+        errors.push(
+          `tasks[${i}]: id "${givenId}" is not allowed — letters, digits, ".", "_" and "-" only (or leave it out: the tool assigns one)`,
+        )
+        return
+      }
+      // An id the person removed in a pane stays that removal's: a new task under it would be hidden
+      // by every pane at once, and its own ✕ would never be folded in (`cancelTasks` removes once).
+      if (givenId && (file.cancelled ?? []).includes(givenId)) {
+        errors.push(
+          `tasks[${i}]: id "${givenId}" was removed in the Progress pane and is not reused — leave the id out (the tool assigns one)`,
+        )
+        return
+      }
+      const twin = givenId
         ? undefined
         : tasks.find(t => !isClosed(t.status) && sameTitle(t.title, patch.title ?? ''))
       if (twin) {
@@ -169,7 +189,7 @@ export function applyUpdate(
         return
       }
       const created = status ?? 'todo'
-      const id = patch.id ?? `t${seq + 1}`
+      const id = givenId ?? `t${seq + 1}`
       seq = highestSeq(seq, [id])
       tasks.push({
         id,
@@ -213,6 +233,28 @@ export function applyUpdate(
     },
     errors,
   }
+}
+
+/** An id a report may give a new task: a plain name (letters, digits, `.`, `_`, `-`). */
+export function isTaskId(id: string): boolean {
+  return /^[A-Za-z0-9_.-]+$/.test(id)
+}
+
+// The task a patch without an id means, by its exact title: the open one of that title. A closed
+// one only for a patch that closes (a result sent again) — any other is a new round's task of the
+// same name ("Verify" again), never the old one left `done`. One the person removed in a pane is
+// still that task under its title (it stays skipped: the caller says so).
+function titleMatch(
+  tasks: readonly Task[],
+  title: string | undefined,
+  status: Status | undefined,
+  cancelled: readonly string[],
+): number {
+  if (!title) return -1
+  const open = tasks.findIndex(t => t.title === title && !isClosed(t.status))
+  if (open >= 0) return open
+  const closes = status !== undefined && isClosed(status)
+  return tasks.findIndex(t => t.title === title && (closes || cancelled.includes(t.id)))
 }
 
 /** The person's ✕: the tasks go, and their ids are remembered so a re-sent done copy stays gone. */
@@ -877,7 +919,10 @@ export function sameTitle(a: string, b: string): boolean {
 function reorder(tasks: Task[], order: readonly string[], errors: string[]): Task[] {
   const named: Task[] = []
   for (const name of order) {
-    const task = tasks.find(t => t.id === name) ?? tasks.find(t => t.title === name)
+    const task =
+      tasks.find(t => t.id === name) ??
+      tasks.find(t => t.title === name && !isClosed(t.status)) ??
+      tasks.find(t => t.title === name)
     if (!task) errors.push(`order: no task ${name}`)
     else if (!named.includes(task)) named.push(task)
   }

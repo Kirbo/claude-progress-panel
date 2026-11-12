@@ -101,7 +101,9 @@ test('applyUpdate: upsert by id or exact title; doneAt set on done and cleared o
   let { file } = applyUpdate(fresh(), { tasks: [{ title: 'One' }] }, iso(T0))
   ;({ file } = applyUpdate(file, { tasks: [{ id: 't1', status: 'done', note: 'shipped' }] }, iso(T0 + HOUR)))
   expect(file.tasks[0]).toMatchObject({ status: 'done', note: 'shipped', doneAt: iso(T0 + HOUR) })
-  ;({ file } = applyUpdate(file, { tasks: [{ title: 'One', status: 'doing' }] }, iso(T0 + 2 * HOUR)))
+  // By exact title while it is open; a closed task is reopened by its id (its title would name a new one).
+  ;({ file } = applyUpdate(file, { tasks: [{ id: 't1', status: 'doing' }] }, iso(T0 + 2 * HOUR)))
+  ;({ file } = applyUpdate(file, { tasks: [{ title: 'One', note: 'again' }] }, iso(T0 + 2 * HOUR)))
   expect(file.tasks).toHaveLength(1)
   expect(file.tasks[0]).toMatchObject({ status: 'doing', doneAt: null, createdAt: iso(T0) })
 })
@@ -1249,4 +1251,89 @@ test('applyUpdate: an ask keeps the reply it waits for beside its text — the t
   ])
   expect(askReply(file, 'Push 1.0?')).toBe('yes or no')
   expect(askReply(file, 'Plug in the key')).toBeUndefined()
+})
+
+test('a title-only patch reaches an open task of that title, never a closed one: round two is a new task', () => {
+  const first = applyUpdate(fresh(), { tasks: [{ title: 'Verify', status: 'done' }] }, iso(T0)).file
+  // Round two: the same title again, no id — the old done "Verify" stays as it closed.
+  const second = applyUpdate(first, { tasks: [{ title: 'Verify' }] }, iso(T0 + 1000))
+  expect(second.errors).toEqual([])
+  expect(second.file.tasks.map(t => [t.id, t.status])).toEqual([
+    ['t1', 'done'],
+    ['t2', 'todo'],
+  ])
+  // Open and closed twins: the title names the open one.
+  const moved = applyUpdate(
+    second.file,
+    { tasks: [{ title: 'Verify', status: 'doing' }] },
+    iso(T0 + 2000),
+  ).file
+  expect(moved.tasks.map(t => [t.id, t.status])).toEqual([
+    ['t1', 'done'],
+    ['t2', 'doing'],
+  ])
+  // A closed status re-sent by title for a task that is already closed is that task (no twin).
+  const closed = applyUpdate(
+    first,
+    { tasks: [{ title: 'Verify', status: 'done', note: 'abc' }] },
+    iso(T0 + 3000),
+  )
+  expect(closed.file.tasks.map(t => [t.id, t.status, t.note])).toEqual([['t1', 'done', 'abc']])
+  // `order` by title prefers the open one too.
+  const ordered = applyUpdate(
+    applyUpdate(moved, { tasks: [{ title: 'Later' }] }, iso(T0 + 4000)).file,
+    { order: ['Later', 'Verify'] },
+    iso(T0 + 5000),
+  ).file
+  expect(ordered.tasks.map(t => t.id)).toEqual(['t3', 't2', 't1'])
+})
+
+test('a task id an agent chooses is a plain name; one the person removed is never reused', () => {
+  const made = applyUpdate(
+    fresh(),
+    {
+      tasks: [
+        { id: 'build.1_a-b', title: 'Fine' },
+        { id: 'step:t1:x', title: 'Collides with a step removal' },
+        { id: 'agent:a1:t1', title: 'Collides with an agent removal' },
+        { id: 'has space', title: 'No' },
+        { id: '', title: 'Blank id is no id' },
+      ],
+    },
+    iso(T0),
+  )
+  expect(made.file.tasks.map(t => t.id)).toEqual(['build.1_a-b', 't1'])
+  expect(made.errors).toEqual([
+    'tasks[1]: id "step:t1:x" is not allowed — letters, digits, ".", "_" and "-" only (or leave it out: the tool assigns one)',
+    'tasks[2]: id "agent:a1:t1" is not allowed — letters, digits, ".", "_" and "-" only (or leave it out: the tool assigns one)',
+    'tasks[3]: id "has space" is not allowed — letters, digits, ".", "_" and "-" only (or leave it out: the tool assigns one)',
+  ])
+  // A task stored under an older, freer id is still updated by it.
+  const old: SessionFile = {
+    ...fresh(),
+    tasks: [
+      { id: 'my task', title: 'Old', status: 'todo', createdAt: iso(T0), updatedAt: iso(T0), doneAt: null },
+    ],
+  }
+  expect(
+    applyUpdate(old, { tasks: [{ id: 'my task', status: 'doing' }] }, iso(T0)).file.tasks[0]?.status,
+  ).toBe('doing')
+  // Removed in the pane, then gone from the list (cleared): its id never names a new task — a pane
+  // would hide it at once, and its ✕ would never work again.
+  const cancelled = cancelTasks(
+    applyUpdate(fresh(), { tasks: [{ id: 'deploy', title: 'Deploy' }] }, iso(T0)).file,
+    ['deploy'],
+    iso(T0),
+    'removed',
+  ).file
+  const cleared = dismissTasks(cancelled, ['deploy'])
+  const again = applyUpdate(
+    cleared,
+    { tasks: [{ id: 'deploy', title: 'Deploy again', status: 'doing' }] },
+    iso(T0),
+  )
+  expect(again.file.tasks).toEqual([])
+  expect(again.errors).toEqual([
+    'tasks[0]: id "deploy" was removed in the Progress pane and is not reused — leave the id out (the tool assigns one)',
+  ])
 })
