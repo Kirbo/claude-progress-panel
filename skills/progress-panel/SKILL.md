@@ -33,7 +33,7 @@ send only what changed:
 | `order`    | task ids (or exact titles) in the order you will do them; the rest follow  |
 | `watch`    | CI to follow live — GitLab: `{ project: "group/name", pipeline: <id> }` or `{ project, sha }`; GitHub Actions: `{ provider: "github", project: "owner/repo", run: <id> }` or `{ provider: "github", project, sha }`; optional `label` |
 | `clearAgents` | `true` removes every subagent row that is no longer working (finished or only waiting) — when the person asks to clear the pane; `dismissAgents: [description|id]` names specific ones; a running one is never removed |
-| `unwatch`  | pipeline keys (`group/name#<id>`, `group/name@<sha>`, `gh:owner/repo#<id>`, `gh:owner/repo@<sha>`) to stop showing |
+| `unwatch`  | pipeline keys, as the answer to `watch` (or to the push) named them — `group/name#<id>`, `group/name@<sha>` (`@<sha>:<ref>` for a pushed branch or tag), `gh:owner/repo#<id>`, `gt:owner/repo#<id>` (Gitea / Forgejo), `ci:<name>#<id>` (custom command); a self-hosted forge's host comes first (`gh:git.example.com/owner/repo#<id>`) — to stop showing |
 
 - `status`: `todo` (○), `doing` (●), `blocked` (⚠, magenta like Needs you), `done` (✓), `skipped` (–, dim:
   it will not be done), `failed` (✗, red: tried and could not be done). For blocked / skipped / failed,
@@ -154,7 +154,7 @@ on hands you the rule again.
 - `/progress` opens it (a session opens it by itself only on a terminal ~144 columns wide);
   `/progress settings` opens its Settings view (this session's switches, the defaults).
 - No `progress_update` tool and no `/progress` → the plugin is not installed on this machine: see
-  the repository's `CLAUDE.md` ("Set the panel up on a machine").
+  the repository's `docs/AGENT-SETUP.md` ("Set the panel up on a machine").
 - A pipeline that shows an error, a rule that never arrived, a push that was not watched →
   `/progress doctor` names the cause and its fix (forge CLI missing / not logged in / unable to read
   this project, SSH host key, folder not writable).

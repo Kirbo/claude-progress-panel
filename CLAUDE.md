@@ -7,7 +7,7 @@ How to _use_ the panel during a task is the bundled skill:
 ## A. Set the panel up on a machine (exact steps)
 
 Follow [`docs/AGENT-SETUP.md`](docs/AGENT-SETUP.md) step by step (version check, marketplace install,
-removing older copies, store folder, `glab`, verification).
+removing older copies, store folder, the forge's CLI, verification).
 
 ## B. Working on this repo
 
@@ -28,7 +28,9 @@ removing older copies, store folder, `glab`, verification).
   drawing and its presses) → `hooks/register.tsx` (only the `on(…)` hooks). Module-level mutable
   state goes in `self` (state.ts), never a new `let` elsewhere.
 - **i18n.** Every user-facing string is a key in `locales/en.ts`, read through `t()` from
-  `hooks/i18n.ts` — never a literal in JSX or a command answer.
+  `hooks/i18n.ts` — never a literal in JSX, a command answer, a tool answer or an error on a row
+  (`scripts/i18n-literals.test.mjs` fails on one). Left literal on purpose: the tool's schema
+  descriptions (`hooks/schema.ts`, the model's API documentation) and shell commands shown to run.
 - **The module has no Node/DOM.** Everything outside goes through `$` (`$.fs`, `$.env`, …). A
   function that takes `$` must be a top-level function declaration (the validator follows `$`
   only into those) — across files too, so never an arrow function bound to a name. `$.env.get`

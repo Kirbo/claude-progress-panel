@@ -16,8 +16,13 @@ the update check (below); pipelines are read by your own `glab` / `gh` / `tea` /
 > and merge requests are welcome on
 > [GitLab](https://gitlab.com/KirboDev/agentic-coding/claude-progress-panel/-/issues), but there are
 > no promises of support or of keeping up with every Claude Code change. Worth knowing before you
-> install: it asks every session to keep its entry current, which costs a few tokens and a tool
-> call every few steps; it needs a recent Claude Code; and the pane wants a wide terminal.
+> install: it asks every session to keep its entry current, and that costs the agent tokens — about
+> 2,800 in every request of every session (the `progress_update` tool and its schema ~1,800, the
+> reporting rule in the system prompt ~1,000; both are cached with the prompt), plus a tool call
+> every few steps whose answer lists the open tasks. `/progress doctor` shows the numbers for the
+> session you are in, and the `reportingEffort` setting lowers them (`minimal`: a rule of ~500
+> tokens, `now` and Needs you only). It also needs a recent Claude Code, and the pane wants a wide
+> terminal.
 
 ## Install
 
@@ -107,7 +112,7 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   marked `(est.)` — and unfolds to what it is on and every step
   with its status and note (a step's own estimate, e.g. `~10 min`). A finished agent moves under the
   session's **Done**, in its own folded **Agents** heading, and stays until you clear it (its ✕,
-  **Clear all**) or `autoClearDoneHours` does. An open Done lists the newest 10 finished tasks (and 5 finished agents); older
+  **Clear all**) or `autoClearDoneHours` does. An open Done lists the newest 10 finished tasks (and 5 finished agents — the `doneShown` / `agentsShown` settings); older
   ones fold behind **N older**, so a long day's history never pushes the live work out of view. A subagent that cannot report (one without the tool, such as a read-only
   reviewer) still shows there by its task description while it runs. The coordinator sees its
   running subagents in every `progress_update` answer.
@@ -134,8 +139,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   keeps only the tasks whose title, note, detail or steps hold what you type, the matching text
   highlighted (a task whose hit is in its detail or steps unfolds by itself); sessions without a
   match step aside.
-- Every `▾`/`▸` line folds. **✕** removes a done task (or an ended session, or a subagent that is no
-  longer working — a finished one under Done → Agents included); **Clear all (N)** (shown while its
+- Every `▾`/`▸` line folds. **✕** removes a done task, a finished subagent (under Done → Agents) or
+  an ended session — on a task, step or subagent still at work it asks for it to stop instead (see
+  above); **Clear all (N)** (shown while its
   Done list is open) empties the whole list — the rows folded behind "N older" and the finished
   agents too; N says how many go. Ask the
   agent to clear the pane and it does the same for its finished tasks and subagent rows.
@@ -153,10 +159,14 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   the machine; `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` turns the check off.
 - **Closed the pane?** `/progress` in any session opens it again.
 - **Something not working?** `/progress doctor` checks this session's setup, one line per check
-  with its fix: the plugin version, whether this session got the reporting rule, the progress
-  folder, the repo's CI, the forge CLI for it (installed, logged in for the host, able to read
-  this project — one API call through your own `glab` / `gh` / `tea`) and whether git reaches the
-  remote (an untrusted SSH host key, missing credentials). Read-only.
+  with its fix: the plugin version, whether this session got the reporting rule, whether its
+  process could be recorded, what the plugin costs the agent (tokens in every request, and handed
+  over since the plugin loaded — estimates), the progress folder, the repo's CI, the forge CLI for
+  it (installed, logged in for the host, able to read this project — one API call through your own
+  `glab` / `gh` / `tea`) and whether git reaches the remote (an untrusted SSH host key, missing
+  credentials). It changes nothing of yours, with two small exceptions: it writes and removes a
+  probe file in the progress folder, and it forgets what the plugin remembered about this repo's CI
+  (as `/progress pipelines recheck` does), so the next push is judged afresh.
 - **In the transcript** a `progress_update` call is one quiet line (`◦ Progress · <now> · 2 tasks`);
   ctrl+o shows it in full.
 
@@ -175,7 +185,7 @@ there).
 
 **Every `git push` the agent runs is watched automatically** — no tool call: when the push lands,
 the plugin reads the repo's CI off its files (`.gitlab-ci.yml` → GitLab, `.github/workflows/` →
-GitHub Actions, `.gitea/` or `.forgejo/workflows/` → Gitea/Forgejo, else your **Custom CI command**),
+GitHub Actions, `.gitea/workflows/` or `.forgejo/workflows/` → Gitea/Forgejo, else your **Custom CI command**),
 the forge's host and project off the pushed remote (ssh or https, self-hosted included) and the
 pushed commit's sha, and watches that run. A push that fails, is rejected, is a dry run or deletes a
 branch watches nothing; a repo without CI neither, nor a push to a mirror on another kind of forge
@@ -302,7 +312,7 @@ built-in default below.
 
 | Option                  | Values                                  | Default                |
 | ----------------------- | --------------------------------------- | ---------------------- |
-| `progressDir`           | a folder (`~/` allowed)                  | `~/.claude/progress`   |
+| `progressDir`           | a folder (`~/` allowed)                  | (empty) = `~/.claude/progress`, or `progress/` under `CLAUDE_CONFIG_DIR` |
 | `autoClearDoneHours`    | 0 (never), 1, 3, 6, 12, 24, 48, 72, 168 | 0                      |
 | `keepEndedSessionsDays` | 0 (never), 1, 3, 7, 14, 30              | 7                      |
 | `sortTasksBy`           | plan, status, title, created, done      | plan                   |
@@ -368,9 +378,10 @@ or test folder) without moving everyone else's.
   stopped polling, go to a separate `<session-id>.dismissed.json`, which the session folds in on
   its next update. A file caught half-written is ignored until the next refresh — by its own
   session too, which writes nothing over a file it cannot read. The tool takes a
-  patch (`now`, `needsYou`, `tasks` upserted by id or title — with `note`, `detail`, `steps`,
-  `repo` — `remove`, `order`, `watch`, `unwatch`, `clearAgents` / `dismissAgents`); the plugin
-  stamps the times. Format:
+  patch (`now`, `needsYou`, `tasks` upserted by id or title — with `status`, `note`, `detail`,
+  `steps`, `repo`, the `agent` working on it, the `pipeline` it waits on — `remove`, `order`,
+  `watch`, `unwatch`, `clearAgents` / `dismissAgents`, and a subagent's `eta`); the plugin stamps
+  the times. Format:
   [`docs/design/MULTI-SESSION.md`](docs/design/MULTI-SESSION.md).
 - Every pane lists the folder every 2 seconds and reads a file only when it changed (plugins have
   no file-watch API). A session's own update shows at once.

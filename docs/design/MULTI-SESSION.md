@@ -1,6 +1,6 @@
-# Multi-session progress panel (v0.2)
+# Multi-session progress panel
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0 · task removal, per-list repo groups in 0.16.0 · subagent progress (Agents) in 0.17.0 · pane size settings in 0.18.0 · silent subagents listed in 0.18.1 · agent steps + finished agents under Done in 0.19.0
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0 · task removal, per-list repo groups in 0.16.0 · subagent progress (Agents) in 0.17.0 · pane size settings in 0.18.0 · silent subagents listed in 0.18.1 · agent steps + finished agents under Done in 0.19.0 · later releases (through 0.29.0: removal with ✕ at every level, switches, bounded CI polling, per-ref and multi-run commit rows, undo) are described in their own sections below, each with its version
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -9,13 +9,13 @@
 
 ```
 updated 22:05 · switchboard                      ← newest update across sessions
-⚠ Needs you (2)                                   ← bold magenta, only when non-empty
+⚠ Needs you (2)                                   ← bold, inverse magenta; only when non-empty
   • switchboard: push OK for next
   • panel: pick a name
 Now                                                ← one line per live session, newest first
   switchboard · Waiting for pipeline 3037602037
   panel · Writing the design doc
-Sessions                              [Sort: status]
+Sessions                 [Filter tasks]  [Sort: plan]
 ▾ switchboard (this session) · 22:05 · 2 open · 5 done
     ⚠ macOS build — runner restarted
     ● Screenshot refresh — capture running
@@ -23,10 +23,17 @@ Sessions                              [Sort: status]
 ▸ panel · ended 21:40 · 0 open · 3 done            ← dimmed
 ```
 
+- The sketch is the skeleton only. Since then the pane gained, top to bottom: the version, an
+  update notice and **⚙ Settings** in the header's corner; a **Switches** row, drawn only while a
+  switch is off in this session; a **Pipelines** section between Now and Sessions; the Filter
+  beside Sort; and, per session, Agents and the undo lines — each in its own section below.
 - Every `▾`/`▸` line is a Button that folds its part. Defaults: live sessions open, ended
   sessions folded, every Done section folded. Fold state is per pane (`$.state`).
-- Done rows read `✓ title  YYYY-MM-DD HH:MM  [✕]` (time the task was done, local time).
-- An open Done lists its **newest 10** finished tasks, and the finished agents its newest 5; the
+- Done rows read `✓ title  HH:MM  [✕]` — the time the task was done, local time, with the date
+  (`YYYY-MM-DD HH:MM`) when that was not today, in the `clock` setting's style (`formatTime`); a
+  failed one reads `✗ …`, a skipped one `– …`.
+- An open Done lists its **newest 10** finished tasks, and the finished agents its newest 5 (the
+  defaults of the `doneShown` and `agentsShown` settings); the
   rest fold behind `▸ N older` (`capNewest`, 0.20.0). A session's history grows all day — one had
   70 finished tasks and 59 finished agents by evening — and an open Done that long pushed the Now
   line and the open tasks out of a 20-row pane, which then looked frozen: the person saw only old
@@ -34,8 +41,10 @@ Sessions                              [Sort: status]
 - "Clear all (N)" shows only while its Done section is open (0.14.0) and says how many rows it
   clears: all of Done, the rows behind "N older" and the finished agents included.
 - The pane scrolls when taller than its window (the engine's own scrolling).
-- With anything in Needs you, the status line reads `⚠ N need you`; an item that appears from
-  another session also raises a toast once.
+- With anything in Needs you, the status line names the first ask, cut with "…" (`⚠ <session>:
+  <ask>`; `⚠ N need you — <session>: <ask>` for several; no session name while only one is open —
+  see "Needs you" further down); an ask that appears from another session also raises a toast once
+  (a session that only finished its turn never does).
 - **What is asked comes first** (`liveNeeds`): asks and permission prompts, by the newest session;
   then the sessions that only finished a turn (`autoNeeds` of kind `idle`). Every session idle for
   a minute used to add its own Needs-you line, toast every other pane and — sorted by update time
@@ -53,7 +62,8 @@ Sessions                              [Sort: status]
 
 One folder, default `<CLAUDE_CONFIG_DIR or ~/.claude>/progress/`, option `progressDir`. One file
 per session, `<session-id>.json`, written only whole. The id is the file's name and is written into
-paths, so it is a plain name (letters, digits, `.`, `_`, `-`; no separator, no `..`): a file whose
+paths, so it is a plain name (letters, digits, `.`, `_`, `-`, starting with a letter or digit; no
+separator, no `..`): a file whose
 name is not one, or whose `session.id` is not its own name, is not a session's file — never shown,
 and nothing is written or deleted through the id it claims (`isSessionId`, `parseSessionFile`; a
 stored pipeline's `project` and `id` are held to what a forge's API path allows the same way,
@@ -78,6 +88,12 @@ line without control characters: `asPipelines`). The file:
 }
 ```
 
+(Abridged: the first version's fields. Everything added since is optional and described in its
+section below — a session's `title` / `pid` / `host` / `pidStart`, `pipelines`, `agents`,
+`cancelled`, `owed`, `toggles`, `autoNeeds`, `needLinks`; a task's `detail`, `repo`, `steps`,
+`agent`, `pipeline`, `auto`, `unconfirmed`, `staleAsked`, `stopAsked`. The contract is
+`types/index.d.ts`; a file written by any earlier version still reads.)
+
 - `project` = the repository's name (`$.session.repo()`), else the last segment of the cwd.
 - **One writer per file.** A session's file is written only by that session (its tool calls,
   its `session.end`, its own auto-clear). Any pane may write only the **sidecar**
@@ -88,7 +104,8 @@ line without control characters: `asPipelines`). The file:
   drops the other's part. The plugin API has no file lock and no rename, so `writeSidecar`
   (store.ts) guards twice: one pane's changes to one sidecar run one at a time (a press and a poll
   interleave at every await), and a change computed from a copy another pane replaced meanwhile
-  (the file's mtime moved between the read and the write) is computed again from the new copy —
+  (the file's mtime moved between the read and the write) is computed again from the new copy (at
+  most `SIDECAR_RETRIES` = 3 times, then written as it is) —
   which narrows the window between two panes to the last stat and the write, and cannot close it.
   So a person's click can never
   race the session writing its status. (Exception: an *ended* session's file, whose session is
@@ -128,7 +145,8 @@ line without control characters: `asPipelines`). The file:
   rewrite of the file.
 - Forgetting an ended session deletes both its files.
 - **A blank session is never stored or shown** (0.11.0, asked for 2026-11-07: sessions that never
-  reported anything piled up in the pane). Blank = no task, no `now`, no ask, no pipeline. A
+  reported anything piled up in the pane). Blank = no task, no `now`, no ask (the agent's or an automatic one), no pipeline, no subagent
+  (`isBlank`). A
   session's file is created by its first `progress_update`, not at start; a session still blank
   at `session.end` deletes its file and sidecar instead of stamping `endedAt`; any pane deletes an
   ended blank file it finds (older versions wrote one at start), and the pane skips a live blank one.
@@ -204,7 +222,8 @@ it never breaks the prompt cache.
 prompt is rebuilt, so the section above never reached it — and the agent did not report until the
 user asked why the pane was empty (2026-11-09). `UserPromptSubmit` now closes the gap through its
 `additionalContext`: the same `prompt.reporting` text once, when this module composed no prompt,
-then — if the session's own file is still blank at a later prompt — a one-line `prompt.nudge`,
+then — if the session's own file is still blank at a later prompt (never with the prompt that
+carries the rule itself) — a one-line `prompt.nudge`,
 once (it rode every prompt until the first report, so a session of plain questions and answers,
 which has nothing to report, was reminded for as long as it ran).
 
@@ -227,7 +246,8 @@ the removal notice.
 **…and in the Agent call's own prompt (0.23.0).** A note at start or after the first tool call
 still came too late for a short subagent (3–4 calls batched in one turn, ~6 s: it was done before
 acting on it — seen with haiku and the default model, 2026-11-09). So a `tool.call` hook on the
-coordinator's `Agent` tool appends `prompt.subagent` to the call's `prompt` (`next({ ...e, prompt })`,
+coordinator's `Agent` tool appends the subagent rule for the reporting effort (`SUBAGENT_RULE`:
+`prompt.subagent`, `prompt.subagentMilestones` or `prompt.subagentMinimal`) to the call's `prompt` (`next({ ...e, prompt })`,
 checked against the tool's schema) — not for a `fork` (it inherits the session's context, rule
 included), not to a prompt already holding it, not while reporting or agents are off. Its
 description is remembered (`promptFed` — also when the prompt already held the rule), and
@@ -260,8 +280,9 @@ is never folded away, and never dimmed where it matters most: why a row is block
 reads as plain text, what waits on the person in the Needs-you colour (`reasonStyle`); only a
 note on work that goes on, is done or was set aside is dim. A subagent that stops for good (SubagentStop or the list sync, not a
 background-work pause) turns its `doing` steps `unfinished` (– dim, "agent stopped before
-finishing" unless noted); a resume turns them back to `doing`. A finished subagent folds open
-under Done → Agents to the same step list, without ✕. The plugin stamps `createdAt`,
+finishing" unless noted); a resume turns each back to what it was (`before`: `todo`, `doing` or
+`blocked`). A finished subagent folds open
+under Done → Agents to the same step list; its row has a ✕ (see "Finished agents can be cleared"). The plugin stamps `createdAt`,
 `updatedAt` and `doneAt` (set on entering a closed status, cleared on re-opening). The tool answers
 with the tasks the agent still works with (ids, statuses), so it can address them by id: the open
 ones, and those this call created or changed (`applyUpdate`'s `touched`). Tasks closed before are
@@ -295,15 +316,18 @@ points at `/progress doctor`, so a silent pane can be told from a broken one.
 | `progressDir`           | path (`~/` allowed)                      | empty    |
 | `autoClearDoneHours`    | 0 (never), 1, 3, 6, 12, 24, 48, 72, 168 | 0        |
 | `keepEndedSessionsDays` | 0 (never), 1, 3, 7, 14, 30              | 7        |
-| `sortTasksBy`           | status, title, created, done            | status   |
+| `sortTasksBy`           | plan, status, title, created, done      | plan     |
 
 - Done tasks older than `autoClearDoneHours` — and subagents that ended that long ago — are
   removed by the owning session (or by any session once the owner has ended).
-- A session that ended more than `keepEndedSessionsDays` ago is deleted (`rm -f` / `del`, the
-  plugin API has no file delete). An ended session can also be dismissed with its ✕.
+- A session that ended more than `keepEndedSessionsDays` ago is deleted (`rm -f` / `cmd /c del`, the
+  plugin API has no file delete). On Windows a path holding a character `cmd` acts on (`&`, `|`,
+  `<`, `>`, `^`, `%`, `!`, a quote — a profile folder named "R&D") is never handed to `cmd`: the
+  file stays (`isUnsafeForCmd`; review item E4, tested on the Windows branch only, never on Windows). An ended session can also be dismissed with its ✕.
 - The pane's `[Sort: …]` Button cycles the order and remembers it per user (`$.store`); the
   option is the starting value.
-- Sorting: `status` = blocked, doing, todo (open) and newest done first; `title` = A→Z;
+- Sorting: `plan` = the order the session listed its tasks in (the default since 0.14.0);
+  `status` = blocked, doing, todo (open) and newest done first; `title` = A→Z;
   `created` = oldest first; `done` = newest done first (open tasks by creation).
 
 ## Pipelines (0.4.0)
@@ -327,7 +351,7 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   as HEAD, and takes a command substitution, a heredoc body and a comment for text, never for
   commands — `git push 2>&1` once read `2>` as the remote and watched nothing. Per push, through
   `git -C <dir>`: the toplevel; the CI off its files (`ciProvider`: `.gitlab-ci.yml`,
-  `.github/workflows/*.y(a)ml`, `.gitea/` or `.forgejo/workflows/`, else the `ciCommand` setting,
+  `.github/workflows/*.y(a)ml`, `.gitea/workflows/` or `.forgejo/workflows/` (`*.y(a)ml`), else the `ciCommand` setting,
   else nothing); the remote the push named (a name or URL), else the upstream's, else `origin`,
   parsed by `parseRemote`; each pushed ref's sha (`<src>^{commit}`, a bare push = HEAD and its
   branch). Landed only: an interrupted or non-zero call watches nothing, and a branch whose
@@ -400,13 +424,19 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
 - **Push is not possible** from GitLab to a local plugin: webhooks need a reachable HTTP server,
   and GitLab's own live updates (GraphQL subscriptions over ActionCable) need a browser websocket
   session; the plugin API has neither. So the **watching session** polls through the user's
-  `glab api` every `pipelineRefreshSec` (15 s by default) — only its own pipelines, only while
-  unfinished — and stops at the first finished state. Other panes read the result from the file (no extra GitLab calls).
+  `glab api` every `pipelineRefreshSec` (15 s by default; 10, 15, 30 or 60) — only its own pipelines,
+  only what `shouldPoll` says is due: an unfinished one each round (less often once it errors, is
+  parked or has no pipeline, never once stopped — "Bounded polling" below), and a failed or canceled
+  one once a minute for 2 h (a retry restarts it). A succeeded or skipped one is never asked again. Other panes read the result from the file (no extra GitLab calls).
 - **Orphaned pipelines (0.11.1).** A session that ends (or is killed) mid-pipeline stops polling,
   and its watch used to freeze at its last state forever (seen 2026-11-07: a 69 s pipeline shown
   "running" for 9 h). Now any pane polls another session's unfinished pipeline once its
-  `checkedAt` (or `addedAt`, never checked) is older than 1 min — four of the owner's poll periods,
-  so a live owner keeps sole charge. The fresh copy goes to that session's **sidecar**
+  `checkedAt` (or `addedAt`, never checked) is older than 1 min (`ORPHAN_AFTER_MS`, fixed: four of the default 15 s poll periods — it does not
+  scale with `pipelineRefreshSec`), so a live owner polling at the default keeps sole charge. (Known
+  gap: an owner that polls a watch less often than that — `pipelineRefreshSec` 60, a parked or
+  backed-off watch — looks orphaned to the pane holding the lease, which then polls it too when
+  `shouldPoll` says its check is due: a doubled call, the newer copy wins on screen. See
+  `docs/TODO.md`.) The fresh copy goes to that session's **sidecar**
   `pipelines`, never its file (one writer). Panes draw the file's list with the sidecar's copies
   laid over it — per key, the later `checkedAt` wins; copies of unwatched keys are ignored and
   pruned on the next write — and the owner folds them into its file on its next write (a resumed
@@ -539,7 +569,8 @@ authorization.
 - **Filter:** an Input beside Sessions (pane state `filter`): case-insensitive over title, note,
   detail and step titles, open and done; a session without a match is hidden while it is on.
 - **Transcript:** a `ui.render` hook on `ToolUse` / `ToolResult` draws a progress_update call as
-  one dim line (`◦ Progress · <now> · N tasks · watching N pipelines`) and hides its result;
+  one dim line (`◦ Progress · <now> · N tasks · watching N pipelines · N asks for you`, each part
+  only when the call carried it) and hides its result;
   expanded (ctrl+o), errored or interrupted calls draw the engine's own rows.
 - **Releases:** CI's `release` job on main — every `version` without a `v<version>` tag gets a
   GitLab Release at the commit that first carried it, notes from git-cliff over the commits since
@@ -580,10 +611,12 @@ a local plugin.)
   from a subagent (`tool.call` `agentId`) upserts `agents[]` in the session file (`AgentEntry`:
   label = its Agent call's description from `$.agent.list()`, else `agent <id8>`; `now`, its own
   `tasks` through the one task logic, `etaMin` from the tool's `eta`), never the session's tasks.
-  `classic.SubagentStop` marks it finished; finished ones fold and stay (no automatic clean-up —
-  user, 2026-11-07: never auto-prune, only collapse). The pane
-  shows `▾ Agents  N running · M finished` per session (running: label, `██░░ n/m · ~N min left`,
-  its `now`; finished folded). The coordinator's own answers end with `Subagents: <label> n/m, ~N
+  `classic.SubagentStop` marks it finished; in 0.17.0 finished ones folded and stayed for good
+  (user, 2026-11-07: never auto-prune, only collapse) — since then they move under Done → Agents and
+  clear like done tasks (✕, Clear all, `autoClearDoneHours`, the tool's `clearAgents`: "Finished
+  agents can be cleared" below). The pane
+  shows `▾ Agents  N running` per session (each: label, `██░░ n/m · ~N min left`,
+  its `now`). The coordinator's own answers end with `Subagents: <label> n/m, ~N
   min left; …`. The reporting rule and the tool description tell subagents to report every few
   steps.
 - **Silent subagents are listed too (0.18.1):** an agent without the progress tool (a read-only
@@ -606,10 +639,10 @@ the pane sits (dock from 110 columns in fullscreen, inline otherwise) and when i
 
 ## Cancel + delete a running pipeline (0.23.0)
 
-Asked 2026-11-09 (item 15). A running pipeline's row gets a ✕ (`cancelpipe:<session>:<key>`, beside
-↗) when `cancellable` — a known id on GitLab or GitHub; Gitea/Forgejo (no tea cancel/delete the
+Asked 2026-11-09 (item 15). A running pipeline's row gets a red **⊘ stop** (`cancelpipe:<session>:<key>`, beside
+↗; it was one ✕ with the hide until 0.24 — see "Running pipelines" below) when `cancellable` — a known id on GitLab or GitHub; Gitea/Forgejo (no tea cancel/delete the
 plugin can rely on) and a custom command (its contract has no verbs) get none. Two presses: the
-first arms it (`armed` atom: key + `CONFIRM_MS` 5 s; the label turns "cancel + delete? ✕"), a second
+first arms it (`armed` atom: key + `CONFIRM_MS` 5 s; the label turns "⊘ cancel + delete?", or "⊘ cancel?" when the setting only cancels), a second
 within that window runs `cancelPipeline`: `glab|gh api -X POST <run>/cancel`, then by
 `runningPipelineX` (delete / cancel / off) `-X DELETE <run>`. Done → the row goes (own session:
 removed from its file; another's: a canceled copy + a dismissal in its sidecar). A failed cancel,
@@ -632,7 +665,8 @@ finished.
 steps hours after it finished — finished agents drop OUT of `$.agent.list()` (after a reload the
 list is empty), and `syncOwnAgents` skipped an empty answer, so nothing ever ended it. Now a failed
 list call is no answer (nothing changes), an empty one is: an agent still marked running that the
-list does not name and that showed no activity for `AGENT_IDLE_MS` (3 min) ends like a completed
+list does not name and whose entry was not updated for `AGENT_IDLE_MS` (3 min — a report, a
+reopen or a queued message updates it; the tool-call activity line alone does not) ends like a completed
 one (open steps `unfinished`); one the list says runs is never ended. An ended agent never keeps
 `waiting` (an older build's leftover is normalised on the next scan; the pane never shows
 "waiting" on an ended agent). And the coordinator clears agent rows itself: `progress_update`
@@ -809,8 +843,10 @@ and pushed, only to wait for CI. Three mechanisms, each closing a path:
    item of the plan untouched for 20 min is what a plan looks like (it used to draw a line per
    planned task, and a session picked up the next day one per open task).
 
-Running pipelines (same release): ✕ only hides the row (the own session's is unwatched; another
-session's is dismissed with `doneAt: null`, which `visiblePipelines` hides for good); the separate red
+Running pipelines (same release): ✕ only hides the row — through the session's sidecar for every
+session's rows, this one's included (`pipelineDismissal`: a finished row by its `finishedAt`, a
+running one as `added:<addedAt>`; `doneAt: null` is an older sidecar's form, still honoured), and
+the owning session stops watching it once the undo window is over ("Undo"); the separate red
 "⊘ stop" (two presses; setting "Pipeline ⊘ stop button", key `runningPipelineX`) cancels / deletes in
 CI — the two were one ✕ before, and a hide-meant press deleted a release pipeline.
 
@@ -945,7 +981,7 @@ it silences the whole session — asks a second press within 5 s (the pipeline �
 whole switches wrap, the label goes where the pane is too narrow. Every session's group reads its
 file's switches over this pane's defaults — its header says "· paused: reporting" or "· off: tasks,
 agents", dims a paused one, tasks off hides its tasks, agents off its Agents section. With `autoStart` off a session does not open the pane by itself. Commands:
-`/progress on|off` (also enable/disable, resume/pause), `/progress <feature> on|off`,
+`/progress on|off` (also enable/disable, resume/pause, start/stop), `/progress <feature> on|off`,
 `/progress status`.
 
 **A `/clear` starts the next entry over.** `/clear` ends the session (`session.end`, reason
@@ -965,14 +1001,33 @@ gets its own switches back, a cleared one starts from the defaults.
 `/progress doctor` (the `progress` command's argument, case and spaces ignored) answers one line per
 check, ✓ / ✗ / –, each ✗ with its fix beneath (`hooks/doctor.ts`: the classifiers + the format,
 pure; the checks in session.tsx): the version (`ownManifest`); the reporting rule (`ruleComposed` /
-`ruleSent` / not yet); the progress folder (resolved, then a probe file written and deleted); the
+`ruleSent` / not yet); whether this session's process was recorded (`ownProcess`); what the plugin
+costs the agent ("Cost to the agent" below); the progress folder (resolved, then a probe file written and deleted); the
 repo's CI (`repoCi`, the one detection the auto-watch uses); the forge CLI — ONE API call for this
 repo's project through the person's own `glab` / `gh` / `tea` (`projects/<path>`, `repos/<path>`),
 its failure classified (`classifyCliError`): not installed, not logged in for the host, or logged in
 but unable to read the project (403/404 — a token scoped to other projects, the 2026-11-09 case);
 and `git ls-remote --exit-code origin HEAD`, its whole stderr classified (`classifyGitError`: an
-untrusted SSH host key, missing credentials). Read-only apart from the probe; a custom CI command is
-not run.
+untrusted SSH host key, missing credentials). It changes two things, both the plugin's own: the
+probe file (written, then deleted) and this repo's remembered CI verdict, which it forgets
+(`forgetCiVerdicts`, as `/progress pipelines recheck` does) so the next push is judged afresh. A
+custom CI command is not run. What a CLI failure means is taken from its exit code, the plugin's own
+verdict where it has one (`CliAnswer.problem`: no `tea` login for the host) and the CLI's own error
+text — never from a sentence the plugin worded itself, which another language would word differently.
+
+### Cost to the agent (0.30.0)
+
+Review item H4: the plugin's cost to the agent could only be guessed. `costCheck` reports it: what
+rides EVERY request — the tool's description and schema (`tool.description` + `INPUT_SCHEMA` as
+JSON) and, once a system prompt carries it, the rule as last composed (`self.cost.ruleChars`) — and
+what this copy has handed over since it loaded: the tool's answers and their number (`answered`),
+the notes added to hook results (`countNotes`: what a result carries beyond what the hooks beneath
+answered — the rule on a prompt, the nudge, removals, pipeline and agent notices, the Stop block)
+and the rule appended to Agent calls' prompts (`feedAgentPrompt`). Characters ÷ 4, shown as "about
+N tokens" and called an estimate on the line itself. Memory only (`self.cost`): a reload starts it
+over, `/clear` keeps only the rule's size. At the defaults the standing part measures about 2,800
+tokens (tool ~1,800, rule ~1,000; `reportingEffort` `milestones` ~800, `minimal` ~500 for the rule)
+— the README states these, and `scripts/readme-cost.test.mjs` fails when they drift from the code.
 
 ## What an agent runs on: model and effort (0.24.0)
 
@@ -1044,3 +1099,30 @@ is lost: a task whose title would be cut folds, and unfolded shows the whole tit
 an agent's cut label shows whole when open; a Now line or Needs-you item too long for the pane
 folds open to its whole text. `displayWidth` (wide CJK / emoji 2 cells, marks and joiners 0)
 decides whether a text would be cut. Notes, details and reasons beneath a row wrap, never cut.
+
+## What a subagent is answered (0.30.0)
+
+A subagent's rule says "update each step by its `id`", but the ids are the tool's to assign and its
+answer was only a count. `summarizeAgent` now lists the steps THE CALL created or changed, one line
+each (`t3 doing Write the tests`), under "Saved under your coordinator's session (n/m steps done);
+this call set:". The first report therefore names every step with its id; a later one only what it
+set; a report that changes no step (`now`, `eta`) is the one count line as before. Deliberately not
+the coordinator's rule (open tasks in every answer): a subagent reports often and lives minutes, and
+its whole list in every answer was the cost this review cut from the coordinator's.
+
+## A reload in a running session
+
+`/reload-plugins`, an update and a changed setting all start a new copy of the module in the same
+session. What carries over: the files (everything in the store), `$.store`, and the pane's atoms —
+those under their `shape` tag, so a copy that names another tag reads an atom as empty until its
+first scan (awaited in `session.start`) fills it. What starts over: `self` and the queues in
+`state.ts` (so: one more look at `owed`, the rule handed over with the next prompt when no composed
+prompt carried it, toasts seeded quietly). Kept true across it by the file, not memory: removals owed
+to an agent (`owed`), `staleAsked` / `stopAsked`, the switches (`toggles`), and a running subagent's
+tool-call count — a new copy counts on from the entry's `calls` (`agentCallsJoined`; it used to
+restart at 1 in front of the person).
+
+Open question (2026-11-12): the pane was seen blinking for a minute or two right after a reload
+that took a session from 0.26.1 to 0.28.0 (`sessions-3` → `sessions-4`) with subagents at work,
+while the session's file was written only once in 23 s. Not reproduced, cause unproven — the
+suspects and what to look at next time are in `docs/TODO.md`.

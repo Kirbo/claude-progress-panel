@@ -1324,8 +1324,9 @@ export function costCheck(): Check {
   }
 }
 
-// `/progress doctor`: one line per check, each failed one with its fix. Cheap and read-only: one
-// probe file in the progress folder, one API call through the forge's own CLI (installed, logged in
+// `/progress doctor`: one line per check, each failed one with its fix. Cheap, and it changes nothing
+// but two things of the plugin's own (this repo's remembered CI verdict is forgotten; a probe file is
+// written and removed): one probe file in the progress folder, one API call through the forge's own CLI (installed, logged in
 // for the host AND able to read this project — a token scoped to other projects fails exactly
 // there), one `git ls-remote` (the SSH host key, the credentials).
 export async function doctor($: EngineInterface, options: PluginOptions): Promise<string> {

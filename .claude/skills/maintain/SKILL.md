@@ -61,9 +61,9 @@ Ground truth first:
 |---|---|
 | Behaviour, pane layout, status marks | `hooks/session.tsx`, `hooks/pane.tsx`, `hooks/store.ts`, `hooks/forge.ts`, wired in `hooks/register.tsx` (+ `hooks/register.test.tsx`) |
 | Status-file path rules | `hooks/paths.ts` |
-| Refresh triggers | `hooks/hooks.json` |
+| Refresh triggers | `hooks/register.tsx` (the timers and hooks; `hooks/hooks.json` only names the module) |
 | User-facing strings | `locales/*.ts` via `hooks/i18n.ts` |
-| Options (`progressFile`, ...), version | `.claude-plugin/plugin.json` `userConfig` / `version` |
+| Options (`progressDir`, ...), version | `.claude-plugin/plugin.json` `userConfig` / `version` |
 | Status-file shape and agent protocol | `skills/progress-panel/SKILL.md` |
 
 Scope the drift: `git log --oneline $(git log -1 --format=%H -- README.md)..HEAD`.
