@@ -160,12 +160,17 @@ GitHub Actions, `.gitea/` or `.forgejo/workflows/` → Gitea/Forgejo, else your 
 the forge's host and project off the pushed remote (ssh or https, self-hosted included) and the
 pushed commit's sha, and watches that run. A push that fails, is rejected, is a dry run or deletes a
 branch watches nothing; a repo without CI neither, nor a push to a mirror on another kind of forge
-(a GitLab-CI repo pushed to its GitHub mirror). It reads `cd`/`pushd` (Windows' `cd /d` and drive
-paths too), `git -C` and `git.exe`; a push through a git alias or a wrapper script it cannot see —
-there the agent's own `watch` (the rule) still covers it. **Repos without CI are remembered**, for
+(a GitLab-CI repo pushed to its GitHub mirror), nor one with the `ci.skip` push option. It reads
+the push the way an agent writes it: `cd`/`pushd` (Windows' `cd /d` and drive paths too), `git -C`
+and `git.exe`, redirects (`git push 2>&1`, `> push.log`), `&&` chains, subshells
+(`(cd x && git push)`), env prefixes and `timeout 120 git push`; a push through a git alias or a
+wrapper script it cannot see — there the agent's own `watch` (the rule) still covers it. **Each
+pushed ref is its own row**: the same commit pushed to `next` and then to `main`, or tagged, shows
+the pipeline of each. **Repos without CI are remembered**, for
 every session on the machine (`ci-memory.v1` in the progress folder): no CI files, a mirror on
-another forge, or a pushed commit that got no pipeline within 10 minutes (CI off on the forge) —
-their later pushes are skipped without any lookup, and the agent is told once per session not to
+another forge, or a pushed commit that got no pipeline within 10 minutes on a project the forge
+lists no pipeline at all for (CI off there; one commit without a pipeline in a repo that runs CI
+decides nothing) — their later pushes are skipped without any lookup, and the agent is told once per session not to
 watch them. A CI file appearing or disappearing, 7 days passing, `/progress pipelines recheck` or
 `/progress doctor` judges the repo again. The agent still `watch`es a CI run by id, or by
 commit sha (whole or abbreviated) before the run exists — another repo's, or a push made outside the
@@ -192,9 +197,23 @@ folded "Finished" row.
 - **Which host:** a watch of the session's own repo takes the host of its `origin` remote; any
   other gives `host` (e.g. `"git.example.com"`), else the forge's public one. Every call names its
   host, so it works the same from any directory.
-- **Who polls:** the session that watches a run polls it every 15 s until it finishes (no forge
-  can push to a local plugin). If that session ends or dies first, any open pane takes over after
-  a minute.
+- **A watch by commit follows every run of that commit** as one row — each GitHub workflow, a
+  GitLab branch and merge-request pipeline: unfinished while any of them is, and green only when
+  all are (else the worst outcome, with the jobs of every run under its workflow's name). Add
+  `ref: "<branch or tag>"` to follow only that ref's pipelines when the same commit is on several.
+- **Who polls:** the session that watches a run polls it every 15 s (the **Pipeline refresh**
+  setting, `pipelineRefreshSec`) until it finishes (no forge can push to a local plugin). If that
+  session ends or dies first, one open pane on the machine takes over after a minute.
+- **Polling is bounded:** a CLI that fails (not installed, logged out) is asked less and less —
+  30 s, 1 min, 2 min … 10 min — and after 8 failures in a row the watch stops; a pipeline waiting
+  on a manual job or an approval, and a commit that has no pipeline after 10 minutes, are asked
+  every 5 minutes; a commit without a pipeline is given up after an hour, any watch still
+  unfinished after a day too. A stopped watch says "stopped watching — <why>" on its row; watching
+  it again starts it over.
+- **What a watch may name:** a `sha` is 7 to 64 hex digits and a `host` a plain host name
+  (`git.example.com`, an optional `:port`); anything else is refused. Job names and links that
+  come from a forge are shown cleaned (one line, no control characters) and only http(s)
+  addresses become links.
 - **Custom CI command:** the setting is a command line with placeholders `{project}`, `{id}`,
   `{sha}`, `{host}` (each filled inside its own argument; no shell; `~/` = your home), e.g.
   `~/bin/ci-status {project} {id}`. It must print the run as JSON — or nothing / `{}` while the run

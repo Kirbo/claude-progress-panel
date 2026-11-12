@@ -44,7 +44,10 @@ paths, so it is a plain name (letters, digits, `.`, `_`, `-`; no separator, no `
 name is not one, or whose `session.id` is not its own name, is not a session's file — never shown,
 and nothing is written or deleted through the id it claims (`isSessionId`, `parseSessionFile`; a
 stored pipeline's `project` and `id` are held to what a forge's API path allows the same way,
-`isSafeProject`). The file:
+`isSafeProject`; its `sha` is 7–64 hex digits, its `host` a plain host name, its `watchRef` a ref
+name — each reaches a command line — and a pipeline that fails any of them is dropped on read;
+its and its jobs' `url` is kept only when http(s), job and stage names are cleaned to one short
+line without control characters: `asPipelines`). The file:
 
 ```json
 {
@@ -220,23 +223,32 @@ idle status from a pane that stopped refreshing.)
 
 Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits on.
 
-- The tool's `watch` (`{ project, pipeline }` or `{ project, sha }`, optional `label`) and
-  `unwatch` (keys) maintain the session file's `pipelines` list: key (`project#id`, or
-  `project@sha` until found), state, ref, url, jobs (`name`, `stage`, `state`, `durationS`),
-  `addedAt`, `checkedAt`, `finishedAt`, `error`.
+- The tool's `watch` (`{ project, pipeline }` or `{ project, sha }`, optional `ref`, `host`,
+  `label`) and `unwatch` (keys) maintain the session file's `pipelines` list: key (`project#id`
+  for a run watched by id; `project@sha` or `project@sha:ref` for a watch by commit), state, ref,
+  url, jobs (`name`, `stage`, `state`, `durationS`), `addedAt`, `checkedAt`, `finishedAt`, `error`
+  — and for a watch by commit `watchRef`, `pushed`, `runs`, plus the poller's `noPipeline`,
+  `fails`, `stopped` (see "Watching by commit" and "Bounded polling" below).
 - **A push is watched on its own (0.22.0)** — asked 2026-11-09: "add the pipelines to the panel
   automatically, if the repo at hand has pipeline … automatically detect where the CI/CD is
   running". `classic.PostToolUse` reads every Bash call (main loop and subagents) for `git push`
   (`hooks/push.ts`, pure: shell words and operators, a leading `cd`, git's `-C`/`-c`, env
-  assignments; `--dry-run`/`-n`, `--delete`/`-d`, `:ref` and `--mirror` skipped). Per push, through
+  assignments; `--dry-run`/`-n`, `--delete`/`-d`, `:ref`, `--mirror` and the `ci.skip` push option
+  skipped). The reader drops redirections with their targets (`2>&1`, `> log`, `&>/dev/null`),
+  follows subshell parentheses (a `cd` inside them ends with them), steps over shell keywords and
+  wrappers (`{`, `if`/`then`, `time`, `env`, `timeout 120`), reads `$(git branch --show-current)`
+  as HEAD, and takes a command substitution, a heredoc body and a comment for text, never for
+  commands — `git push 2>&1` once read `2>` as the remote and watched nothing. Per push, through
   `git -C <dir>`: the toplevel; the CI off its files (`ciProvider`: `.gitlab-ci.yml`,
   `.github/workflows/*.y(a)ml`, `.gitea/` or `.forgejo/workflows/`, else the `ciCommand` setting,
   else nothing); the remote the push named (a name or URL), else the upstream's, else `origin`,
   parsed by `parseRemote`; each pushed ref's sha (`<src>^{commit}`, a bare push = HEAD and its
   branch). Landed only: an interrupted or non-zero call watches nothing, and a branch whose
   remote-tracking ref is not the pushed sha (rejected) neither. The watches go through `applyWatch`
-  under the same lock as the tool's, so the agent's own `watch` of that sha is the same key, one
-  row; the result's `additionalContext` tells the agent it is watched. Label `<repo> <branch>`.
+  under the same lock as the tool's, each with the ref it landed on (key `project@sha:ref`,
+  `pushed: true`); a whole-commit `watch` of the agent's and a per-ref one of the same commit
+  never stand side by side (whichever came first covers the other), so it stays one row; the
+  result's `additionalContext` tells the agent it is watched. Label `<repo> <branch>`.
   Hardened (0.23.0): `cd /d <dir>`, `pushd`, `git.exe` and drive / UNC paths (`resolvePath` keeps
   `C:` as the root, backslashes read as slashes); a push to a KNOWN public forge of another kind
   than the repo's CI (`forgeMatches`: github.com / gitlab.com / codeberg.org) watches nothing — a
@@ -253,12 +265,44 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   (`repository/commits/<sha>`, `commits/<sha>`) and kept whole; the key stays as watched, so an
   `unwatch` by it still works. While no pipeline exists the watch waits quietly, any earlier error
   dropped; after 10 minutes it says "no pipeline for commit … — is the sha right?" (0.20.1; before,
-  a short sha showed `unknown 0/0` forever, under the last error any call had hit).
+  a short sha showed `unknown 0/0` forever, under the last error any call had hit) and carries the
+  `noPipeline` flag — what the code reads, never the row's translated words.
+- **Watching by commit = every run of the commit.** One push can start several pipelines: one run
+  per GitHub workflow, a branch and a merge-request pipeline on GitLab. `refreshCommit` lists them
+  all (`pipelines?sha=…&per_page=100`, `runs?head_sha=…&per_page=100`, Gitea `…&limit=50`), keeps
+  the ones on the watched ref (`runsOnRef`, client-side: a run on another plain branch or tag is
+  left out; a `refs/merge-requests/…` or `#12` ref, or none, belongs to every watch of the commit)
+  and reads them as ONE row (`hooks/commit.ts`, pure): unfinished while any run is (running once
+  one runs or some already finished, else queued, else manual), and only when ALL are complete
+  the worst outcome — failed, canceled, success. Before, the newest run alone decided: a fast
+  lint or labeler run going green closed the linked task as done while the real CI still ran.
+  With several runs the row's `runs` lists them (id, state, a label: the workflow's name, the
+  trigger when two share it, else the id), every job's `stage` is prefixed with its run's label,
+  the row's id and link are the run that failed it (else the newest), its clock runs from the
+  first start to the last finish, the estimate is the longest run's, and ⊘ stop cancels each run
+  still going. A finished run's jobs are read once and then kept in memory (`self.runJobs`).
+  A new run of the same commit that the forge creates only after every listed one finished green
+  (a `workflow_run` chain) is not seen: a success is never re-checked.
+- **The same commit on a second ref** (`next`, then `main` fast-forwarded to it; a tag; `git push
+  origin next main`): each ref is a watch of its own, since the ref is part of the key.
+- **Bounded polling** (`shouldPoll` + `bounded`, pure). A check that ends in an error (a missing
+  or logged-out CLI, a forge that will not answer) is counted on the pipeline (`fails`) and the
+  next one waits 30 s, 1 min, 2 min … up to 10 min; after 8 in a row the watch stops. A pipeline
+  waiting on a person (`manual`: a manual job, an approval) and a commit past the 10-minute hint
+  are asked every 5 minutes. A commit still without a pipeline an hour after it was watched
+  stops, and so does any watch still unfinished 24 h after it was added. A stopped watch
+  (`stopped`: `errors` / `nopipeline` / `age`) says "stopped watching — <why>" on its row, counts
+  as watched nowhere (the section header, a linked task's "tracked"), and the agent is told once
+  (`notice.watchStopped`); watching the same key again starts it over (`applyWatch`).
+- **One polling path** (`pollAll`, single-flight). A new watch's first check is `pollSoon`:
+  detached — the tool's answer and a push's result never wait for a forge — and when a round is
+  already running it asks that round to look once more at what is new, instead of running a
+  second round beside it (which could toast one finish twice).
 - **Push is not possible** from GitLab to a local plugin: webhooks need a reachable HTTP server,
   and GitLab's own live updates (GraphQL subscriptions over ActionCable) need a browser websocket
   session; the plugin API has neither. So the **watching session** polls through the user's
-  `glab api` every 15 s — only its own pipelines, only while unfinished — and stops at the first
-  finished state. Other panes read the result from the file (no extra GitLab calls).
+  `glab api` every `pipelineRefreshSec` (15 s by default) — only its own pipelines, only while
+  unfinished — and stops at the first finished state. Other panes read the result from the file (no extra GitLab calls).
 - **Orphaned pipelines (0.11.1).** A session that ends (or is killed) mid-pipeline stops polling,
   and its watch used to freeze at its last state forever (seen 2026-11-07: a 69 s pipeline shown
   "running" for 9 h). Now any pane polls another session's unfinished pipeline once its
@@ -267,8 +311,11 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   `pipelines`, never its file (one writer). Panes draw the file's list with the sidecar's copies
   laid over it — per key, the later `checkedAt` wins; copies of unwatched keys are ignored and
   pruned on the next write — and the owner folds them into its file on its next write (a resumed
-  session then stops polling what already finished). Two panes may both poll an orphan in the
-  same 15 s tick; the cost is one duplicate read, the results are identical.
+  session then stops polling what already finished). ONE pane does it: the holder of the
+  `orphan-poller` lease in the plugin's shared store (`holdsOrphanLease`: taken when free or run
+  out, 150 s, renewed with each round; no compare-and-set exists, so the read-back after the
+  write settles two panes asking in the same instant). Orphans are held to the same bounds as a
+  session's own pipelines (backoff, parked, stopped).
 - States: GitLab's statuses fold into queued / running / success / failed / canceled / skipped /
   manual. Header: `label #id · ref` on the left; `state  ██░░ finished/total · duration` on the right beside `↗` / `✕` (0.14.0; a second Button, folding like the name; the bar only while it runs — a finished one reads `success  15/15 · 18m30s · 20:23`), finished = success + failed +
   canceled + skipped; a finished pipeline's header ends with `· HH:MM` (0.12.0) — when it finished,
@@ -331,9 +378,9 @@ Asked for 2026-11-07: "add support for GitHub pipelines, similarly to the curren
   `gh:owner/repo@<sha>`), so a GitHub run never collides with a GitLab pipeline of the same number.
   The stored pipeline gets `provider: "github"` and `workflowId`.
 - **Fetch:** the watching session asks the user's `gh api`: `repos/<o>/<r>/actions/runs/<id>`, or
-  `…/actions/runs?head_sha=<sha>&per_page=1` (the newest run of the commit — a push that starts
-  several workflows shows the newest; others can be watched by id), then
-  `…/actions/runs/<id>/jobs?per_page=100`. Same 15 s cadence, same stop on finish.
+  `…/actions/runs?head_sha=<sha>&per_page=100` (EVERY run of the commit, read as one row — see
+  "Watching by commit"), then `…/actions/runs/<id>/jobs?per_page=100` per run. Same cadence, same
+  stop on finish.
 - **States:** GitHub splits `status` (queued / requested / pending / waiting / in_progress /
   completed) from `conclusion`. In progress → running; waiting (an environment approval) → manual;
   completed → success / neutral = success, failure / timed_out / startup_failure = failed,
@@ -664,8 +711,12 @@ Asked 2026-11-09 (item 6): the first push from a repo decides whether it runs CI
 is reused. `hooks/cimemory.ts` (pure) + `ci-memory.v1` in the progress folder (not `.json`: the
 session scan reads those), shared by the machine's sessions, read-change-write (tiny). Key = the
 repo's toplevel + the remote the push named (a mirror apart). Verdicts: `none` (no CI files, or a
-known forge of another kind), `yes`, `nopipeline` — the poller saw a by-sha watch reach the
-10-minute "no pipeline yet" hint (`markNoPipeline`, every `yes` entry on that host + project).
+known forge of another kind), `yes`, `nopipeline` — a PUSH's watch reached the 10-minute "no
+pipeline yet" hint AND the forge, asked once (`projectRuns`: `pipelines?per_page=1`,
+`actions/runs?per_page=1`), lists no pipeline for the whole project (`markNoPipeline`, every `yes`
+entry on that host + project). One commit without a pipeline proves nothing — CI on `main` only, a
+path filter, `[skip ci]` — and a `watch` the agent sent (a wrong sha) never decides it; a custom
+command's CI cannot be asked, so it is never marked.
 Each push stats the CI files (`repoCiFiles`, cheap) and compares them with the verdict's `files`:
 same files and younger than `CI_MEMORY_TTL_MS` (7 days) → a non-`yes` verdict skips every other
 lookup; else the repo is judged again. A no-CI repo's agent is told once per session per repo
