@@ -7,9 +7,6 @@ import { resolveProgressDir } from './paths'
 import type { Pipeline } from './pipelines'
 import { INPUT_SCHEMA, schemaProblems } from './schema'
 
-// The test runtime's timer (the module itself has none): lets work the mocked clock started run on.
-declare const setTimeout: (run: () => void, ms: number) => unknown
-
 type On = Parameters<TestBody>[1]
 type $Test = Parameters<TestBody>[0]
 
@@ -303,6 +300,15 @@ async function update($: $Test, input: Record<string, unknown>) {
   const problems = schemaProblems(INPUT_SCHEMA, input)
   if (problems.length > 0) throw new Error(`not the tool's input schema: ${problems.join('; ')}`)
   return $.tool.call({ tool: TOOL, ...input } as never)
+}
+
+// A new watch's first check is detached from the tool's answer (and from a push's result): the
+// answer never waits for a forge. A test that reads the pipeline right after watching it lets that
+// check run first — `settle()` moves no time, it only lets what is under way finish.
+async function watch($: $Test, world: ReturnType<typeof engine>, input: Record<string, unknown>) {
+  const answer = await update($, input)
+  await world.clock.settle()
+  return answer
 }
 
 function other(
@@ -2020,7 +2026,7 @@ test('the session polls an unfinished pipeline every 15 s; once failed, only onc
   world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
   await start($)
-  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  await watch($, world, { watch: [{ project: 'g/app', pipeline: 42 }] })
   // The pipeline + jobs reads (the one similar-runs lookup for the estimate is not a poll).
   const calls = () =>
     world.runs.filter(r => r[0] === 'glab' && !(r[r.length - 1] ?? '').includes('status=success')).length
@@ -2045,6 +2051,156 @@ test('the session polls an unfinished pipeline every 15 s; once failed, only onc
     `▸ app #42 · main · failed  1/1 · ${formatTime(isoAt(T0 + 15_000), T0 + 75_000)}`,
   )
   await ui.unmount()
+})
+
+test('a CLI that keeps failing is asked less and less, then the watch stops and says why', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  // glab is not logged in: every call fails.
+  world.failures.set(PIPE, {
+    exitCode: 1,
+    stdout: '',
+    stderr: 'glab: 401 Unauthorized (run glab auth login)',
+  })
+  await start($)
+  await update($, {
+    watch: [{ project: 'g/app', pipeline: 42 }],
+    tasks: [{ id: 'ship', title: 'Ship', status: 'doing', pipeline: 'g/app#42' }],
+  })
+  const calls = () => glabCalls(world.runs, PIPE)
+  const row = () => read(disk, `${DIR}/s-me.json`).pipelines?.[0]
+  await world.clock.settle()
+  expect(calls()).toBe(1)
+  expect(row()).toMatchObject({ fails: 1, error: 'glab: 401 Unauthorized (run glab auth login)' })
+  // Not every 15 s any more: after 30 s, then 1 min later, then 2 min later.
+  await world.clock.advance(15_000)
+  expect(calls()).toBe(1)
+  await world.clock.advance(15_000)
+  expect(calls()).toBe(2)
+  await world.clock.advance(45_000)
+  expect(calls()).toBe(2)
+  await world.clock.advance(15_000)
+  expect(calls()).toBe(3)
+  expect(row()).toMatchObject({ fails: 3 })
+  expect(row()?.stopped).toBeUndefined()
+
+  // Seven failures in, the next one due: the eighth ends the watch (seeded, not an hour of ticks).
+  const file = read(disk, `${DIR}/s-me.json`)
+  put(disk, `${DIR}/s-me.json`, {
+    ...file,
+    pipelines: (file.pipelines ?? []).map(p => ({ ...p, fails: 7, checkedAt: isoAt(T0 - 20 * 60_000) })),
+  })
+  await world.clock.advance(15_000)
+  expect(row()).toMatchObject({
+    stopped: 'errors',
+    error:
+      'stopped watching — 8 checks in a row failed: glab: 401 Unauthorized (run glab auth login). Watch it again once that is fixed.',
+  })
+  const stoppedAt = calls()
+  await world.clock.advance(30 * 60_000)
+  expect(calls()).toBe(stoppedAt)
+  // The pane no longer counts it as watched, and its row says why.
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
+    '▾ Pipelines  0 watching · 0 succeeded · 0 failed',
+  )
+  expect(await exactText(ui, row()?.error ?? '?')).toBeTruthy()
+  await ui.unmount()
+  // The agent is told once: its task no longer closes by itself.
+  const told = (await $.classic.UserPromptSubmit({ prompt: 'next' } as never)) as {
+    additionalContext?: string[]
+  }
+  expect((told.additionalContext ?? []).join(' ')).toContain('pipeline g/app#42 is no longer watched')
+
+  // Logged in again, and watched again: it starts over.
+  world.failures.delete(PIPE)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  await watch($, world, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  expect(row()).toMatchObject({ state: 'running' })
+  expect([row()?.stopped, row()?.fails, row()?.error]).toEqual([undefined, undefined, undefined])
+})
+
+test('a pipeline waiting on a manual job is asked every 5 minutes, not every 15 s', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'manual', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['deploy', 'manual']))
+  await start($)
+  await watch($, world, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ state: 'manual' })
+  expect(glabCalls(world.runs, PIPE)).toBe(1)
+  await world.clock.advance(4 * 60_000 + 45_000)
+  expect(glabCalls(world.runs, PIPE)).toBe(1)
+  // Someone pressed play meanwhile: the next look sees it, and it is polled as running again.
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  await world.clock.advance(15_000)
+  expect(glabCalls(world.runs, PIPE)).toBe(2)
+  await world.clock.advance(15_000)
+  expect(glabCalls(world.runs, PIPE)).toBe(3)
+})
+
+test('a commit that never gets a pipeline is asked rarely, then given up after an hour', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  const sha = 'b'.repeat(40)
+  const list = `projects/g%2Fapp/pipelines?sha=${sha}&per_page=100`
+  world.gitlab.set(list, [])
+  await watch($, world, { watch: [{ project: 'g/app', sha }] })
+  ageWatches(disk, 11)
+  await world.clock.advance(15_000)
+  const row = () => read(disk, `${DIR}/s-me.json`).pipelines?.[0]
+  expect(row()).toMatchObject({ noPipeline: true })
+  // Past the hint it is parked: one look in the next five minutes, not twenty.
+  const before = glabCalls(world.runs, list)
+  await world.clock.advance(4 * 60_000 + 45_000)
+  expect(glabCalls(world.runs, list)).toBe(before)
+  await world.clock.advance(15_000)
+  expect(glabCalls(world.runs, list)).toBe(before + 1)
+  // An hour after it was added: stopped.
+  ageWatches(disk, 61)
+  await world.clock.advance(5 * 60_000)
+  expect(row()).toMatchObject({
+    stopped: 'nopipeline',
+    error:
+      'stopped watching — no pipeline for commit bbbbbbbbbbbb after 60 min. Watch it again if one is coming.',
+  })
+  const end = glabCalls(world.runs, list)
+  await world.clock.advance(10 * 60_000)
+  expect(glabCalls(world.runs, list)).toBe(end)
+})
+
+test("a watch's first check never holds the tool's answer, and joins the round already running", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  const OTHER = 'projects/g%2Fapp/pipelines/43'
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  world.gitlab.set(OTHER, { id: 43, status: 'failed', ref: 'main' })
+  world.gitlab.set(`${OTHER}/jobs?per_page=100`, jobsOf(['lint', 'failed']))
+  await start($)
+  // GitLab does not answer: the tool's answer comes back all the same.
+  let release = () => {}
+  world.net.hold = new Promise<void>(r => {
+    release = r
+  })
+  const answer = await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  expect(JSON.stringify(answer)).toContain('watching g/app#42')
+  await world.clock.settle()
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ state: 'unknown', checkedAt: null })
+  // A second watch while that round still waits: no second round beside it.
+  await update($, { watch: [{ project: 'g/app', pipeline: 43 }] })
+  await world.clock.advance(15_000)
+  expect(world.runs.filter(r => r[0] === 'glab')).toHaveLength(1)
+  release()
+  world.net.hold = undefined
+  await world.clock.settle()
+  // The one round did both: each pipeline read once, the finish toasted once.
+  expect(glabCalls(world.runs, PIPE)).toBe(1)
+  expect(glabCalls(world.runs, OTHER)).toBe(1)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.map(p => p.state)).toEqual(['running', 'failed'])
+  expect(world.toasts.filter(x => x.startsWith('Pipeline'))).toEqual(['Pipeline app failed'])
 })
 
 test('an update sent while the session polls its pipeline is never overwritten by the poll', async ($, on) => {
@@ -2102,14 +2258,15 @@ test('a poll still waiting on the forge is never joined by the next one', async 
       r()
     }
   })
+  // The advance resolves once all three rounds came due and each got as far as it can: the first
+  // waits on GitLab, the other two found it running and did nothing.
   const polling = world.clock.advance(45_000)
   await first
-  // Let every round that came due get as far as it can.
-  await new Promise<void>(r => setTimeout(() => r(), 100))
+  await polling
   expect(held).toBe(1)
   release()
   world.net.hold = undefined
-  await polling
+  await world.clock.settle()
   // The one round that ran: the pipeline and its jobs.
   expect(world.runs.filter(argv => argv[0] === 'glab').length - before).toBeGreaterThanOrEqual(2)
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ state: 'running' })
@@ -2128,7 +2285,7 @@ test("every forge call names its host: the remote's for the session's own repo, 
   })
   world.github.set('ghe.example.com repos/o/r/actions/runs/9/jobs?per_page=100', { jobs: [] })
   await start($)
-  await update($, {
+  await watch($, world, {
     watch: [
       { project: 'team/app', pipeline: 7 },
       { provider: 'github', project: 'o/r', run: 9, host: 'ghe.example.com' },
@@ -2162,7 +2319,7 @@ test('a Gitea/Forgejo run is read through tea, with the login on its host', asyn
   })
   world.tea.api.set('cb /repos/team/app/actions/runs/77/jobs', [{ id: 1, name: 'build', status: 'running' }])
   await start($)
-  await update($, {
+  await watch($, world, {
     watch: [
       { provider: 'gitea', project: 'team/app', sha: 'abc1234', host: 'codeberg.org' },
       { provider: 'gitea', project: 'team/app', run: 3, host: 'gitea.example.com' },
@@ -2199,7 +2356,7 @@ test(
       }),
     )
     await start($)
-    await update($, { watch: [{ provider: 'command', project: 'jenkins/nightly', pipeline: 12 }] })
+    await watch($, world, { watch: [{ provider: 'command', project: 'jenkins/nightly', pipeline: 12 }] })
     expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({
       key: 'ci:jenkins/nightly#12',
       state: 'running',
@@ -2212,9 +2369,9 @@ test(
 
 test('a custom-command watch without the setting says what to set', async ($, on) => {
   const disk = makeDisk()
-  engine(on, disk)
+  const world = engine(on, disk)
   await start($)
-  await update($, { watch: [{ provider: 'command', project: 'jenkins/nightly', pipeline: 12 }] })
+  await watch($, world, { watch: [{ provider: 'command', project: 'jenkins/nightly', pipeline: 12 }] })
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toBe(
     'no custom CI command set (plugin settings: Custom CI command)',
   )
@@ -2251,7 +2408,7 @@ test('a watch by an abbreviated sha is resolved to the whole commit id and finds
     { id: 42, status: 'success', ref: 'main' },
   ])
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'success']))
-  await update($, { watch: [{ project: 'g/app', sha: '70a2803', label: 'app' }] })
+  await watch($, world, { watch: [{ project: 'g/app', sha: '70a2803', label: 'app' }] })
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({
     key: 'g/app@70a2803',
     sha: full,
@@ -2294,7 +2451,7 @@ test('a failed pipeline that is retried shows running again, then its new outcom
   world.gitlab.set(PIPE, { id: 42, status: 'failed', ref: 'main', finished_at: new Date(T0).toISOString() })
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['check', 'failed']))
   await start($)
-  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  await watch($, world, { watch: [{ project: 'g/app', pipeline: 42 }] })
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ state: 'failed' })
 
   // Someone presses Retry: the job runs again.
@@ -2329,7 +2486,7 @@ test('a CLI that fails with its answer on stdout shows a short error, never the 
   const body = JSON.stringify(jobsOf(['check', 'failed']))
   world.failures.set(`${PIPE}/jobs?per_page=100`, { exitCode: 1, stdout: body, stderr: '' })
   await start($)
-  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  await watch($, world, { watch: [{ project: 'g/app', pipeline: 42 }] })
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toBe('glab exited 1')
 })
 
@@ -2499,6 +2656,31 @@ test("a stopped session's unfinished pipeline is refreshed by any pane, into its
     pipelines: [{ key: 'g/site#7', state: 'success' }],
   })
   await ui.unmount()
+})
+
+test("an ended session's pipeline is polled by ONE pane: the others leave it while that pane's lease holds", async ($, on) => {
+  const disk = makeDisk()
+  const theirs = other('s-other', 'site', T0 - HOUR, {})
+  theirs.session.endedAt = isoAt(T0 - HOUR)
+  theirs.pipelines = [sitePipe()]
+  put(disk, `${DIR}/s-other.json`, theirs)
+  const world = engine(on, disk)
+  world.gitlab.set(SITE, { id: 7, status: 'running', ref: 'main' })
+  world.gitlab.set(`${SITE}/jobs?per_page=100`, jobsOf(['deploy', 'running']))
+  // Another pane on this machine polls orphans right now.
+  world.store.set('orphan-poller', { id: 's-pane-2', untilMs: T0 + 100_000 })
+  await start($)
+  await world.clock.advance(90_000)
+  expect(glabCalls(world.runs, SITE)).toBe(0)
+  expect(world.store.get('orphan-poller')).toEqual({ id: 's-pane-2', untilMs: T0 + 100_000 })
+  // That pane went away: its lease ran out, this one takes over — and keeps the lease while it polls.
+  await world.clock.advance(15_000)
+  expect(glabCalls(world.runs, SITE)).toBe(1)
+  expect(world.store.get('orphan-poller')).toEqual({ id: 's-me', untilMs: T0 + 105_000 + 150_000 })
+  // A lease no pane could have written (a clock that jumped) holds nobody off.
+  world.store.set('orphan-poller', { id: 's-pane-2', untilMs: T0 + 99 * HOUR })
+  await world.clock.advance(75_000)
+  expect(glabCalls(world.runs, SITE)).toBe(2)
 })
 
 test("a live session's pipeline is left to its owner until its checks stop for 1 min", async ($, on) => {
@@ -2880,7 +3062,7 @@ test('a pipeline left without an estimate gets one once similar runs exist (the 
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
   world.gitlab.set(list, [])
   await start($)
-  await update($, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  await watch($, world, { watch: [{ project: 'g/app', pipeline: 42 }] })
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.estimateS).toBeNull()
 
   world.gitlab.set(list, [{ id: 41, status: 'success' }])
@@ -3017,7 +3199,7 @@ test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, �
   world.github.set(`${REPO}/actions/runs/899/jobs?per_page=100`, { total_count: 0, jobs: [] })
   world.github.set(`${REPO}/actions/runs/898/jobs?per_page=100`, { total_count: 0, jobs: [] })
   await start($)
-  await update($, { watch: [{ provider: 'github', project: 'Kirbo/ha', sha: 'abc1234' }] })
+  await watch($, world, { watch: [{ provider: 'github', project: 'Kirbo/ha', sha: 'abc1234' }] })
 
   const saved = read(disk, `${DIR}/s-me.json`).pipelines?.[0]
   expect(saved?.key).toBe('gh:Kirbo/ha@abc1234')

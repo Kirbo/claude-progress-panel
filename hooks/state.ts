@@ -40,6 +40,12 @@ export const ORPHAN_AFTER_MS = 4 * PIPELINE_POLL_MS
 // Similar-run estimates are cached in the plugin's store this long, per project + ref + source.
 export const ESTIMATE_TTL_MS = 24 * 3_600_000
 
+// Orphans are polled by ONE pane on the machine: the one holding this lease in the plugin's store
+// (shared by every session). The holder renews it with each round; when it goes away the lease
+// runs out and the next pane takes over.
+export const ORPHAN_LEASE_KEY = 'orphan-poller'
+export const ORPHAN_LEASE_MS = 150_000
+
 export const FINISHED_KEY = 'pipelines-finished'
 
 // `-2` (0.14.0): `plan` became the default, so a choice remembered from before starts over once.
@@ -308,6 +314,9 @@ export const self: {
    *  still running skips, so slow disks or forges never stack rounds that land out of order. */
   scanning: boolean
   polling: boolean
+  /** A watch was added while a poll round ran: the round looks once more (at what is new) before
+   *  it ends, so a new watch never waits a whole interval for its first check. */
+  pollWanted: boolean
   /** `tea`'s logins, as last listed (cached a minute). */
   teaLogins: { atMs: number; text: string } | undefined
   /** The jobs of a finished run of a watch by commit (`<key>#<run id>`), as last read: a run that
@@ -331,6 +340,7 @@ export const self: {
   ownProcess: undefined,
   scanning: false,
   polling: false,
+  pollWanted: false,
   teaLogins: undefined,
   runJobs: new Map(),
 }

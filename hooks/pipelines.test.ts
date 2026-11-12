@@ -3,6 +3,8 @@ import { expect, test } from 'claude-code/testing'
 import type { Pipeline, PipelineJob } from './pipelines'
 import {
   applyWatch,
+  backoffMs,
+  bounded,
   cleanText,
   estimateFrom,
   formatDuration,
@@ -15,9 +17,13 @@ import {
   jobCounts,
   jobEstimatesFrom,
   jobState,
+  MAX_POLL_FAILS,
   NO_PIPELINE_HINT_MS,
+  NO_PIPELINE_STOP_MS,
+  newlyWatched,
   oneLine,
   overlayPipelines,
+  PARKED_CHECK_MS,
   parseCommitSha,
   parseJobs,
   parsePipeline,
@@ -31,6 +37,7 @@ import {
   stageGroups,
   stillWaiting,
   visiblePipelines,
+  WATCH_MAX_MS,
 } from './pipelines'
 
 const T0 = Date.UTC(2026, 10, 6, 20, 0, 0)
@@ -620,4 +627,94 @@ test('job names and addresses from a forge are cleaned as they are read', () => 
   expect(
     parsePipeline(JSON.stringify({ id: 1, status: 'running', web_url: 'file:///x' }))?.url,
   ).toBeUndefined()
+})
+
+const STOP_TEXTS = {
+  errors: (error: string, fails: number) => `stopped: ${error} x${fails}`,
+  nopipeline: () => 'stopped: no pipeline',
+  age: () => 'stopped: too old',
+}
+
+test('shouldPoll: an erroring watch backs off, a parked one is asked rarely, a stopped one never', () => {
+  const at = iso(T0)
+  expect([1, 2, 3, 4, 5, 6, 7].map(backoffMs)).toEqual([
+    30_000, 60_000, 120_000, 240_000, 480_000, 600_000, 600_000,
+  ])
+  const failing = watched({ state: 'unknown', checkedAt: at, fails: 2, error: 'glab: not found' })
+  expect(shouldPoll(failing, T0 + 59_999)).toBe(false)
+  expect(shouldPoll(failing, T0 + 60_000)).toBe(true)
+  // Waiting on a person (a manual job, an approval) or on a pipeline that never came: every 5 min.
+  for (const parked of [
+    watched({ state: 'manual', checkedAt: at }),
+    watched({ state: 'unknown', checkedAt: at, noPipeline: true, error: 'none' }),
+  ]) {
+    expect(shouldPoll(parked, T0 + PARKED_CHECK_MS - 1)).toBe(false)
+    expect(shouldPoll(parked, T0 + PARKED_CHECK_MS)).toBe(true)
+  }
+  expect(shouldPoll(watched({ state: 'running', checkedAt: at, stopped: 'errors' }), T0 + HOUR_MS)).toBe(
+    false,
+  )
+  // Never checked: asked at once, whatever else it carries.
+  expect(shouldPoll(watched({ state: 'unknown', checkedAt: null, fails: 3 }), T0)).toBe(true)
+  // A stopped watch is nobody's orphan either.
+  expect(isOrphaned(watched({ stopped: 'age' }), T0 + HOUR_MS, 60_000)).toBe(false)
+})
+
+test('bounded: errors in a row are counted and end the watch; so do an endless wait and old age', () => {
+  const before = watched({ state: 'running' })
+  const ok = { ...before, checkedAt: iso(T0 + 15_000) }
+  expect(bounded(before, ok, T0 + 15_000, STOP_TEXTS)).toEqual(ok)
+  // An error: counted; the next good answer starts the count over.
+  const bad = { ...ok, error: 'glab: command not found' }
+  const once = bounded(before, bad, T0 + 15_000, STOP_TEXTS)
+  expect(once).toMatchObject({ fails: 1, error: 'glab: command not found' })
+  expect(once.stopped).toBeUndefined()
+  expect(bounded(once, ok, T0 + 45_000, STOP_TEXTS).fails).toBeUndefined()
+  // The last straw: stopped, and the row says why.
+  const last = bounded({ ...before, fails: MAX_POLL_FAILS - 1 }, bad, T0 + HOUR_MS, STOP_TEXTS)
+  expect(last).toMatchObject({
+    stopped: 'errors',
+    fails: MAX_POLL_FAILS,
+    error: `stopped: glab: command not found x${MAX_POLL_FAILS}`,
+  })
+  // "No pipeline for this commit" is no error to count — but it does not wait forever.
+  const none = { ...ok, state: 'unknown' as const, noPipeline: true as const, error: 'none yet' }
+  expect(bounded(before, none, T0 + NO_PIPELINE_STOP_MS, STOP_TEXTS)).toEqual(none)
+  expect(bounded(before, none, T0 + NO_PIPELINE_STOP_MS + 1, STOP_TEXTS)).toMatchObject({
+    stopped: 'nopipeline',
+    error: 'stopped: no pipeline',
+  })
+  // Unfinished for a day: stopped. A finished pipeline is never stopped, and drops the count.
+  expect(bounded(before, ok, T0 + WATCH_MAX_MS + 1, STOP_TEXTS)).toMatchObject({
+    stopped: 'age',
+    error: 'stopped: too old',
+  })
+  const done = { ...ok, state: 'success' as const, finishedAt: iso(T0 + WATCH_MAX_MS + 1) }
+  expect(bounded({ ...before, fails: 3 }, done, T0 + WATCH_MAX_MS + 1, STOP_TEXTS)).toEqual(done)
+})
+
+test('applyWatch: watching a stopped pipeline again starts it over', () => {
+  const stopped = watched({
+    stopped: 'errors',
+    fails: MAX_POLL_FAILS,
+    error: 'stopped watching',
+    checkedAt: iso(T0),
+  })
+  const { list } = applyWatch(
+    [stopped],
+    [{ project: stopped.project, pipeline: stopped.id as number }],
+    [],
+    iso(T0 + HOUR_MS),
+  )
+  expect(list).toHaveLength(1)
+  expect(list[0]).toMatchObject({ key: stopped.key, addedAt: iso(T0 + HOUR_MS), checkedAt: null })
+  expect([list[0]?.stopped, list[0]?.fails, list[0]?.error]).toEqual([undefined, undefined, undefined])
+  // It counts as newly watched (its first check starts at once); an untouched one does not.
+  expect(newlyWatched([stopped], list)).toEqual(list)
+  expect(newlyWatched(list, list)).toEqual([])
+  // One still being watched is left exactly as it is.
+  const live = watched()
+  expect(
+    applyWatch([live], [{ project: live.project, pipeline: live.id as number }], [], iso(T0 + HOUR_MS)).list,
+  ).toEqual([live])
 })

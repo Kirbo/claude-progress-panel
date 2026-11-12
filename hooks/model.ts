@@ -1431,7 +1431,8 @@ export function taskPipeline(file: SessionFile, task: Task): Pipeline | undefine
  *  the caller's to judge — it knows which agents run.) */
 export function trackedByPipeline(file: SessionFile, task: Task): boolean {
   const p = taskPipeline(file, task)
-  return p !== undefined && !PIPELINE_DONE.has(p.state)
+  // A watch the plugin stopped polling tracks nothing: its task is the agent's to settle again.
+  return p !== undefined && !PIPELINE_DONE.has(p.state) && !p.stopped
 }
 
 /**

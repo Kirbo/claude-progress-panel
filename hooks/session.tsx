@@ -7,7 +7,7 @@ import { ciFiles, remembered, repoKey, withVerdict } from './cimemory'
 import type { Check } from './doctor'
 import { classifyCliError, classifyGitError, formatChecks } from './doctor'
 import { fields } from './events'
-import { ghApi, glabApi, pollPipelines, runCli, teaApi } from './forge'
+import { ghApi, glabApi, pollSoon, runCli, teaApi } from './forge'
 import { forgeMatches, parseRemote } from './forges'
 import { deleteFile, processAlive } from './host'
 import { t, tn } from './i18n'
@@ -51,7 +51,7 @@ import {
 } from './model'
 import { baseName } from './paths'
 import type { WatchInput } from './pipelines'
-import { applyWatch, oneLine } from './pipelines'
+import { applyWatch, newlyWatched, oneLine } from './pipelines'
 import { ciProvider, parsePushes, pushedRef, resolvePath } from './push'
 import { NUMBER_DEFAULTS } from './settings'
 import {
@@ -533,8 +533,9 @@ export async function runUpdate(
     return { updated, watched, file }
   })
   await announce($, await readSessions($), file.session.id)
-  const added = watched.list.filter(p => !(updated.file.pipelines ?? []).some(old => old.key === p.key))
-  if (added.length > 0) await pollPipelines($, options)
+  const added = newlyWatched(updated.file.pipelines ?? [], watched.list)
+  // Their first check starts now, but the answer does not wait for a forge (`pollSoon`).
+  if (added.length > 0) pollSoon($, options)
   const notice = [takeRemovalNotice(), ...takeFinishedLinks()].filter(Boolean).join('\n')
   const clearedLines = [
     agentClearing.dismissed.length
@@ -871,7 +872,7 @@ export async function watchPushes(
     const own = await ownFile($, dir)
     const before = own.pipelines ?? []
     const watched = applyWatch(before, watches, [], at, undefined, 'push')
-    const added = watched.list.filter(p => !before.some(old => old.key === p.key))
+    const added = newlyWatched(before, watched.list)
     let file: SessionFile = { ...own, pipelines: watched.list }
     // Each new pipeline links itself to the one `doing` task of its repo: that task now closes when
     // the pipeline does (never kept open by hand to wait for CI).
@@ -890,7 +891,7 @@ export async function watchPushes(
   })
   if (added.length === 0) return []
   await announce($, await readSessions($), file.session.id)
-  await pollPipelines($, options)
+  pollSoon($, options)
   return added.map(p => p.key)
 }
 

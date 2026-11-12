@@ -585,7 +585,8 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
   const stoppedOther = states.filter(st => st === 'canceled' || st === 'skipped').length
   const sectionParts = {
     fold: isSectionOpen ? '▾' : '▸',
-    watching: states.filter(st => !isFinished(st)).length,
+    // A watch the plugin stopped polling is not being watched (its row says why).
+    watching: pipelineRows.filter(r => !isFinished(r.pipeline.state) && !r.pipeline.stopped).length,
     succeeded: states.filter(st => st === 'success').length,
     failed: states.filter(st => st === 'failed').length,
     rest: stoppedOther > 0 ? t('pane.pipelinesCanceled', { n: stoppedOther }) : '',

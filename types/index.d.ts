@@ -165,6 +165,13 @@ export type Pipeline = {
   /** A watch by commit that has waited past the hint time without any pipeline for that commit
    *  (the row says so through `error`; this flag is what the code reads). */
   noPipeline?: true
+  /** How many checks in a row ended in an error (a missing or logged-out CLI, a forge that will
+   *  not answer): each one doubles the wait before the next. */
+  fails?: number
+  /** Nobody polls this watch any more, and why: too many errors in a row, no pipeline ever came
+   *  for the commit, or still unfinished after a day. `error` says it on the row. Watching it
+   *  again starts it over. */
+  stopped?: 'errors' | 'nopipeline' | 'age'
   /** GitLab's start / finish of the pipeline and its own `duration` (seconds), when known. */
   startedAt?: string
   pipelineFinishedAt?: string

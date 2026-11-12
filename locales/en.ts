@@ -84,6 +84,13 @@ export const en = {
   'pipe.ref': ' · {ref}',
   'pipe.noCommand': 'no custom CI command set (plugin settings: Custom CI command)',
   'pipe.noneYet': 'no pipeline for commit {sha} after {minutes} min — is the sha right?',
+  'pipe.stopped.errors':
+    'stopped watching — {fails} checks in a row failed: {error}. Watch it again once that is fixed.',
+  'pipe.stopped.nopipeline':
+    'stopped watching — no pipeline for commit {sha} after {minutes} min. Watch it again if one is coming.',
+  'pipe.stopped.age': 'stopped watching — still unfinished after {hours} h. Watch it again to go on.',
+  'notice.watchStopped':
+    'Progress pane: pipeline {key} is no longer watched ({why}) A task waiting on it does not close by itself now.',
   'pipe.dismiss': '  ✕  ',
   // Opens the pipeline's / job's GitLab page in the browser (an OSC 8 link; padded like ✕ for a wider hitbox).
   'pipe.open': ' ↗ ',

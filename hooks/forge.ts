@@ -25,12 +25,15 @@ import type { SessionFile } from './model'
 import { settleLinkedTasks } from './model'
 import type { Pipeline, PipelineHead, PipelineJob } from './pipelines'
 import {
+  bounded,
+  cleanText,
   estimateFrom,
   isFinished,
   isFullSha,
   isOrphaned,
   jobEstimatesFrom,
   NO_PIPELINE_HINT_MS,
+  NO_PIPELINE_STOP_MS,
   oneLine,
   overlayPipelines,
   parseCommitSha,
@@ -39,9 +42,19 @@ import {
   parseSampleIds,
   shouldPoll,
   stillWaiting,
+  WATCH_MAX_MS,
 } from './pipelines'
 import { notifiesFinish } from './settings'
-import { ESTIMATE_TTL_MS, ORPHAN_AFTER_MS, optionString, pendingNotes, readSessions, self } from './state'
+import {
+  ESTIMATE_TTL_MS,
+  ORPHAN_AFTER_MS,
+  ORPHAN_LEASE_KEY,
+  ORPHAN_LEASE_MS,
+  optionString,
+  pendingNotes,
+  readSessions,
+  self,
+} from './state'
 import { exclusive, nowIso, ownFile, progressDir, save, updateCiMemory, writeSidecar } from './store'
 
 export const TEA_LOGINS_TTL_MS = 60_000
@@ -395,18 +408,49 @@ export async function refreshPipeline(
   return refreshRun($, p, p.id, at)
 }
 
-// The session's own unfinished pipelines, refreshed and saved (only when something moved).
-export async function pollPipelines($: EngineInterface, options: PluginOptions): Promise<void> {
+// One pipeline's check, held to the bounds of a watch (`bounded`): what it says on its row when
+// the plugin stops polling it.
+export async function checked(
+  $: EngineInterface,
+  options: PluginOptions,
+  p: Pipeline,
+  at: string,
+): Promise<Pipeline> {
+  return bounded(p, await refreshPipeline($, options, p, at), Date.parse(at), {
+    errors: (error, fails) => t('pipe.stopped.errors', { fails, error: oneLine(error) }),
+    nopipeline: () =>
+      t('pipe.stopped.nopipeline', {
+        sha: (p.sha ?? '').slice(0, 12),
+        minutes: NO_PIPELINE_STOP_MS / 60_000,
+      }),
+    age: () => t('pipe.stopped.age', { hours: WATCH_MAX_MS / 3_600_000 }),
+  })
+}
+
+// The session's own pipelines that are due a check (`shouldPoll`), refreshed and saved. `onlyNew`:
+// just the ones never checked yet — a round's second look, for a watch added while it ran.
+export async function pollPipelines(
+  $: EngineInterface,
+  options: PluginOptions,
+  onlyNew = false,
+): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
   const at = await nowIso($)
   // Unfinished ones, and a failed / canceled one for a while after it ended (a retry restarts it).
-  const unfinished = ((await ownFile($, dir)).pipelines ?? []).filter(p => shouldPoll(p, Date.parse(at)))
+  const unfinished = ((await ownFile($, dir)).pipelines ?? []).filter(
+    p => shouldPoll(p, Date.parse(at)) && (!onlyNew || p.checkedAt === null),
+  )
   if (unfinished.length === 0) return
   // The forge calls take seconds and run outside the lock; only their results are written, onto the
   // file as it is by then (a task, a watch or an unwatch sent meanwhile stays).
   const fresh: Pipeline[] = []
-  for (const p of unfinished) fresh.push(await refreshPipeline($, options, p, at))
+  for (const p of unfinished) fresh.push(await checked($, options, p, at))
+  // A watch the plugin just stopped polling: the agent is told once — a task linked to it no
+  // longer closes by itself. (The reason can quote a CLI's own words: cleaned like any outside text.)
+  for (const p of fresh)
+    if (p.stopped && !unfinished.find(u => u.key === p.key)?.stopped)
+      pendingNotes.push(t('notice.watchStopped', { key: p.key, why: cleanText(p.error, 300) }))
   // A pipeline that finished in this round: a toast (and the person's own notification) by setting.
   for (const p of fresh) {
     const before = unfinished.find(u => u.key === p.key)
@@ -460,22 +504,42 @@ export function settleTasks(file: SessionFile, at: string): SessionFile {
   return next
 }
 
+// Whether THIS pane is the one that polls orphans now: it holds the lease in the plugin's store
+// (taking it when it is free or has run out), so the panes of a machine never each spawn the same
+// CLI calls for a session that ended. The store has no compare-and-set: two panes asking in the
+// same instant can both take it for one round; the read-back settles who keeps it.
+export async function holdsOrphanLease($: EngineInterface, me: string, nowMs: number): Promise<boolean> {
+  const read = async () =>
+    (await $.store.get(ORPHAN_LEASE_KEY)) as { id?: unknown; untilMs?: unknown } | undefined
+  const lease = await read()
+  const until = typeof lease?.untilMs === 'number' ? lease.untilMs : 0
+  // Another pane's lease holds while it has time left (and never longer than a lease can be).
+  if (lease && lease.id !== me && nowMs < until && until - nowMs <= ORPHAN_LEASE_MS) return false
+  await $.store.set(ORPHAN_LEASE_KEY, { id: me, untilMs: nowMs + ORPHAN_LEASE_MS })
+  return (await read())?.id === me
+}
+
 // Other sessions' unfinished pipelines they stopped polling (ended, or killed without ending):
-// refreshed here, the copies written to that session's sidecar — never to its own file.
+// refreshed by ONE pane (`holdsOrphanLease`) under the same bounds as a session's own, the copies
+// written to that session's sidecar — never to its own file.
 export async function pollOrphans($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
   const me = await $.session.id()
   const nowMs = await $.clock.now()
+  const due: { id: string; watched: Pipeline[]; orphans: Pipeline[] }[] = []
   for (const [id, known] of Object.entries(await readSessions($))) {
     if (id === me) continue
     const watched = known.file.pipelines ?? []
     const list = overlayPipelines(watched, known.sidecar?.pipelines ?? [])
-    const orphans = list.filter(p => isOrphaned(p, nowMs, ORPHAN_AFTER_MS))
-    if (orphans.length === 0) continue
+    const orphans = list.filter(p => isOrphaned(p, nowMs, ORPHAN_AFTER_MS) && shouldPoll(p, nowMs))
+    if (orphans.length > 0) due.push({ id, watched, orphans })
+  }
+  if (due.length === 0 || !(await holdsOrphanLease($, me, nowMs))) return
+  for (const { id, watched, orphans } of due) {
     const at = new Date(nowMs).toISOString()
     const fresh: Pipeline[] = []
-    for (const p of orphans) fresh.push(await refreshPipeline($, options, p, at))
+    for (const p of orphans) fresh.push(await checked($, options, p, at))
     await writeSidecar($, dir, id, sidecar => ({
       ...sidecar,
       // The fresh copies replace older ones; copies of pipelines the session no longer watches go.
@@ -489,15 +553,36 @@ export async function pollOrphans($: EngineInterface, options: PluginOptions): P
   }
 }
 
+// One round: this session's own pipelines (and once more whatever was added while it ran), then
+// the orphans.
+export async function pollRound($: EngineInterface, options: PluginOptions): Promise<void> {
+  await pollPipelines($, options)
+  while (self.pollWanted) {
+    self.pollWanted = false
+    await pollPipelines($, options, true)
+  }
+  await pollOrphans($, options)
+}
+
+// The one polling path: a round at a time. A call that finds a round still running does nothing
+// (single-flight: a slow forge never stacks rounds) — unless a watch was just added (`pollSoon`):
+// then the running round looks once more, at what is new, before it ends.
 export async function pollAll($: EngineInterface, options: PluginOptions): Promise<void> {
   if (self.polling) return
   self.polling = true
   try {
-    await pollPipelines($, options)
-    await pollOrphans($, options)
+    await pollRound($, options)
   } finally {
     self.polling = false
   }
+}
+
+// A watch was just added: its first check starts now, on the one polling path and detached — the
+// tool's answer (or the push's result) never waits for a forge, and no second round runs beside
+// the timer's.
+export function pollSoon($: EngineInterface, options: PluginOptions): void {
+  self.pollWanted = self.polling
+  pollAll($, options).catch(() => undefined)
 }
 
 // What a running pipeline's ✕ can do on its forge, through the person's own CLI: GitLab and GitHub

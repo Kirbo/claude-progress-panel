@@ -364,7 +364,12 @@ export function applyWatch(
       id !== null ? `#${id}` : `@${sha}${ref ? `:${ref}` : ''}`,
       host,
     )
-    if (next.some(p => p.key === key)) return
+    const known = next.find(p => p.key === key)
+    if (known) {
+      // Watched again after the plugin stopped polling it: it starts over.
+      if (known.stopped) next = next.map(p => (p === known ? restarted(known, nowIso) : p))
+      return
+    }
     // The same commit, already watched whole (or, for a watch of the whole commit, per ref).
     const covered = next.some(
       p =>
@@ -394,6 +399,19 @@ export function applyWatch(
     })
   })
   return { list: next, errors }
+}
+
+/** What a watch call started: the pipelines it added, and the stopped ones it started over. */
+export function newlyWatched(before: readonly Pipeline[], after: readonly Pipeline[]): Pipeline[] {
+  return after.filter(p => {
+    const old = before.find(b => b.key === p.key)
+    return !old || (old.stopped !== undefined && p.stopped === undefined)
+  })
+}
+
+function restarted(p: Pipeline, nowIso: string): Pipeline {
+  const { stopped: _s, fails: _f, error: _e, noPipeline: _n, ...rest } = p
+  return { ...rest, addedAt: nowIso, checkedAt: null }
 }
 
 /** The pipelines a pane shows: minus finished ones a sidecar entry dismissed for that same finish. */
@@ -428,7 +446,7 @@ export function overlayPipelines(list: Pipeline[], refreshed: readonly Pipeline[
  * the session watching it stopped polling, so any pane picks it up.
  */
 export function isOrphaned(p: Pipeline, nowMs: number, limitMs: number): boolean {
-  if (isFinished(p.state)) return false
+  if (isFinished(p.state) || p.stopped) return false
   return nowMs - Date.parse(p.checkedAt ?? p.addedAt) > limitMs
 }
 
@@ -503,12 +521,71 @@ export function stillWaiting(p: Pipeline, at: string, hint: string): Pipeline {
 export const RETRY_WATCH_MS = 2 * 3_600_000
 export const RETRY_CHECK_MS = 60_000
 
-/** Whether a poll round asks the forge about `p` now: every unfinished pipeline; a failed or
- *  canceled one within RETRY_WATCH_MS of finishing, at most every RETRY_CHECK_MS. */
+/** After a check that ended in an error the next one waits twice as long each time, up to this. */
+export const POLL_BACKOFF_MAX_MS = 10 * 60_000
+/** This many errors in a row (about 45 minutes of trying) and the watch is stopped. */
+export const MAX_POLL_FAILS = 8
+/** A watch waiting on a person (a manual job, an approval) or on a pipeline that never came is
+ *  asked this rarely. */
+export const PARKED_CHECK_MS = 5 * 60_000
+/** A watch by commit that still has no pipeline after this long is stopped. */
+export const NO_PIPELINE_STOP_MS = 60 * 60_000
+/** A watch still unfinished this long after it was added is stopped. */
+export const WATCH_MAX_MS = 24 * 3_600_000
+
+/** How long to wait before the next check after `fails` errors in a row: 30 s, 1 min, 2 min, …, 10 min. */
+export function backoffMs(fails: number): number {
+  return Math.min(15_000 * 2 ** Math.max(0, fails), POLL_BACKOFF_MAX_MS)
+}
+
+/**
+ * Whether a poll round asks the forge about `p` now. Never a stopped watch. An unfinished one on
+ * every round — unless its last checks failed (it backs off) or it is parked: waiting on a person
+ * or on a pipeline that never came. A failed or canceled one within RETRY_WATCH_MS of finishing,
+ * at most every RETRY_CHECK_MS.
+ */
 export function shouldPoll(p: Pipeline, nowMs: number): boolean {
-  if (!isFinished(p.state)) return true
+  if (p.stopped) return false
+  const checked = Date.parse(p.checkedAt ?? '') || 0
+  if (!isFinished(p.state)) {
+    if (p.checkedAt === null) return true
+    if (p.fails) return nowMs - checked >= backoffMs(p.fails)
+    if (p.state === 'manual' || p.noPipeline) return nowMs - checked >= PARKED_CHECK_MS
+    return true
+  }
   if (p.state !== 'failed' && p.state !== 'canceled') return false
   const ended = Date.parse(p.finishedAt ?? '') || 0
-  const checked = Date.parse(p.checkedAt ?? '') || 0
   return nowMs - ended < RETRY_WATCH_MS && nowMs - checked >= RETRY_CHECK_MS
+}
+
+/**
+ * A fresh check, held to the bounds no watch may exceed (polling was once endless: a logged-out
+ * CLI was spawned every 15 s for as long as the session lived, a commit without a pipeline waited
+ * for ever). Errors in a row are counted — the count is what backs the next check off — and after
+ * MAX_POLL_FAILS the watch is stopped; so is one that never got a pipeline within
+ * NO_PIPELINE_STOP_MS, and any still unfinished WATCH_MAX_MS after it was added. A stopped watch
+ * says why on its row (`texts`), and is polled by nobody until it is watched again.
+ */
+export function bounded(
+  before: Pipeline,
+  fresh: Pipeline,
+  nowMs: number,
+  texts: {
+    errors: (error: string, fails: number) => string
+    nopipeline: () => string
+    age: () => string
+  },
+): Pipeline {
+  const { fails: _f, stopped: _s, ...plain } = fresh
+  if (isFinished(fresh.state)) return plain
+  const failed = fresh.error !== undefined && !fresh.noPipeline
+  const fails = failed ? (before.fails ?? 0) + 1 : 0
+  const counted: Pipeline = fails > 0 ? { ...plain, fails } : plain
+  if (fails >= MAX_POLL_FAILS)
+    return { ...counted, stopped: 'errors', error: texts.errors(fresh.error ?? '', fails) }
+  const waited = nowMs - Date.parse(fresh.addedAt)
+  if (fresh.noPipeline && waited > NO_PIPELINE_STOP_MS)
+    return { ...counted, stopped: 'nopipeline', error: texts.nopipeline() }
+  if (waited > WATCH_MAX_MS) return { ...counted, stopped: 'age', error: texts.age() }
+  return counted
 }
