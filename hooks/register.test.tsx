@@ -5636,7 +5636,7 @@ test(
   },
 )
 
-test('an open task untouched for 20 min is asked about once with the next prompt, never twice in the same state', async ($, on) => {
+test('tasks in progress or blocked, untouched for 20 min, are asked about once — together in one line, and never a planned one', async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
   // Seeded 21 min old — one prompt, no simulated minutes.
@@ -5645,17 +5645,52 @@ test('an open task untouched for 20 min is asked about once with the next prompt
     `${DIR}/s-me.json`,
     other('s-me', 'app', T0 - 21 * 60_000, {
       now: 'n',
-      tasks: [{ id: 'b', title: 'Waiting on review', status: 'blocked', note: 'review' }],
+      tasks: [
+        { id: 'b', title: 'Waiting on review', status: 'blocked', note: 'review' },
+        { id: 'd', title: 'Long build', status: 'doing' },
+        // Planned for later: untouched for 20 min is what a plan looks like.
+        { id: 'p', title: 'Release notes', status: 'todo' },
+      ],
     }),
   )
   await start($)
   const ctx = async () =>
-    (
-      ((await $.classic.UserPromptSubmit({ prompt: 'p' } as never)) as { additionalContext?: string[] })
-        .additionalContext ?? []
-    ).join(' ')
-  expect(await ctx()).toContain('task b "Waiting on review" has been blocked for 21 min with no update')
-  expect(await ctx()).not.toContain('Waiting on review')
+    ((await $.classic.UserPromptSubmit({ prompt: 'p' } as never)) as { additionalContext?: string[] })
+      .additionalContext ?? []
+  const first = (await ctx()).filter(x => x.includes('no update'))
+  expect(first).toEqual([
+    'Progress pane: no update for a while on b "Waiting on review" (blocked for 21 min), d "Long build" (doing for 21 min) — is that still true? Update each to its real state.',
+  ])
+  expect((await ctx()).join(' ')).not.toContain('no update')
+  // Kept on the task itself, in its current state — the task's own times are not touched.
+  const asked = read(disk, `${DIR}/s-me.json`).tasks.find(x => x.id === 'd')
+  expect(asked?.staleAsked).toBe(asked?.updatedAt)
+  expect(asked?.updatedAt).toBe(new Date(T0 - 21 * 60_000).toISOString())
+})
+
+test('a task already asked about in its current state is not asked about again after a reload', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  const old = new Date(T0 - 40 * 60_000).toISOString()
+  const file = other('s-me', 'app', T0 - 40 * 60_000, {
+    now: 'n',
+    tasks: [
+      { id: 'a', title: 'Asked before', status: 'blocked' },
+      { id: 'n', title: 'New since', status: 'doing' },
+    ],
+  })
+  // As the copy before the reload left it: `a` was asked about in the state it is still in.
+  put(disk, `${DIR}/s-me.json`, {
+    ...file,
+    tasks: file.tasks.map(x => (x.id === 'a' ? { ...x, staleAsked: old } : x)),
+  })
+  await start($)
+  const line = (
+    ((await $.classic.UserPromptSubmit({ prompt: 'p' } as never)) as { additionalContext?: string[] })
+      .additionalContext ?? []
+  ).find(x => x.includes('no update'))
+  expect(line).toContain('n "New since" (doing for 40 min)')
+  expect(line).not.toContain('Asked before')
 })
 
 test('the Settings view: values right-aligned and coloured, a changed one bold, the defaults grouped in order', async ($, on) => {

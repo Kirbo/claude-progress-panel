@@ -81,8 +81,6 @@ export const pendingNotes: string[] = []
 // A SubagentStop lists the whole session's background work without owners; only these are its.
 export const agentBackground = new Map<string, Set<string>>()
 
-export const staleTold = new Map<string, string>()
-
 // Linked agents that finished, not yet told to the coordinator (its next progress_update answer, or
 // its next main-loop tool call — once).
 export const finishedLinks: string[] = []
@@ -367,7 +365,6 @@ export function forgetSessionMemory(): void {
   pendingNotes.length = 0
   finishedLinks.length = 0
   self.owes = undefined
-  staleTold.clear()
   toldNoCi.clear()
   promptFed.clear()
   subagentRuleSent.clear()

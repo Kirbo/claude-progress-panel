@@ -29,6 +29,7 @@ import {
   isSessionId,
   linkedAgent,
   linkPushedPipeline,
+  markStaleAsked,
   markStopAsked,
   markUnconfirmed,
   mergeScan,
@@ -80,7 +81,6 @@ import {
   SIDECAR,
   SUBAGENT_RULE,
   self,
-  staleTold,
   subagentRuleSent,
   switches,
   TOOL_ID,
@@ -133,26 +133,45 @@ export function isTracked(file: SessionFile, task: Task): boolean {
 export const minutesSince = (iso: string, nowMs: number) =>
   Math.max(0, Math.round((nowMs - Date.parse(iso)) / 60_000))
 
-// The person's prompt: a turn begins. Each open task untouched for 20 min, nothing tracking it, is
-// asked about once in its current state — never again until it changes.
+// The person's prompt: a turn begins. Tasks in progress or blocked that went 20 min without an
+// update, nothing tracking them, are asked about once in their current state — all in ONE line (a
+// session picked up the next day used to get a line per open task), and never again until they
+// change: the mark is on the task (`staleAsked`), so a reload does not ask a second time.
 export async function staleNudges($: EngineInterface, options: PluginOptions): Promise<string[]> {
   self.turnStartMs = await $.clock.now()
+  const nowMs = self.turnStartMs
   if (!isOn(options, 'reporting') || !isOn(options, 'tasks')) return []
   const dir = await progressDir($, options)
   if (!dir) return []
-  const own = await ownFile($, dir)
-  const stale = staleTasks(own, self.turnStartMs, TASK_STALE_AFTER_MS, staleTold, task =>
-    isTracked(own, task),
-  )
-  return stale.map(task => {
-    staleTold.set(task.id, task.updatedAt)
-    return t('stale.nudge', {
-      id: task.id,
-      task: task.title,
-      status: task.status,
-      min: minutesSince(task.updatedAt, self.turnStartMs ?? 0),
-    })
+  const stale = await exclusive(async () => {
+    const own = await ownFile($, dir)
+    const list = staleTasks(own, nowMs, TASK_STALE_AFTER_MS, task => isTracked(own, task))
+    if (list.length > 0)
+      await save(
+        $,
+        dir,
+        markStaleAsked(
+          own,
+          list.map(task => task.id),
+        ),
+      )
+    return list
   })
+  if (stale.length === 0) return []
+  return [
+    t('stale.nudge', {
+      list: stale
+        .map(task =>
+          t('stale.nudgeItem', {
+            id: task.id,
+            task: task.title,
+            status: task.status,
+            min: minutesSince(task.updatedAt, nowMs),
+          }),
+        )
+        .join(', '),
+    }),
+  ]
 }
 
 // The end of the turn: a `doing` task untouched this turn (and for 10 min), nothing tracking it,

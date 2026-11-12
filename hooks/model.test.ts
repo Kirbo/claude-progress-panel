@@ -28,6 +28,7 @@ import {
   isClosed,
   isGenericPermission,
   linkPushedPipeline,
+  markStaleAsked,
   markStopAsked,
   markUnconfirmed,
   matchesTask,
@@ -1066,21 +1067,31 @@ test("the agent's own status, set after the pipeline finished, wins", () => {
   expect(settleLinkedTasks(later, at(5), NOTES).file.tasks[0]?.status).toBe('blocked')
 })
 
-test('stale tasks: open, untouched for the window, nothing tracking them, asked about once per state', () => {
+test('stale tasks: in progress or blocked, untouched for the window, nothing tracking them, asked about once per state', () => {
   const file = withTasks(
     [
       { id: 'd', title: 'D', status: 'doing' },
+      { id: 'b', title: 'B', status: 'blocked' },
       { id: 'x', title: 'X', status: 'done' },
-      { id: 't', title: 'T', status: 'todo', pipeline: 'p' },
+      { id: 'w', title: 'W', status: 'doing', pipeline: 'p' },
+      // Planned, not started: untouched is what a plan looks like.
+      { id: 't', title: 'T', status: 'todo' },
     ],
     [pipe('p', 'running')],
   )
   const now = Date.parse(at(25))
-  const tracked = (task: Task) => task.id === 't'
-  const stale = staleTasks(file, now, 20 * 60_000, new Map(), tracked)
-  expect(stale.map(t => t.id)).toEqual(['d'])
-  expect(staleTasks(file, now, 20 * 60_000, new Map([['d', at(0)]]), tracked)).toEqual([])
-  expect(staleTasks(file, Date.parse(at(10)), 20 * 60_000, new Map(), tracked)).toEqual([])
+  const tracked = (task: Task) => task.id === 'w'
+  expect(staleTasks(file, now, 20 * 60_000, tracked).map(t => t.id)).toEqual(['d', 'b'])
+  expect(staleTasks(file, Date.parse(at(10)), 20 * 60_000, tracked)).toEqual([])
+  // Asked about: marked with the state it was asked in, its own times untouched — not asked again…
+  const asked = markStaleAsked(file, ['d'])
+  expect(asked.tasks[0]).toMatchObject({ staleAsked: at(0), updatedAt: at(0) })
+  expect(markStaleAsked(asked, ['d'])).toBe(asked)
+  expect(staleTasks(asked, now, 20 * 60_000, tracked).map(t => t.id)).toEqual(['b'])
+  // …until it changes and goes quiet again.
+  const touched = applyUpdate(asked, { tasks: [{ id: 'd', note: 'still on it' }] }, at(30)).file
+  expect(touched.tasks[0]?.staleAsked).toBeUndefined()
+  expect(staleTasks(touched, Date.parse(at(55)), 20 * 60_000, tracked).map(t => t.id)).toEqual(['d', 'b'])
 })
 
 test('the end-of-turn list: `doing` only, untouched since the turn began and for 10 min; asked once per spell', () => {
@@ -1385,7 +1396,7 @@ test('a stand-in task goes once its agent is not at work; a namesake that still 
   expect(dropEndedAutoTasks(again)).toBe(again)
   // The checks that ask after a task's state never list a stand-in.
   const late = T0 + 2 * HOUR
-  expect(staleTasks(withStandIn, late, 60_000, new Map(), () => false).map(t => t.id)).toEqual(['t1'])
+  expect(staleTasks(withStandIn, late, 60_000, () => false).map(t => t.id)).toEqual(['t1'])
   expect(untouchedDoing(withStandIn, late, late, 60_000, () => false).map(t => t.id)).toEqual(['t1'])
   expect(hasLinkableTask(withStandIn)).toBe(true)
   expect(hasLinkableTask({ ...withStandIn, tasks: withStandIn.tasks.slice(1) })).toBe(false)

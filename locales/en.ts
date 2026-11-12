@@ -307,7 +307,8 @@ export const en = {
   'notice.taskPipelineDone': 'Progress pane: task "{task}" is done — {note}.',
   'notice.taskPipelineFailed': 'Progress pane: task "{task}" failed — {note}. Fix it, or re-plan it.',
   'stale.nudge':
-    'Progress pane: task {id} "{task}" has been {status} for {min} min with no update — is that still true? Update it to its real state.',
+    'Progress pane: no update for a while on {list} — is that still true? Update each to its real state.',
+  'stale.nudgeItem': '{id} "{task}" ({status} for {min} min)',
   'stop.untouched':
     'Progress pane: these tasks still say `doing` but were not touched this turn — update each to its true state (done, blocked, todo…) with progress_update, or touch it if it really is still in progress:\n{list}',
   'stop.untouchedLine': '- {id} "{task}" (doing, last updated {min} min ago)',

@@ -695,10 +695,14 @@ and pushed, only to wait for CI. Three mechanisms, each closing a path:
    (cleared by their next update). Before, "once" was one list signature (ids + `updatedAt`) held
    in memory: a long `doing` task that the agent touched and left `doing` (background work) drew a
    new block at every later turn, and a reload forgot the signature. `todo` (not started) and `blocked` (its reason
-   given) never block a turn — they get (3). Off when reporting or tasks is off. Subagents: an agent
+   given) never block a turn (`blocked` gets (3)). Off when reporting or tasks is off. Subagents: an agent
    that stops ends its open steps `unfinished` (0.23.0), so they need no stop check.
-3. **Staleness nudge** (UserPromptSubmit): open tasks untouched ≥ 20 min, untracked, get one
-   additionalContext line each, remembered per `updatedAt` so a task is asked about once per state.
+3. **Staleness nudge** (UserPromptSubmit): `doing` and `blocked` tasks untouched ≥ 20 min,
+   untracked, are asked about in ONE additionalContext line naming them all, once per state: the
+   task keeps the `updatedAt` it was asked at (`staleAsked`, `markStaleAsked`), so neither a later
+   prompt nor a reload asks again until it changes. A `todo` task is never asked about — a later
+   item of the plan untouched for 20 min is what a plan looks like (it used to draw a line per
+   planned task, and a session picked up the next day one per open task).
 
 Running pipelines (same release): ✕ only hides the row (the own session's is unwatched; another
 session's is dismissed with `doneAt: null`, which `visiblePipelines` hides for good); the separate red

@@ -79,6 +79,9 @@ export type Task = {
   /** Still open, not updated in a turn that ended past the end-of-turn check (0.23.2): the pane
    *  marks it, until the next update to the task. */
   unconfirmed?: true
+  /** The staleness nudge asked about it in this state: the `updatedAt` it had then. Not asked again
+   *  until it changes. Absent in older files (= not asked yet). */
+  staleAsked?: string
   /** The end-of-turn check stopped a turn on it in this spell of `doing`: it is not asked about
    *  again until it has left `doing` and come back. Absent in older files (= not asked yet). */
   stopAsked?: true

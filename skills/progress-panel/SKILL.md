@@ -89,7 +89,7 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
 - **Never keep a task open to wait for CI:** a push links its pipeline to your `doing` task of that
   repo (or set `pipeline` yourself) and the task closes with it — done on green, failed on red. A
   `doing` task you did not touch in a turn stops that turn once with the list: update each to its
-  true state. A task untouched for 20 min is asked about once.
+  true state. A `doing` or `blocked` task untouched for 20 min is asked about once.
 - **Asks:** put a blocker in `needsYou` the moment you need the user, and clear it (`[]` or the
   remaining list) as soon as it is answered. Keep it honest — every session shows it. Each ask
   says WHAT is needed and HOW to give it. An answer you wait for in this session goes in `reply`,

@@ -253,8 +253,10 @@ folded "Finished" row.
   to its true state. A task stops a turn once for as long as it stays `doing` — the next stop
   passes, and a later turn that leaves it untouched again marks it **unconfirmed** in the pane
   until its next update instead of asking again.
-- **Staleness nudge.** An open task untouched for 20 min is asked about once with your next prompt
-  ("has been blocked for 40 min with no update — is that still true?"), never again in that state.
+- **Staleness nudge.** Tasks in progress or blocked that went 20 min without an update are asked
+  about once with your next prompt, all in one line ("no update for a while on t3 "Deploy"
+  (blocked for 40 min) — is that still true?"), never again in that state. A task that is only
+  planned is not asked about.
 
 ### Settings
 

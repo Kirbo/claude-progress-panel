@@ -219,6 +219,7 @@ export function applyUpdate(
       agent: _a,
       pipeline: _p,
       unconfirmed: _u,
+      staleAsked: _q,
       stopAsked,
       ...kept
     } = old
@@ -1665,24 +1666,39 @@ export function settleLinkedTasks(
   return { file: { ...file, tasks, updatedAt: nowIso }, settled }
 }
 
-/** Open tasks not updated for `minAgeMs`, nothing live tracking them, not already asked about in
- *  this state (`told`: task id → the `updatedAt` it was asked about). */
+const ASKED_WHEN_STALE: readonly Status[] = ['doing', 'blocked']
+
+/**
+ * Tasks whose state may no longer be true: `doing` or `blocked` (they claim something about now —
+ * a `todo` task is a plan, and untouched is what a plan looks like), not updated for `minAgeMs`,
+ * nothing live tracking them, and not already asked about in this state (`staleAsked` holds the
+ * `updatedAt` it was asked at). Never a stand-in.
+ */
 export function staleTasks(
   file: SessionFile,
   nowMs: number,
   minAgeMs: number,
-  told: ReadonlyMap<string, string>,
   tracked: (task: Task) => boolean,
 ): Task[] {
   return file.tasks.filter(
     t =>
-      OPEN.includes(t.status) &&
+      ASKED_WHEN_STALE.includes(t.status) &&
       // A stand-in is the plugin's own: its agent's row says how it is doing.
       !t.auto &&
       nowMs - Date.parse(t.updatedAt) >= minAgeMs &&
-      told.get(t.id) !== t.updatedAt &&
+      t.staleAsked !== t.updatedAt &&
       !tracked(t),
   )
+}
+
+/** These tasks were asked about in the state they are in (their `updatedAt` stays: being asked is
+ *  no update). Kept on the task, so a reload of the plugin does not ask again. */
+export function markStaleAsked(file: SessionFile, ids: readonly string[]): SessionFile {
+  if (!file.tasks.some(t => ids.includes(t.id) && t.staleAsked !== t.updatedAt)) return file
+  return {
+    ...file,
+    tasks: file.tasks.map(t => (ids.includes(t.id) ? { ...t, staleAsked: t.updatedAt } : t)),
+  }
 }
 
 /** The end-of-turn check's list: `doing` tasks (they claim active work) not updated since the turn
