@@ -218,7 +218,10 @@ folded "Finished" row.
   host, so it works the same from any directory.
 - **A watch by commit follows every run of that commit** as one row — each GitHub workflow, a
   GitLab branch and merge-request pipeline: unfinished while any of them is, and green only when
-  all are (else the worst outcome, with the jobs of every run under its workflow's name). Add
+  all are (else the worst outcome, with the jobs of every run under its workflow's name). Such a
+  row says how many runs it stands for (`app · 3 runs · main`) and lists them beneath it, each
+  with its own mark and colour (`● CI · ✓ Labeler`); unfolded, each run is a row with its state
+  and its own `↗`. Add
   `ref: "<branch or tag>"` to follow only that ref's pipelines when the same commit is on several.
 - **Who polls:** the session that watches a run polls it every 15 s (the **Pipeline refresh**
   setting, `pipelineRefreshSec`) until it finishes (no forge can push to a local plugin). If that
@@ -227,8 +230,10 @@ folded "Finished" row.
   30 s, 1 min, 2 min … 10 min — and after 8 failures in a row the watch stops; a pipeline waiting
   on a manual job or an approval, and a commit that has no pipeline after 10 minutes, are asked
   every 5 minutes; a commit without a pipeline is given up after an hour, any watch still
-  unfinished after a day too. A stopped watch says "stopped watching — <why>" on its row; watching
-  it again starts it over.
+  unfinished after a day too. A stopped watch no longer looks like a running pipeline: its row
+  dims, reads "not watched" where the state stood (no bar, no clock counting up, no ⊘ stop), says
+  "stopped watching — <why>" beneath it, and the section header counts it as "N not watched"; a
+  task that waited on it says it will not close by itself. Watching it again starts it over.
 - **What a watch may name:** a `sha` is 7 to 64 hex digits and a `host` a plain host name
   (`git.example.com`, an optional `:port`); anything else is refused. Job names and links that
   come from a forge are shown cleaned (one line, no control characters) and only http(s)

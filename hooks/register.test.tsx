@@ -2388,7 +2388,7 @@ test('a CLI that keeps failing is asked less and less, then the watch stops and 
   // The pane no longer counts it as watched, and its row says why.
   const ui = await pane($)
   expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
-    '▾ Pipelines  0 watching · 0 succeeded · 0 failed',
+    '▾ Pipelines  0 watching · 0 succeeded · 0 failed · 1 not watched',
   )
   expect(await exactText(ui, row()?.error ?? '?')).toBeTruthy()
   await ui.unmount()
@@ -6513,5 +6513,111 @@ test("a press that cannot be saved says so: this session's file caught unreadabl
   await world.clock.settle()
   expect(world.toasts).toContain('Progress pane: that press could not be saved just now — press again.')
   disk.readFails = undefined
+  await ui.unmount()
+})
+
+test('a watch the plugin stopped does not look like a running pipeline: no live mark, no bar, no clock, no ⊘', async ($, on) => {
+  const disk = makeDisk()
+  const iso = new Date(T0 - HOUR).toISOString()
+  const why = 'stopped watching — still unfinished after 24 h. Watch it again to go on.'
+  put(disk, `${DIR}/s-other.json`, {
+    ...other('s-other', 'site', T0, {
+      now: 'waiting',
+      tasks: [{ id: 'ship', title: 'Ship', status: 'doing', pipeline: 'team/app#9' }],
+    }),
+    pipelines: [
+      {
+        key: 'team/app#9',
+        project: 'team/app',
+        id: 9,
+        label: 'app main',
+        state: 'running',
+        stopped: 'age',
+        error: why,
+        startedAt: iso,
+        jobs: [
+          { name: 'build', stage: 'build', state: 'success', durationS: 30 },
+          { name: 'test', stage: 'test', state: 'running', durationS: null },
+        ],
+        addedAt: iso,
+        checkedAt: iso,
+      },
+    ],
+  })
+  engine(on, disk)
+  await start($)
+  const ui = await pane($, 140)
+  const key = 'pipe:s-other:team/app#9'
+  // Its row: dim like a finished one, "not watched" where the state stood — no bar, no running time.
+  expect(await pipeLine(ui, key)).toBe('▸ app main #9 · not watched  1/2')
+  const header = (await ui.findAll({ type: 'Text' })).find(x => x.text === '▸ app main #9')
+  expect(header?.props.bold).toBeFalsy()
+  expect(header?.props.dimColor).toBe(true)
+  expect(await exactText(ui, '● ')).toBeUndefined()
+  // Why, as a warning — not the red of a failure in CI.
+  expect((await exactText(ui, why))?.props.color).toBe('yellow')
+  // Nothing to stop from here (the plugin no longer knows its state); ✕ still hides the row.
+  expect(await ui.find({ type: 'Button', key: 'cancelpipe:s-other:team/app#9' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'hidepipe:s-other:team/app#9' })).toBeDefined()
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toBe(
+    '▾ Pipelines  0 watching · 0 succeeded · 0 failed · 1 not watched',
+  )
+  // The task that waited on it says it will not close by itself any more.
+  expect(await texts(ui)).toContain('⧗ app main is no longer watched — this task does not close by itself')
+  await ui.unmount()
+})
+
+test("a commit's several runs show on its row: how many, each one's state, and each one's own link", async ($, on) => {
+  const disk = makeDisk()
+  const iso = new Date(T0).toISOString()
+  const sha = 'c'.repeat(40)
+  const key = `gh:o/r@${sha}`
+  put(disk, `${DIR}/s-other.json`, {
+    ...other('s-other', 'site', T0, { now: 'pushed' }),
+    pipelines: [
+      {
+        key,
+        provider: 'github',
+        project: 'o/r',
+        id: 12,
+        sha,
+        ref: 'main',
+        label: 'r',
+        state: 'running',
+        url: 'https://github.com/o/r/actions/runs/12',
+        runs: [
+          { id: 12, state: 'running', name: 'CI', url: 'https://github.com/o/r/actions/runs/12' },
+          { id: 11, state: 'success', name: 'Labeler', url: 'https://github.com/o/r/actions/runs/11' },
+          { id: 10, state: 'failed', name: 'Docs' },
+        ],
+        jobs: [
+          { name: 'unit', stage: 'CI', state: 'running', durationS: null },
+          { name: 'label', stage: 'Labeler', state: 'success', durationS: 3 },
+          { name: 'links', stage: 'Docs', state: 'failed', durationS: 9 },
+        ],
+        addedAt: iso,
+        checkedAt: iso,
+      },
+    ],
+  })
+  engine(on, disk)
+  await start($)
+  const ui = await pane($, 140)
+  const row = `pipe:s-other:${key}`
+  // The row is the commit's, not one run's: it says how many runs it stands for, not one run's id.
+  expect((await ui.find({ type: 'Button', key: row }))?.text).toBe('● ▸ r · 3 runs · main')
+  // Folded: one line of the runs, each with its own mark and colour.
+  expect((await exactText(ui, '● CI'))?.props.color).toBe('yellow')
+  expect((await exactText(ui, '✓ Labeler'))?.props.color).toBe('green')
+  expect((await exactText(ui, '✗ Docs'))?.props.color).toBe('red')
+  // Open: a row per run with its state and its own page, above the jobs.
+  await ui.press({ key: row })
+  const lines = await texts(ui)
+  expect(lines).toContain('● CI  running')
+  expect(lines).toContain('✓ Labeler  success')
+  expect(lines).toContain('✗ Docs  failed')
+  const links = (await ui.findAll({ type: 'Link' })).map(l => l.props.href)
+  expect(links).toContain('https://github.com/o/r/actions/runs/11')
+  expect(lines.some(l => l.startsWith('● unit'))).toBe(true)
   await ui.unmount()
 })

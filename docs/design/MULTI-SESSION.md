@@ -368,6 +368,11 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   the row's id and link are the run that failed it (else the newest), its clock runs from the
   first start to the last finish, the estimate is the longest run's, and ⊘ stop cancels each run
   still going. A finished run's jobs are read once and then kept in memory (`self.runJobs`).
+  The pane draws such a row as the commit's, not one run's: its header reads `<label> · N runs`
+  instead of one run's `#id`; folded (and not all green) one line beneath it lists the runs, each
+  with its mark in its state's colour (`● CI · ✓ Labeler · ✗ Docs`); unfolded, each run is a row
+  — mark, name, state, and its own `↗` (the header's link opens only the lead run) — above the
+  jobs. (Before, several runs showed only through the jobs' stage prefix.)
   A new run of the same commit that the forge creates only after every listed one finished green
   (a `workflow_run` chain) is not seen: a success is never re-checked.
 - **The same commit on a second ref** (`next`, then `main` fast-forwarded to it; a tag; `git push
@@ -380,7 +385,14 @@ Asked for 2026-11-06: a live, visual status of the CI pipelines the agent waits 
   stops, and so does any watch still unfinished 24 h after it was added. A stopped watch
   (`stopped`: `errors` / `nopipeline` / `age`) says "stopped watching — <why>" on its row, counts
   as watched nowhere (the section header, a linked task's "tracked"), and the agent is told once
-  (`notice.watchStopped`); watching the same key again starts it over (`applyWatch`).
+  (`notice.watchStopped`); watching the same key again starts it over (`applyWatch`). Its stored
+  state stays whatever was last read (often `running`), so the pane draws it by `stopped`, not by
+  that state — it must not look as if it still ran: the row is at rest like a finished one (no
+  live mark, no bold, dim name), its state reads "not watched", it has no progress bar, no clock
+  (the elapsed time would keep counting from `startedAt` for ever) and no ⊘ stop (✕ still hides
+  it); the reason line is a warning (yellow), not the red of a failed check; the section header
+  adds "· N not watched"; and a task linked to it reads "⧗ <label> is no longer watched — this
+  task does not close by itself" instead of promising that it will.
 - **One polling path** (`pollAll`, single-flight). A new watch's first check is `pollSoon`:
   detached — the tool's answer and a push's result never wait for a forge — and when a round is
   already running it asks that round to look once more at what is new, instead of running a

@@ -607,13 +607,17 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     .join('|')}`
   const isSectionOpen = folded[sectionKey] ?? !allSucceeded
   const stoppedOther = states.filter(st => st === 'canceled' || st === 'skipped').length
+  // Watches the plugin gave up on (their rows say why): neither watched nor finished.
+  const notWatched = pipelineRows.filter(r => !isFinished(r.pipeline.state) && r.pipeline.stopped).length
   const sectionParts = {
     fold: isSectionOpen ? '▾' : '▸',
     // A watch the plugin stopped polling is not being watched (its row says why).
     watching: pipelineRows.filter(r => !isFinished(r.pipeline.state) && !r.pipeline.stopped).length,
     succeeded: states.filter(st => st === 'success').length,
     failed: states.filter(st => st === 'failed').length,
-    rest: stoppedOther > 0 ? t('pane.pipelinesCanceled', { n: stoppedOther }) : '',
+    rest:
+      (stoppedOther > 0 ? t('pane.pipelinesCanceled', { n: stoppedOther }) : '') +
+      (notWatched > 0 ? t('pane.pipelinesNotWatched', { n: notWatched }) : ''),
   }
   const sectionLabel = t('pane.pipelines', sectionParts)
 
@@ -635,21 +639,37 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     const foldKey = finished ? `${key}@${p.finishedAt ?? 'finished'}` : key
     const isOpen = folded[foldKey] ?? false
     const counts = jobCounts(p.jobs)
-    const label = t('pipe.header', {
-      fold: isOpen ? '▾' : '▸',
-      label: p.label,
-      id: p.id ?? '?',
-      ref: p.ref ? t('pipe.ref', { ref: p.ref }) : '',
-    })
+    // A watch the plugin stopped polling (`stopped`: errors, no pipeline, too old) is not running as
+    // far as the pane knows: drawn like a row at rest — no live mark, no bold, no bar, no clock
+    // counting up, no ⊘ — its state reading "not watched" and why beneath it.
+    const parked = !finished && p.stopped !== undefined
+    const atRest = finished || parked
+    // A watch by commit that found several runs is the commit's row, not one run's: it says how
+    // many it stands for (the id it carries is only the run its link opens).
+    const several = p.runs && p.runs.length > 1 ? p.runs : undefined
+    const label = several
+      ? t('pipe.headerRuns', {
+          fold: isOpen ? '▾' : '▸',
+          label: p.label,
+          n: several.length,
+          ref: p.ref ? t('pipe.ref', { ref: p.ref }) : '',
+        })
+      : t('pipe.header', {
+          fold: isOpen ? '▾' : '▸',
+          label: p.label,
+          id: p.id ?? '?',
+          ref: p.ref ? t('pipe.ref', { ref: p.ref }) : '',
+        })
     // The state, bar, counts and times sit on the right, beside ↗ / ✕.
     const status = t('pipe.status', {
-      state: t(`pipe.state.${p.state}`),
+      state: parked ? t('pipe.notWatched') : t(`pipe.state.${p.state}`),
       // The bar only while it runs: a finished pipeline's counts say it all.
-      bar: finished ? '' : `${progressBar(counts.finished, counts.total)} `,
+      bar: atRest ? '' : `${progressBar(counts.finished, counts.total)} `,
       finished: counts.finished,
       total: counts.total,
       duration: ((d: number | null) => {
-        if (d === null) return ''
+        // Not watched: how long it has run is no longer known — no clock that keeps counting.
+        if (d === null || parked) return ''
         // While it runs, the elapsed time beside the similar-run estimate: "4m53s / ~33m".
         if (!finished && typeof p.estimateS === 'number')
           return t('pipe.durationEstimate', { d: formatDuration(d), e: formatEstimate(p.estimateS) })
@@ -669,12 +689,12 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         <Box key={`row:${key}`} flexDirection="row" justifyContent="space-between" gap={2} hover={ROW_HOVER}>
           {leftSide(
             <Button key={key} label={label} plain onPress={() => void toggle($, foldKey, isOpen)}>
-              {finished ? null : (
+              {atRest ? null : (
                 <Text color={tint(self.settings.palette, PIPE_STATE_COLOR[p.state] ?? 'cyan')}>
                   {PIPE_LIVE_MARK[p.state] ?? '● '}
                 </Text>
               )}
-              <Text bold={!finished} dimColor={finished} wrap="truncate-end">
+              <Text bold={!atRest} dimColor={atRest} wrap="truncate-end">
                 {label}
               </Text>
             </Button>,
@@ -687,9 +707,9 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
               onPress={() => void toggle($, foldKey, isOpen)}
             >
               <Text
-                color={tint(self.settings.palette, PIPE_STATE_COLOR[p.state])}
-                bold={!finished || p.state === 'failed'}
-                dimColor={p.state === 'canceled' || p.state === 'skipped'}
+                color={parked ? undefined : tint(self.settings.palette, PIPE_STATE_COLOR[p.state])}
+                bold={!parked && (!finished || p.state === 'failed')}
+                dimColor={parked || p.state === 'canceled' || p.state === 'skipped'}
               >
                 {status}
               </Text>
@@ -697,7 +717,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             {openLink(p.url)}
             {/* Running: "⊘ stop" — the destructive one, red and apart, two presses — cancels (and
                   by setting deletes) it in CI; "✕" beside it only hides the row, as on a finished one. */}
-            {!finished && self.settings.runningPipelineX !== 'off' && cancellable(p) ? (
+            {!atRest && self.settings.runningPipelineX !== 'off' && cancellable(p) ? (
               <Box key={`stopbox:${sessionId}:${p.key}`} flexDirection="column">
                 <Button
                   key={`cancelpipe:${sessionId}:${p.key}`}
@@ -758,9 +778,45 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
           </Box>
         </Box>
         <Box flexDirection="column" paddingLeft={INDENT * 2}>
+          {/* An error of the last check in red; why a watch was given up as a warning — nothing
+              failed in CI, the row is only no longer followed. */}
           {p.error && shownError(p.error) ? (
-            <Text color={tint(self.settings.palette, 'red')}>{shownError(p.error)}</Text>
+            <Text color={tint(self.settings.palette, parked ? 'yellow' : 'red')}>{shownError(p.error)}</Text>
           ) : null}
+          {/* Several runs, folded: one line of them, each with its mark in its state's colour. */}
+          {several && !isOpen && p.state !== 'success' ? (
+            <Text wrap="truncate-end">
+              {several.flatMap((r, i) => [
+                i > 0 ? <Text dimColor>{' · '}</Text> : null,
+                <Text color={tint(self.settings.palette, JOB_MARK[r.state].color)}>
+                  {t('pipe.run', { glyph: JOB_MARK[r.state].sign, name: r.name })}
+                </Text>,
+              ])}
+            </Text>
+          ) : null}
+          {/* …open: a row per run — its state, and its own page (the row's ↗ opens only one). */}
+          {several && isOpen
+            ? several.map(r => (
+                <Box
+                  key={`run:${key}:${r.id}`}
+                  flexDirection="row"
+                  justifyContent="space-between"
+                  gap={2}
+                  hover={ROW_HOVER}
+                >
+                  {leftSide(
+                    <Text color={tint(self.settings.palette, JOB_MARK[r.state].color)} wrap="truncate-end">
+                      {t('pipe.runState', {
+                        glyph: JOB_MARK[r.state].sign,
+                        name: r.name,
+                        state: t(`pipe.state.${r.state}`),
+                      })}
+                    </Text>,
+                  )}
+                  {rightSide(openLink(r.url))}
+                </Box>
+              ))
+            : null}
           {/* A success folds to its one header line; anything else keeps its counts line. */}
           {counts.total > 0 && (isOpen || p.state !== 'success') ? (
             <Text>
@@ -873,10 +929,17 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     ) : null
     // The pipeline it waits on (0.23.2): its state here — the task closes when it finishes.
     const pipe = linkFile && !isClosed(task.status) ? taskPipeline(linkFile, task) : undefined
+    // A watch the plugin gave up on closes nothing: the line says so instead of promising it.
+    const pipeGone = pipe !== undefined && pipe.stopped !== undefined && !isFinished(pipe.state)
     const pipeLine = pipe ? (
       <Box paddingLeft={INDENT}>
-        <Text dimColor wrap="truncate-end">
-          {t('pane.linkedPipeline', { label: pipe.label ?? pipe.key, state: pipe.state })}
+        <Text dimColor={!pipeGone} wrap="truncate-end">
+          {pipeGone
+            ? t('pane.linkedPipelineStopped', { label: pipe.label ?? pipe.key })
+            : t('pane.linkedPipeline', {
+                label: pipe.label ?? pipe.key,
+                state: t(`pipe.state.${pipe.state}`),
+              })}
         </Text>
       </Box>
     ) : null
