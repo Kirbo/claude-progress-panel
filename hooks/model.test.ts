@@ -338,6 +338,38 @@ test('parseSessionFile keeps only well-typed session fields and stored pipelines
     { name: 'evil[31m name', stage: '', state: 'queued', durationS: null },
   ])
   expect(links?.pipelines?.[1]?.url).toBe('https://x/p/7')
+  // A watch by commit: its ref is a ref name, its runs are run ids with clean names.
+  const commits = odd(
+    {},
+    {
+      pipelines: [
+        pipe({ key: 'ref', watchRef: 'feature/x' }),
+        pipe({ key: 'badref', watchRef: '--exec=x' }),
+        pipe({
+          key: 'runs',
+          runs: [
+            { id: 9, state: 'failed', name: 'CI\u001b[1m', url: 'javascript:x' },
+            { id: '9/cancel', state: 'failed', name: 'x' },
+            { id: 8, state: 'weird' },
+            null,
+          ],
+        }),
+        pipe({ key: 'one', runs: [{ id: 9, state: 'failed', name: 'CI' }] }),
+      ],
+    },
+  )
+  expect(commits?.pipelines?.map(p => [p.key, p.watchRef, p.runs])).toEqual([
+    ['ref', 'feature/x', undefined],
+    [
+      'runs',
+      undefined,
+      [
+        { id: 9, state: 'failed', name: 'CI[1m' },
+        { id: 8, state: 'queued', name: '#8' },
+      ],
+    ],
+    ['one', undefined, undefined],
+  ])
 })
 
 test('formatTime: HH:MM today, date and time otherwise', () => {

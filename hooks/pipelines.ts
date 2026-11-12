@@ -16,6 +16,8 @@ export type WatchInput = {
   run?: number
   sha?: string
   label?: string
+  /** With `sha`: the branch or tag whose pipelines to follow, when the same commit is on several. */
+  ref?: string
   /** The forge's host (self-hosted GitLab, GitHub Enterprise, Gitea/Forgejo); default: the
    *  session's remote host when the watch is that repo, else the forge's public host. */
   host?: string
@@ -261,13 +263,39 @@ export function parseJobs(text: string): PipelineJob[] | undefined {
     }))
 }
 
-/** Adds watched pipelines (each key once) and removes unwatched ones; problems are listed, not thrown. */
+/** A branch or tag name as a watch may carry it: one git could have, never one that reads as an
+ *  option or carries the key's own separators. */
+export function isRefName(ref: unknown): ref is string {
+  return (
+    typeof ref === 'string' &&
+    ref.length <= 255 &&
+    !ref.startsWith('-') &&
+    !ref.includes('..') &&
+    /^[^\s~^:?*[\\\p{Cc}]+$/u.test(ref)
+  )
+}
+
+const sameCommit = (a: string | undefined, b: string | undefined): boolean => {
+  const [x, y] = [(a ?? '').toLowerCase(), (b ?? '').toLowerCase()]
+  return x !== '' && y !== '' && (x.startsWith(y) || y.startsWith(x))
+}
+
+/**
+ * Adds watched pipelines (each key once) and removes unwatched ones; problems are listed, not
+ * thrown. `origin`: who asks — the agent's own `watch`, or a `git push` the plugin saw.
+ *
+ * A watch by commit is per ref when it names one (`project@sha:ref` — a push always does): the
+ * same commit pushed to a second branch, or tagged, gets a row of its own there. One without a ref
+ * follows every pipeline of the commit, so it and a per-ref watch of the same commit never stand
+ * side by side: whichever came first covers the other.
+ */
 export function applyWatch(
   list: readonly Pipeline[],
   watch: readonly WatchInput[],
   unwatch: readonly string[],
   nowIso: string,
   remote?: Remote,
+  origin: 'agent' | 'push' = 'agent',
 ): { list: Pipeline[]; errors: string[] } {
   const errors: string[] = []
   let next = [...list]
@@ -324,8 +352,31 @@ export function applyWatch(
       )
       return
     }
-    const key = pipelineKey(provider, project, id !== null ? `#${id}` : `@${sha}`, host)
+    // Only a watch by commit is per ref, and never a custom command's (its script decides).
+    const ref = id === null && provider !== 'command' ? w.ref?.trim() || undefined : undefined
+    if (ref && !isRefName(ref)) {
+      errors.push(`watch[${i}]: ${quoted(ref)} is not a branch or tag name`)
+      return
+    }
+    const key = pipelineKey(
+      provider,
+      project,
+      id !== null ? `#${id}` : `@${sha}${ref ? `:${ref}` : ''}`,
+      host,
+    )
     if (next.some(p => p.key === key)) return
+    // The same commit, already watched whole (or, for a watch of the whole commit, per ref).
+    const covered = next.some(
+      p =>
+        id === null &&
+        p.key.includes('@') &&
+        (p.provider ?? 'gitlab') === provider &&
+        p.project === project &&
+        (p.host ?? '') === (host ?? '') &&
+        sameCommit(p.sha, sha) &&
+        (p.watchRef === undefined || ref === undefined),
+    )
+    if (covered) return
     next.push({
       key,
       ...(provider !== 'gitlab' ? { provider } : {}),
@@ -333,6 +384,8 @@ export function applyWatch(
       project,
       id,
       ...(sha ? { sha } : {}),
+      ...(ref ? { watchRef: ref } : {}),
+      ...(origin === 'push' ? { pushed: true as const } : {}),
       label: w.label?.trim() || baseName(project),
       state: 'unknown',
       jobs: [],

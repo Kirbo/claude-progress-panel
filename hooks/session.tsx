@@ -870,14 +870,16 @@ export async function watchPushes(
   const { added, file } = await exclusive(async () => {
     const own = await ownFile($, dir)
     const before = own.pipelines ?? []
-    const watched = applyWatch(before, watches, [], at)
+    const watched = applyWatch(before, watches, [], at, undefined, 'push')
     const added = watched.list.filter(p => !before.some(old => old.key === p.key))
     let file: SessionFile = { ...own, pipelines: watched.list }
     // Each new pipeline links itself to the one `doing` task of its repo: that task now closes when
     // the pipeline does (never kept open by hand to wait for CI).
     if (isOn(options, 'tasks'))
       for (const p of added) {
-        const repo = watches.find(w => w.sha === p.sha && w.project === p.project)?.repo
+        const repo = watches.find(
+          w => w.sha === p.sha && w.project === p.project && w.ref === p.watchRef,
+        )?.repo
         if (!repo) continue
         const linked = linkPushedPipeline(file, p.key, repo, at)
         file = linked.file
@@ -1338,6 +1340,8 @@ export async function pushWatches(
       provider,
       project: remote?.path ?? repo,
       sha,
+      // The ref it landed on: the same commit pushed to another branch, or tagged, is another watch.
+      ...(name ? { ref: name } : {}),
       ...(provider !== 'command' && remote ? { host: remote.host } : {}),
       label: name ? `${repo} ${name}` : repo,
       repo,

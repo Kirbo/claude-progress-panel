@@ -236,6 +236,57 @@ test('applyWatch refuses a sha that is no commit id and a host that is no host n
   ])
 })
 
+test('applyWatch: a watch by commit is per ref when it names one; whole-commit and per-ref never double', () => {
+  const sha = 'a'.repeat(40)
+  let { list, errors } = applyWatch(
+    [],
+    [
+      { project: 'g/app', sha, ref: 'next' },
+      { project: 'g/app', sha, ref: 'main' },
+      { project: 'g/app', sha, ref: 'next' },
+      // The whole commit, already watched per ref: covered.
+      { project: 'g/app', sha },
+      { project: 'g/app', sha: sha.slice(0, 8) },
+      // Another host is another project.
+      { project: 'g/app', sha, host: 'git.example.com' },
+      // A ref means nothing for a run watched by id, or for a custom command.
+      { project: 'g/app', pipeline: 7, ref: 'main' },
+      { provider: 'command', project: 'job', sha, ref: 'main' },
+      { project: 'g/app', sha, ref: '--upload-pack=x' },
+      { project: 'g/app', sha, ref: 'a:b' },
+      { project: 'g/app', sha, ref: 'a b' },
+    ],
+    [],
+    iso(T0),
+    undefined,
+    'push',
+  )
+  expect(list.map(p => [p.key, p.watchRef, p.pushed])).toEqual([
+    [`g/app@${sha}:next`, 'next', true],
+    [`g/app@${sha}:main`, 'main', true],
+    [`git.example.com/g/app@${sha}`, undefined, true],
+    ['g/app#7', undefined, true],
+    [`ci:job@${sha}`, undefined, true],
+  ])
+  expect(errors).toEqual([
+    'watch[8]: "--upload-pack=x" is not a branch or tag name',
+    'watch[9]: "a:b" is not a branch or tag name',
+    'watch[10]: "a b" is not a branch or tag name',
+  ])
+  // The whole commit first: a later per-ref watch of it is covered — and the agent's own carry no flag.
+  ;({ list, errors } = applyWatch(
+    [],
+    [
+      { project: 'g/app', sha: sha.slice(0, 8) },
+      { project: 'g/app', sha, ref: 'main' },
+    ],
+    [],
+    iso(T0),
+  ))
+  expect(list.map(p => [p.key, p.pushed])).toEqual([[`g/app@${sha.slice(0, 8)}`, undefined]])
+  expect(errors).toEqual([])
+})
+
 test('visiblePipelines hides a pipeline the person dismissed, for that same finish', () => {
   const done: Pipeline = {
     key: 'g/app#42',

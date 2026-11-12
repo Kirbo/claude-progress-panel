@@ -2153,7 +2153,7 @@ test('a Gitea/Forgejo run is read through tea, with the login on its host', asyn
   const disk = makeDisk()
   const world = engine(on, disk)
   world.tea.logins = [{ name: 'cb', url: 'https://codeberg.org', ssh_host: '', user: 'me', default: 'true' }]
-  const byCommit = '/repos/team/app/actions/runs?head_sha=abc1234&limit=1'
+  const byCommit = '/repos/team/app/actions/runs?head_sha=abc1234&limit=50'
   world.tea.api.set(`cb ${byCommit}`, {
     total_count: 1,
     workflow_runs: [
@@ -2227,7 +2227,7 @@ test('a pipeline watched by commit is found once GitLab has it', async ($, on) =
   await update($, { watch: [{ project: 'g/app', sha: 'abc1234', label: 'app main' }] })
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ key: 'g/app@abc1234', id: null })
 
-  world.gitlab.set('projects/g%2Fapp/pipelines?sha=abc1234&per_page=1', [
+  world.gitlab.set('projects/g%2Fapp/pipelines?sha=abc1234&per_page=100', [
     { id: 42, status: 'pending', ref: 'main' },
   ])
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'pending']))
@@ -2245,9 +2245,9 @@ test('a watch by an abbreviated sha is resolved to the whole commit id and finds
   await start($)
   const full = '70a2803ab1cc3b4c3b523884dab20e4dde71cd16'
   // GitLab's by-commit filter matches only the whole id: the short one lists nothing.
-  world.gitlab.set('projects/g%2Fapp/pipelines?sha=70a2803&per_page=1', [])
+  world.gitlab.set('projects/g%2Fapp/pipelines?sha=70a2803&per_page=100', [])
   world.gitlab.set('projects/g%2Fapp/repository/commits/70a2803', { id: full, short_id: '70a2803' })
-  world.gitlab.set(`projects/g%2Fapp/pipelines?sha=${full}&per_page=1`, [
+  world.gitlab.set(`projects/g%2Fapp/pipelines?sha=${full}&per_page=100`, [
     { id: 42, status: 'success', ref: 'main' },
   ])
   world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'success']))
@@ -2278,7 +2278,7 @@ test('a watch whose commit has no pipeline says so after 10 minutes instead of w
   const world = engine(on, disk)
   await start($)
   const full = 'b'.repeat(40)
-  world.gitlab.set(`projects/g%2Fapp/pipelines?sha=${full}&per_page=1`, [])
+  world.gitlab.set(`projects/g%2Fapp/pipelines?sha=${full}&per_page=100`, [])
   await update($, { watch: [{ project: 'g/app', sha: full, label: 'app' }] })
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toBeUndefined()
   ageWatches(disk, 11)
@@ -2964,7 +2964,7 @@ test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, �
     updated_at: started,
     html_url: 'https://github.com/Kirbo/ha/actions/runs/900',
   }
-  world.github.set(`${REPO}/actions/runs?head_sha=abc1234&per_page=1`, {
+  world.github.set(`${REPO}/actions/runs?head_sha=abc1234&per_page=100`, {
     total_count: 1,
     workflow_runs: [run],
   })
@@ -3460,7 +3460,7 @@ test("another session's verdict is reused; a commit that never got a pipeline is
   ciFile(disk, '/w/app/.gitlab-ci.yml')
   gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
   // Pushed and watched; then 10 minutes with no pipeline for that commit (CI off on the forge).
-  world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${'a'.repeat(40)}&per_page=1`, [])
+  world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${'a'.repeat(40)}&per_page=100`, [])
   expect(await bash($, 'git push')).toContain('watched automatically')
   ageWatches(disk, 11)
   await world.clock.advance(16_000)
@@ -4327,9 +4327,15 @@ test('a push to a GitLab repo is watched by its sha on its own — host and proj
   gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
   const note = await bash($, 'pnpm lint && git push')
   const sha = 'a'.repeat(40)
-  expect(keys(disk)).toEqual([`team/app@${sha}`])
-  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ label: 'app main', sha })
-  expect(note).toContain(`team/app@${sha}`)
+  // The key names the commit AND the ref it landed on.
+  expect(keys(disk)).toEqual([`team/app@${sha}:main`])
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({
+    label: 'app main',
+    sha,
+    watchRef: 'main',
+    pushed: true,
+  })
+  expect(note).toContain(`team/app@${sha}:main`)
   expect(note).toMatch(/no `watch` call needed/)
 })
 
@@ -4347,9 +4353,9 @@ test('GitHub Actions over https, a self-hosted GitLab and a Forgejo repo: each o
   await bash($, 'cd /w/gl && git push')
   await bash($, 'git push', { cwd: '/w/fj' })
   expect(keys(disk)).toEqual([
-    `gh:Owner/Repo@${'b'.repeat(40)}`,
-    `git.example.com/team/app@${'c'.repeat(40)}`,
-    `gt:forge.example.org/team/svc@${'d'.repeat(40)}`,
+    `gh:Owner/Repo@${'b'.repeat(40)}:main`,
+    `git.example.com/team/app@${'c'.repeat(40)}:main`,
+    `gt:forge.example.org/team/svc@${'d'.repeat(40)}:main`,
   ])
 })
 
@@ -4362,7 +4368,7 @@ test('-C and cd are resolved against where the command ran; the named refspec is
   // HEAD:next lands on `next`; the tracking ref checked is origin/next.
   await bash($, 'git -C ../other push origin HEAD:next')
   expect(read(disk, `${DIR}/s-me.json`).pipelines?.map(p => [p.key, p.label])).toEqual([
-    [`team/other@${'a'.repeat(40)}`, 'other next'],
+    [`team/other@${'a'.repeat(40)}:next`, 'other next'],
   ])
 })
 
@@ -4407,9 +4413,169 @@ test("a push the agent also watches by hand is one row; a subagent's push is wat
 
   gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git', sha: 'e'.repeat(40) })
   const note = await bash($, 'git push', { agent_id: 'sub-push' })
-  expect(keys(disk)).toEqual([`team/app@${sha}`, `team/app@${'e'.repeat(40)}`])
+  expect(keys(disk)).toEqual([`team/app@${sha}`, `team/app@${'e'.repeat(40)}:main`])
+  // The other way round: a commit a push already watches is not watched again whole.
+  await update($, { watch: [{ project: 'team/app', sha: 'e'.repeat(40) }] })
+  expect(keys(disk)).toHaveLength(2)
   expect(note).toContain('watched automatically')
 })
+
+test("the same commit pushed to a second branch, or tagged, gets its own row with that ref's pipeline", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  const sha = 'a'.repeat(40)
+  const list = `projects/team%2Fapp/pipelines?sha=${sha}&per_page=100`
+  const jobs = (id: number) => `projects/team%2Fapp/pipelines/${id}/jobs?per_page=100`
+  // Pushed to `next`: its pipeline runs and passes.
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git', branch: 'next' })
+  world.gitlab.set(list, [{ id: 61, status: 'success', ref: 'next' }])
+  world.gitlab.set(jobs(61), jobsOf(['test', 'success']))
+  expect(await bash($, 'git push origin next 2>&1')).toContain(`team/app@${sha}:next`)
+  await world.clock.advance(16_000)
+  const rows = () =>
+    (read(disk, `${DIR}/s-me.json`).pipelines ?? []).map(p => [p.key, p.id, p.state, p.label])
+  expect(rows()).toEqual([[`team/app@${sha}:next`, 61, 'success', 'app next']])
+
+  // `main` fast-forwarded to the very same commit: a second pipeline, on `main` — its own row.
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git', branch: 'main' })
+  world.gitlab.set(list, [
+    { id: 62, status: 'running', ref: 'main' },
+    { id: 61, status: 'success', ref: 'next' },
+  ])
+  world.gitlab.set(jobs(62), jobsOf(['test', 'running']))
+  const note = await bash($, 'git push origin main')
+  expect(note).toContain(`team/app@${sha}:main`)
+  await world.clock.advance(16_000)
+  expect(rows()).toEqual([
+    [`team/app@${sha}:next`, 61, 'success', 'app next'],
+    [`team/app@${sha}:main`, 62, 'running', 'app main'],
+  ])
+
+  // A tag on that commit, and two refs in one push: each ref is a watch of its own.
+  world.programs.set(`git -C /w/app rev-parse --verify --quiet v1.0.0^{commit}`, `${sha}\n`)
+  await bash($, 'git push origin v1.0.0')
+  expect(keys(disk)).toEqual([`team/app@${sha}:next`, `team/app@${sha}:main`, `team/app@${sha}:v1.0.0`])
+  gitRepo(world, '/w/two', { url: 'git@gitlab.com:team/two.git', branch: 'next', sha: 'b'.repeat(40) })
+  gitRepo(world, '/w/two', { url: 'git@gitlab.com:team/two.git', branch: 'main', sha: 'b'.repeat(40) })
+  ciFile(disk, '/w/two/.gitlab-ci.yml')
+  await bash($, 'git push origin next main', { cwd: '/w/two' })
+  expect(keys(disk).slice(3)).toEqual([`team/two@${'b'.repeat(40)}:next`, `team/two@${'b'.repeat(40)}:main`])
+})
+
+test('a commit with several workflow runs is one row: green only when ALL are, and its task closes on that', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  const sha = 'c'.repeat(40)
+  const REPO = 'repos/o/r'
+  const run = (id: number, name: string, status: string, conclusion: string | null) => ({
+    id,
+    name,
+    status,
+    conclusion,
+    head_branch: 'main',
+    head_sha: sha,
+    event: 'push',
+    html_url: `https://github.com/o/r/actions/runs/${id}`,
+  })
+  const ghJobs = (...jobs: [string, string, string | null][]) => ({
+    jobs: jobs.map(([name, status, conclusion], i) => ({ id: i + 1, name, status, conclusion })),
+  })
+  const list = `${REPO}/actions/runs?head_sha=${sha}&per_page=100`
+  // The labeler is done in seconds; the real CI still runs.
+  world.github.set(list, {
+    workflow_runs: [run(12, 'CI', 'in_progress', null), run(11, 'Labeler', 'completed', 'success')],
+  })
+  world.github.set(`${REPO}/actions/runs/12/jobs?per_page=100`, ghJobs(['unit', 'in_progress', null]))
+  world.github.set(`${REPO}/actions/runs/11/jobs?per_page=100`, ghJobs(['label', 'completed', 'success']))
+  const key = `gh:o/r@${sha}`
+  await update($, {
+    watch: [{ provider: 'github', project: 'o/r', sha }],
+    tasks: [{ id: 'ship', title: 'Ship', status: 'doing', pipeline: key }],
+  })
+  await world.clock.advance(16_000)
+  const row = () => read(disk, `${DIR}/s-me.json`).pipelines?.[0]
+  const task = () => read(disk, `${DIR}/s-me.json`).tasks[0]
+  // One row for the commit: still running, both runs' jobs under their workflow's name.
+  expect(row()).toMatchObject({
+    key,
+    id: 12,
+    state: 'running',
+    runs: [
+      { id: 12, state: 'running', name: 'CI' },
+      { id: 11, state: 'success', name: 'Labeler' },
+    ],
+  })
+  expect(row()?.jobs.map(j => [j.stage, j.name, j.state])).toEqual([
+    ['CI', 'unit', 'running'],
+    ['Labeler', 'label', 'success'],
+  ])
+  expect(task()?.status).toBe('doing')
+  expect(world.toasts.filter(x => x.startsWith('Pipeline'))).toEqual([])
+  // A finished run's jobs are read once, not again every round.
+  const labelerJobs = () =>
+    world.runs.filter(r => r[r.length - 1] === `${REPO}/actions/runs/11/jobs?per_page=100`).length
+  const before = labelerJobs()
+  await world.clock.advance(15_000)
+  expect(labelerJobs()).toBe(before)
+
+  // The CI fails: only now is the commit's pipeline failed, by the run and job that failed it.
+  world.github.set(list, {
+    workflow_runs: [run(12, 'CI', 'completed', 'failure'), run(11, 'Labeler', 'completed', 'success')],
+  })
+  world.github.set(`${REPO}/actions/runs/12/jobs?per_page=100`, ghJobs(['unit', 'completed', 'failure']))
+  await world.clock.advance(15_000)
+  expect(row()).toMatchObject({ id: 12, state: 'failed' })
+  expect(task()).toMatchObject({ status: 'failed', note: 'pipeline 12 failed: unit' })
+  expect(world.toasts.filter(x => x.startsWith('Pipeline'))).toEqual(['Pipeline r failed'])
+
+  // Re-run and green everywhere: success — one toast per finish, never one per run.
+  world.github.set(list, {
+    workflow_runs: [run(12, 'CI', 'completed', 'success'), run(11, 'Labeler', 'completed', 'success')],
+  })
+  world.github.set(`${REPO}/actions/runs/12/jobs?per_page=100`, ghJobs(['unit', 'completed', 'success']))
+  await world.clock.advance(60_000)
+  expect(row()).toMatchObject({ state: 'success' })
+})
+
+test(
+  'a commit with a branch and a merge-request pipeline settles on both, and ⊘ stop stops each running one',
+  { options: { runningPipelineX: 'cancel' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    await start($)
+    const sha = 'd'.repeat(40)
+    const list = `projects/g%2Fapp/pipelines?sha=${sha}&per_page=100`
+    world.gitlab.set(list, [
+      { id: 72, status: 'running', ref: 'refs/merge-requests/3/head', source: 'merge_request_event' },
+      { id: 71, status: 'running', ref: 'feat', source: 'push' },
+      { id: 70, status: 'success', ref: 'other', source: 'push' },
+    ])
+    world.gitlab.set('projects/g%2Fapp/pipelines/72/jobs?per_page=100', jobsOf(['lint', 'running']))
+    world.gitlab.set('projects/g%2Fapp/pipelines/71/jobs?per_page=100', jobsOf(['lint', 'success']))
+    await update($, { watch: [{ project: 'g/app', sha, ref: 'feat' }] })
+    await world.clock.advance(16_000)
+    const row = read(disk, `${DIR}/s-me.json`).pipelines?.[0]
+    // The other branch's pipeline is none of this watch's; the two that are tell apart by trigger.
+    expect(row?.runs?.map(r => [r.id, r.name])).toEqual([
+      [72, 'merge_request_event #72'],
+      [71, 'push #71'],
+    ])
+    expect(row?.jobs.map(j => j.stage)).toEqual(['merge_request_event #72 · build', 'push #71 · build'])
+    const ui = await pane($)
+    world.gitlab.set('projects/g%2Fapp/pipelines/72/cancel', { id: 72, status: 'canceled' })
+    world.gitlab.set('projects/g%2Fapp/pipelines/71/cancel', { id: 71, status: 'canceled' })
+    const stop = `cancelpipe:s-me:g/app@${sha}:feat`
+    await ui.press({ key: stop })
+    await ui.press({ key: stop })
+    await ui.unmount()
+    const posts = world.runs.filter(r => r.includes('POST')).map(r => r[r.length - 1])
+    expect(posts).toEqual(['projects/g%2Fapp/pipelines/72/cancel', 'projects/g%2Fapp/pipelines/71/cancel'])
+  },
+)
 
 test('a long title is cut with an ellipsis and its right column stays put; unfolded, it shows whole', async ($, on) => {
   const disk = makeDisk()
@@ -4604,7 +4770,7 @@ test('a push links its pipeline to the one `doing` task of that repo; the task c
   ciFile(disk, '/w/app/.gitlab-ci.yml')
   gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
   const sha = 'a'.repeat(40)
-  world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${sha}&per_page=1`, [
+  world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${sha}&per_page=100`, [
     { id: 51, status: 'running', ref: 'main', web_url: 'u' },
   ])
   world.gitlab.set('projects/team%2Fapp/pipelines/51', {
@@ -4618,15 +4784,12 @@ test('a push links its pipeline to the one `doing` task of that repo; the task c
   expect(note).toContain('task "Ship the fix" now waits on pipeline')
   expect(read(disk, `${DIR}/s-me.json`).tasks[0]).toMatchObject({
     status: 'doing',
-    pipeline: `team/app@${sha}`,
+    pipeline: `team/app@${sha}:main`,
   })
   // Green: done by itself, the coordinator told once.
-  world.gitlab.set('projects/team%2Fapp/pipelines/51', {
-    id: 51,
-    status: 'success',
-    ref: 'main',
-    web_url: 'u',
-  })
+  world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${sha}&per_page=100`, [
+    { id: 51, status: 'success', ref: 'main', web_url: 'u' },
+  ])
   await world.clock.advance(16_000)
   const task = read(disk, `${DIR}/s-me.json`).tasks[0]
   expect(task).toMatchObject({ status: 'done', note: 'pipeline 51 green' })

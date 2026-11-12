@@ -6,6 +6,7 @@ import type {
   Loaded,
   Pipeline,
   PipelineJob,
+  PipelineRun,
   SessionFile,
   SessionInfo,
   SidecarFile,
@@ -18,6 +19,7 @@ import {
   cleanText,
   httpUrl,
   isCommitSha,
+  isRefName,
   isSafeProject,
   JOB_NAME_MAX,
   jobState,
@@ -336,6 +338,21 @@ function asJobs(value: unknown[]): PipelineJob[] {
     }))
 }
 
+// The runs a stored watch by commit lists: each a run id (it is written into the forge's API path).
+function asRuns(value: unknown): PipelineRun[] {
+  return (Array.isArray(value) ? value : [])
+    .filter(
+      (r): r is PipelineRun =>
+        typeof r === 'object' && r !== null && typeof r.id === 'number' && isRunId(r.id) && r.id !== null,
+    )
+    .map(r => ({
+      id: r.id,
+      state: jobState(typeof r.state === 'string' ? r.state : ''),
+      name: cleanText(r.name, STAGE_NAME_MAX) || `#${r.id}`,
+      ...(httpUrl(r.url) ? { url: r.url as string } : {}),
+    }))
+}
+
 /** The well-formed pipelines of a stored list (a session file's, or a sidecar's refreshed copies). */
 function asPipelines(value: unknown): Pipeline[] {
   return (Array.isArray(value) ? value : [])
@@ -350,12 +367,19 @@ function asPipelines(value: unknown): Pipeline[] {
         // Both reach a command line (`{sha}`, `--hostname`): a stored one that is not what it says goes.
         ((p as Pipeline).sha === undefined || isCommitSha((p as Pipeline).sha)) &&
         ((p as Pipeline).host === undefined || isHostName((p as Pipeline).host)) &&
+        ((p as Pipeline).watchRef === undefined || isRefName((p as Pipeline).watchRef)) &&
         Array.isArray((p as Pipeline).jobs),
     )
     .map(p => {
       // Its address becomes a terminal hyperlink: only ever an http(s) one.
-      const { url, ...rest } = p
-      return { ...rest, ...(httpUrl(url) ? { url } : {}), jobs: asJobs(p.jobs) }
+      const { url, runs, ...rest } = p
+      const several = asRuns(runs)
+      return {
+        ...rest,
+        ...(httpUrl(url) ? { url } : {}),
+        ...(several.length > 1 ? { runs: several } : {}),
+        jobs: asJobs(p.jobs),
+      }
     })
 }
 

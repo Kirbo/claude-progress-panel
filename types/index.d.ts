@@ -115,6 +115,15 @@ export type PipelineJob = {
   url?: string
 }
 
+/** One of the several pipelines / workflow runs a watch by commit follows as one row. */
+export type PipelineRun = {
+  id: number
+  state: JobState
+  /** What tells it from the others: its workflow's name, its trigger, else its id. */
+  name: string
+  url?: string
+}
+
 /** Where a watched pipeline lives: GitLab CI (the default) or GitHub Actions. */
 export type PipelineProvider = 'gitlab' | 'github' | 'gitea' | 'command'
 
@@ -132,9 +141,20 @@ export type Pipeline = {
   /** The forge host its calls go to (absent: the forge's public host — gitlab.com, github.com). */
   host?: string
   project: string
+  /** The run's id; for a watch by commit the run the row shows as its own (the one that failed
+   *  it, else the newest), null until the forge has one. */
   id: number | null
   sha?: string
   ref?: string
+  /** A watch by commit, for one branch or tag: only that ref's pipelines count (a push's own ref;
+   *  `ref` given with a watch). Absent: every pipeline of the commit. Part of the key
+   *  (`project@sha:ref`). */
+  watchRef?: string
+  /** A watch a `git push` made by itself — never one the agent sent. */
+  pushed?: true
+  /** A watch by commit that found several pipelines / runs: each of them; `state` and `jobs` are
+   *  then the aggregate (unfinished while any is, else the worst outcome). Absent for one. */
+  runs?: PipelineRun[]
   label: string
   state: JobState | 'unknown'
   url?: string

@@ -123,6 +123,11 @@ export const INPUT_SCHEMA = {
             type: 'string',
             description: 'commit sha (7 to 64 hex digits), when the id is not known yet',
           },
+          ref: {
+            type: 'string',
+            description:
+              'with sha: the branch or tag whose pipelines to follow, when the same commit is on several (a fast-forwarded branch, a tag); without it every pipeline of the commit counts',
+          },
           host: {
             type: 'string',
             description:

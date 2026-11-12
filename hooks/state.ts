@@ -3,7 +3,7 @@
 
 import type { EngineInterface, PluginOptions } from 'claude-code'
 import { atom, read, update } from 'claude-code'
-import type { Folds, Loaded, SortChoice } from '../types'
+import type { Folds, JobState, Loaded, PipelineJob, SortChoice } from '../types'
 import { t } from './i18n'
 import type { Settings } from './settings'
 import { readSettings } from './settings'
@@ -132,7 +132,7 @@ export const toldNoCi = new Set<string>()
 export const pendingCall = new Map<string, { token: object; toolUseId?: string; what: string }>()
 
 export const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {} as Loaded, {
-  shape: 'sessions-3',
+  shape: 'sessions-4',
 })
 
 // Bumped after a setting is written from the Settings view: the view redraws with the new value
@@ -310,6 +310,9 @@ export const self: {
   polling: boolean
   /** `tea`'s logins, as last listed (cached a minute). */
   teaLogins: { atMs: number; text: string } | undefined
+  /** The jobs of a finished run of a watch by commit (`<key>#<run id>`), as last read: a run that
+   *  is still in that state is not asked for its jobs again. Memory only — a reload asks once more. */
+  runJobs: Map<string, { state: JobState; jobs: PipelineJob[] }>
 } = {
   manifest: undefined,
   seenNeeds: undefined,
@@ -329,6 +332,7 @@ export const self: {
   scanning: false,
   polling: false,
   teaLogins: undefined,
+  runJobs: new Map(),
 }
 
 export function firstFold(key: string): boolean {

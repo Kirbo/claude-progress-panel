@@ -4,9 +4,21 @@
 import type { EngineInterface, PluginOptions } from 'claude-code'
 import { markNoPipeline } from './cimemory'
 import { commandArgv, parseCommandStatus } from './command'
+import type { Run } from './commit'
+import {
+  aggregateRuns,
+  isCommitWatch,
+  jobsPath,
+  parseRun,
+  parseRunJobs,
+  parseRuns,
+  runPath,
+  runsOnRef,
+  runsPath,
+} from './commit'
 import { apiHost } from './forges'
-import { parseGiteaJobs, parseGiteaRun, teaLoginFor } from './gitea'
-import { ghEstimateSamples, parseGhJobs, parseGhRun } from './github'
+import { teaLoginFor } from './gitea'
+import { ghEstimateSamples, parseGhJobs } from './github'
 import { t } from './i18n'
 import type { SessionFile } from './model'
 import { settleLinkedTasks } from './model'
@@ -47,24 +59,6 @@ export async function teaApi(
   const login = teaLoginFor(self.teaLogins.text, host)
   if (!login) return { error: `tea: no login for ${host} (tea login add)` }
   return runCli($, ['tea', 'api', '--login', login, path])
-}
-
-// One Gitea / Forgejo Actions run's head and jobs (found by commit first, when only the sha is known).
-export async function refreshGiteaRun($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
-  const host = apiHost(p)
-  if (!host) return { ...p, checkedAt: at, error: 'tea: the pipeline has no host' }
-  const runs = `/repos/${p.project}/actions/runs`
-  const head =
-    p.id === null
-      ? await teaApi($, host, `${runs}?head_sha=${encodeURIComponent(p.sha ?? '')}&limit=1`)
-      : await teaApi($, host, `${runs}/${p.id}`)
-  const parsed = head.text === undefined ? undefined : parseGiteaRun(head.text)
-  if (!parsed && p.id === null && !head.error) return { ...p, checkedAt: at }
-  if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'tea: unreadable workflow run' }
-  const jobsText = await teaApi($, host, `${runs}/${parsed.id}/jobs`)
-  const jobs: PipelineJob[] =
-    (jobsText.text === undefined ? undefined : parseGiteaJobs(jobsText.text)) ?? p.jobs
-  return merged(p, parsed, parsed.id, undefined, jobs, jobsText.error, at)
 }
 
 // A pipeline of a CI the plugin has no adapter for: the person's own command (the `ciCommand`
@@ -213,44 +207,6 @@ export async function ghEstimateFor(
   return { s, jobs: jobEstimates }
 }
 
-// One GitHub Actions run's head and jobs (finding the newest run of the commit first, when only the
-// sha is known) — the same Pipeline shape as GitLab's.
-export async function refreshGithubRun($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
-  const head =
-    p.id === null
-      ? await ghApi(
-          $,
-          `repos/${p.project}/actions/runs?head_sha=${encodeURIComponent(p.sha ?? '')}&per_page=1`,
-          apiHost(p),
-        )
-      : await ghApi($, `repos/${p.project}/actions/runs/${p.id}`, apiHost(p))
-  const parsed = head.text === undefined ? undefined : parseGhRun(head.text)
-  // As GitLab's (refreshPipeline): an abbreviated sha resolved once, else wait, then say so.
-  if (!parsed && p.id === null && !head.error) {
-    const full = await fullSha($, p)
-    if (full) return refreshGithubRun($, { ...p, sha: full }, at)
-    return stillWaiting(p, at, noneYet(p))
-  }
-  if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'gh: unreadable workflow run' }
-  const id = parsed.id
-  const estimate =
-    p.estimateS == null && parsed.ref && parsed.workflowId !== undefined && !isFinished(parsed.state)
-      ? await ghEstimateFor(
-          $,
-          apiHost(p),
-          p.project,
-          parsed.workflowId,
-          parsed.ref,
-          parsed.source,
-          id,
-          Date.parse(at),
-        )
-      : undefined
-  const jobsText = await ghApi($, `repos/${p.project}/actions/runs/${id}/jobs?per_page=100`, apiHost(p))
-  const jobs: PipelineJob[] = (jobsText.text === undefined ? undefined : parseGhJobs(jobsText.text)) ?? p.jobs
-  return merged(p, parsed, id, estimate, jobs, jobsText.error, at)
-}
-
 // The refreshed pipeline: the head's fields over the stored ones (an old error cleared).
 export function merged(
   p: Pipeline,
@@ -288,7 +244,7 @@ export function merged(
 // The whole commit id behind a watch's abbreviated sha (GitLab / GitHub commit API), or undefined:
 // already whole, not found, or the forge could not say — the watch then simply keeps waiting.
 export async function fullSha($: EngineInterface, p: Pipeline): Promise<string | undefined> {
-  if (!p.sha || isFullSha(p.sha)) return undefined
+  if (!p.sha || isFullSha(p.sha) || p.provider === 'gitea' || p.provider === 'command') return undefined
   const sha = encodeURIComponent(p.sha)
   const answer =
     p.provider === 'github'
@@ -302,7 +258,120 @@ export function noneYet(p: Pipeline): string {
   return t('pipe.noneYet', { sha: (p.sha ?? '').slice(0, 12), minutes: NO_PIPELINE_HINT_MS / 60_000 })
 }
 
-// Fetches one pipeline's head and jobs (finding it by commit first, when only the sha is known).
+// One forge API read through the person's own CLI: `glab` (GitLab), `gh` (GitHub) or `tea` (Gitea /
+// Forgejo, the login on the pipeline's host).
+export async function forgeGet(
+  $: EngineInterface,
+  p: Pipeline,
+  path: string,
+): Promise<{ text?: string; error?: string }> {
+  const host = apiHost(p)
+  if (p.provider !== 'gitea') return cliApi($, p.provider === 'github' ? 'gh' : 'glab', path, host)
+  if (!host) return { error: 'tea: the pipeline has no host' }
+  return teaApi($, host, path)
+}
+
+function unreadable(p: Pipeline): string {
+  if (p.provider === 'github') return 'gh: unreadable workflow run'
+  return p.provider === 'gitea' ? 'tea: unreadable workflow run' : 'glab: unreadable pipeline'
+}
+
+// How long a run like this one took before (GitLab and GitHub; none for a finished run, or one
+// whose branch is not known).
+export async function estimateOf(
+  $: EngineInterface,
+  p: Pipeline,
+  run: Run,
+  at: string,
+): Promise<Estimates | undefined> {
+  if (!run.ref || isFinished(run.state) || p.provider === 'gitea') return undefined
+  if (p.provider !== 'github')
+    return estimateFor($, apiHost(p), p.project, run.ref, run.source, run.id, Date.parse(at))
+  if (run.workflowId === undefined) return undefined
+  return ghEstimateFor($, apiHost(p), p.project, run.workflowId, run.ref, run.source, run.id, Date.parse(at))
+}
+
+// One pipeline / run watched by its id: its head and its jobs.
+export async function refreshRun($: EngineInterface, p: Pipeline, id: number, at: string): Promise<Pipeline> {
+  const head = await forgeGet($, p, runPath(p, id))
+  const parsed = head.text === undefined ? undefined : parseRun(p.provider, head.text)
+  if (!parsed) return { ...p, checkedAt: at, error: head.error ?? unreadable(p) }
+  const estimate = p.estimateS == null ? await estimateOf($, p, parsed, at) : undefined
+  const jobsText = await forgeGet($, p, jobsPath(p, parsed.id))
+  const jobs: PipelineJob[] =
+    (jobsText.text === undefined ? undefined : parseRunJobs(p.provider, jobsText.text)) ?? p.jobs
+  return merged(p, parsed, parsed.id, estimate, jobs, jobsText.error, at)
+}
+
+const RUN_JOBS_KEPT = 200
+
+// The jobs of one run of a watch by commit. A finished run keeps its jobs: read once more when it
+// finishes, then answered from memory for as long as it stays in that state.
+export async function runJobs(
+  $: EngineInterface,
+  p: Pipeline,
+  run: Run,
+): Promise<{ jobs: PipelineJob[]; error?: string }> {
+  const key = `${p.key}#${run.id}`
+  const kept = self.runJobs.get(key)
+  if (kept && kept.state === run.state && isFinished(run.state)) return { jobs: kept.jobs }
+  const answer = await forgeGet($, p, jobsPath(p, run.id))
+  const jobs = answer.text === undefined ? undefined : parseRunJobs(p.provider, answer.text)
+  if (!jobs) return { jobs: kept?.jobs ?? [], error: answer.error ?? unreadable(p) }
+  self.runJobs.delete(key)
+  self.runJobs.set(key, { state: run.state, jobs })
+  // The oldest entries go first (a Map keeps insertion order).
+  for (const old of self.runJobs.keys()) {
+    if (self.runJobs.size <= RUN_JOBS_KEPT) break
+    self.runJobs.delete(old)
+  }
+  return { jobs }
+}
+
+// A watch by commit: EVERY pipeline / run the forge has for that commit (on the watched ref), read
+// as one. A push can start several — one per GitHub workflow, a branch and a merge-request pipeline
+// on GitLab — and the newest alone says nothing about the rest: a fast lint run going green is not
+// the commit's CI passing. The row is unfinished while any run is, and takes the worst outcome
+// only once all are complete.
+export async function refreshCommit($: EngineInterface, p: Pipeline, at: string): Promise<Pipeline> {
+  const listed = await forgeGet($, p, runsPath(p))
+  const all = listed.text === undefined ? undefined : parseRuns(p.provider, listed.text)
+  if (!all) return { ...p, checkedAt: at, error: listed.error ?? unreadable(p) }
+  const runs = runsOnRef(all, p.watchRef)
+  if (runs.length === 0) {
+    // None by this commit yet (a fresh push) — or an abbreviated sha, which no forge's filter
+    // matches: resolved to the whole id once and asked again; else wait quietly, then say so.
+    const full = all.length === 0 ? await fullSha($, p) : undefined
+    if (full) return refreshCommit($, { ...p, sha: full }, at)
+    return stillWaiting(p, at, noneYet(p))
+  }
+  let estimate: Estimates | undefined
+  if (p.estimateS == null)
+    for (const run of runs) {
+      const one = await estimateOf($, p, run, at)
+      if (!one) continue
+      // The runs go side by side: the row takes as long as its longest.
+      const s = one.s === null ? (estimate?.s ?? null) : Math.max(one.s, estimate?.s ?? 0)
+      estimate = { s, jobs: { ...estimate?.jobs, ...one.jobs } }
+    }
+  const parts: { run: Run; jobs: PipelineJob[] }[] = []
+  let jobsError: string | undefined
+  for (const run of runs) {
+    const read = await runJobs($, p, run)
+    jobsError = jobsError ?? read.error
+    parts.push({ run, jobs: read.jobs })
+  }
+  const { head, jobs, runs: several } = aggregateRuns(parts)
+  if (!head) return { ...p, checkedAt: at, error: unreadable(p) }
+  // What belongs to ONE run (its own duration, trigger, workflow) is no fact of several.
+  const { runs: _r, durationS: _d, source: _s, workflowId: _w, ...shared } = p
+  const { runs: _one, ...single } = p
+  const fresh = merged(several ? shared : single, head, head.id, estimate, jobs, jobsError, at)
+  return several ? { ...fresh, runs: several } : fresh
+}
+
+// Fetches one pipeline's head and jobs: a watch by commit as every run of that commit, one by id as
+// that run, a custom command's as its command prints it.
 export async function refreshPipeline(
   $: EngineInterface,
   options: PluginOptions,
@@ -310,35 +379,9 @@ export async function refreshPipeline(
   at: string,
 ): Promise<Pipeline> {
   if (p.provider === 'command') return refreshCommandRun($, options, p, at)
-  if (p.provider === 'github') return refreshGithubRun($, p, at)
-  if (p.provider === 'gitea') return refreshGiteaRun($, p, at)
-  const project = encodeURIComponent(p.project)
-  // By commit, GitLab's list answer already carries the newest pipeline's status: no second call.
-  const head =
-    p.id === null
-      ? await glabApi(
-          $,
-          `projects/${project}/pipelines?sha=${encodeURIComponent(p.sha ?? '')}&per_page=1`,
-          apiHost(p),
-        )
-      : await glabApi($, `projects/${project}/pipelines/${p.id}`, apiHost(p))
-  const parsed = head.text === undefined ? undefined : parsePipeline(head.text)
-  // None by this commit yet (a fresh push) — or an abbreviated sha, which GitLab's filter never
-  // matches: resolved to the whole id once and asked again; else wait quietly, then say so.
-  if (!parsed && p.id === null && !head.error) {
-    const full = await fullSha($, p)
-    if (full) return refreshPipeline($, options, { ...p, sha: full }, at)
-    return stillWaiting(p, at, noneYet(p))
-  }
-  if (!parsed) return { ...p, checkedAt: at, error: head.error ?? 'glab: unreadable pipeline' }
-  const id = parsed.id
-  const estimate =
-    p.estimateS == null && parsed.ref && !isFinished(parsed.state)
-      ? await estimateFor($, apiHost(p), p.project, parsed.ref, parsed.source, id, Date.parse(at))
-      : undefined
-  const jobsText = await glabApi($, `projects/${project}/pipelines/${id}/jobs?per_page=100`, apiHost(p))
-  const jobs: PipelineJob[] = (jobsText.text === undefined ? undefined : parseJobs(jobsText.text)) ?? p.jobs
-  return merged(p, parsed, id, estimate, jobs, jobsText.error, at)
+  if (isCommitWatch(p)) return refreshCommit($, p, at)
+  if (p.id === null) return { ...p, checkedAt: at, error: unreadable(p) }
+  return refreshRun($, p, p.id, at)
 }
 
 // The session's own unfinished pipelines, refreshed and saved (only when something moved).
@@ -466,20 +509,28 @@ export async function cancelPipeline(
   sessionId: string,
   p: Pipeline,
 ): Promise<void> {
-  const github = p.provider === 'github'
-  const base = github
-    ? `repos/${p.project}/actions/runs/${p.id}`
-    : `projects/${encodeURIComponent(p.project)}/pipelines/${p.id}`
-  const cancelled = await forgeCall($, p, 'POST', `${base}/cancel`)
-  const at = await nowIso($)
-  let error = cancelled.error ? t('pipe.cancelFailed', { error: oneLine(cancelled.error) }) : undefined
-  if (!error && self.settings.runningPipelineX === 'delete') {
+  // A row of several runs stops each one that is still going.
+  const ids = p.runs ? p.runs.filter(r => !isFinished(r.state)).map(r => r.id) : [p.id as number]
+  let cancelError: string | undefined
+  let error: string | undefined
+  for (const id of ids) {
+    const base = runPath(p, id)
+    const cancelled = await forgeCall($, p, 'POST', `${base}/cancel`)
+    if (cancelled.error) {
+      cancelError = cancelled.error
+      error = t('pipe.cancelFailed', { error: oneLine(cancelled.error) })
+      break
+    }
+    if (self.settings.runningPipelineX !== 'delete') continue
     const deleted = await forgeCall($, p, 'DELETE', base)
-    if (deleted.error)
+    if (deleted.error) {
       error = /\b403\b|forbidden/i.test(deleted.error)
         ? t('pipe.deleteRefused', { error: oneLine(deleted.error) })
         : t('pipe.deleteFailed', { error: oneLine(deleted.error) })
+      break
+    }
   }
+  const at = await nowIso($)
   const dir = await progressDir($, options)
   if (!dir) return
   if (error) {
@@ -487,7 +538,7 @@ export async function cancelPipeline(
       ...p,
       checkedAt: at,
       error,
-      ...(cancelled.error ? {} : { state: 'canceled' as const, finishedAt: at }),
+      ...(cancelError ? {} : { state: 'canceled' as const, finishedAt: at }),
     }
     if (sessionId === (await $.session.id()))
       await exclusive(async () => {
