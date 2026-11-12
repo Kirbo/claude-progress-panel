@@ -28,6 +28,7 @@ import {
   parseJobs,
   parsePipeline,
   parseSampleIds,
+  pipelineDismissal,
   pipelineDuration,
   progressBar,
   RETRY_CHECK_MS,
@@ -717,4 +718,28 @@ test('applyWatch: watching a stopped pipeline again starts it over', () => {
   expect(
     applyWatch([live], [{ project: live.project, pipeline: live.id as number }], [], iso(T0 + HOUR_MS)).list,
   ).toEqual([live])
+})
+
+test('a pipeline hidden while it runs is hidden for that watch: through its finish, not when it is watched again', () => {
+  const running: Pipeline = {
+    key: 'g/app#42',
+    project: 'g/app',
+    id: 42,
+    label: 'app',
+    state: 'running',
+    jobs: [],
+    addedAt: iso(T0),
+    checkedAt: iso(T0),
+  }
+  const hidden = pipelineDismissal(running)
+  expect(hidden).toEqual({ id: 'pipeline:g/app#42', doneAt: `added:${iso(T0)}` })
+  expect(visiblePipelines([running], [hidden])).toEqual([])
+  const finished: Pipeline = { ...running, state: 'success', finishedAt: iso(T0 + 1000) }
+  expect(visiblePipelines([finished], [hidden])).toEqual([])
+  // The same pipeline watched again later is a new watch.
+  const again: Pipeline = { ...running, addedAt: iso(T0 + 60_000) }
+  expect(visiblePipelines([again], [hidden])).toEqual([again])
+  // A finished one's ✕ names that finish, as before; an older sidecar's `null` still hides the key.
+  expect(pipelineDismissal(finished)).toEqual({ id: 'pipeline:g/app#42', doneAt: iso(T0 + 1000) })
+  expect(visiblePipelines([again], [{ id: 'pipeline:g/app#42', doneAt: null }])).toEqual([])
 })

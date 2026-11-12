@@ -498,6 +498,7 @@ export async function scan($: EngineInterface, options: PluginOptions): Promise<
           entries: parsed.entries,
           pipelines: parsed.pipelines ?? [],
           cancelled: parsed.cancelled ?? [],
+          ...(parsed.cancelledAt ? { cancelledAt: parsed.cancelledAt } : {}),
         }
       else if (known) sidecars[id] = known
       continue
@@ -547,7 +548,9 @@ export async function scan($: EngineInterface, options: PluginOptions): Promise<
         const folded = (own.cancelled?.length ?? 0) !== (file.cancelled?.length ?? 0)
         // …and so did the fold of a finished agent's ✕: the row leaves the file, not only the panes.
         const cleared = (own.agents?.length ?? 0) !== (file.agents?.length ?? 0)
-        if (pruned !== own || folded || cleared) await save($, dir, pruned)
+        // …and of a pipeline's ✕: it is no longer watched.
+        const hidden = (own.pipelines?.length ?? 0) !== (file.pipelines?.length ?? 0)
+        if (pruned !== own || folded || cleared || hidden) await save($, dir, pruned)
       }).catch(() => undefined)
       continue
     }

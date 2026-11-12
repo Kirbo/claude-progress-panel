@@ -360,14 +360,92 @@ export function mergeSidecar(file: SessionFile, entries: readonly Dismissal[]): 
   return agents.length === (merged.agents ?? []).length ? merged : { ...merged, agents }
 }
 
-/** The entries for these tasks' current completions, added to a sidecar's (each id + doneAt once). */
-export function addDismissals(entries: readonly Dismissal[], tasks: readonly Dismissal[]): Dismissal[] {
+/** The entries for these tasks' current completions, added to a sidecar's (each id + doneAt once).
+ *  `stamp`: when the person pressed, and whether it was Clear all — what an undo goes by. */
+export function addDismissals(
+  entries: readonly Dismissal[],
+  tasks: readonly Dismissal[],
+  stamp: { at?: string; all?: true } = {},
+): Dismissal[] {
   const next = [...entries]
   for (const task of tasks) {
     if (!next.some(d => d.id === task.id && d.doneAt === task.doneAt))
-      next.push({ id: task.id, doneAt: task.doneAt })
+      next.push({ id: task.id, doneAt: task.doneAt, ...stamp })
   }
   return next
+}
+
+// --- Undo: a removal can be taken back for a short while --------------------------------------
+
+/** How long after a ✕ / Clear all the pane offers to take it back. */
+export const UNDO_MS = 8_000
+/** A pane redraws every couple of seconds, so an undo drawn just before the window closed can be
+ *  pressed just after: a press still counts this long after the ✕. */
+export const UNDO_PRESS_MS = UNDO_MS + 2_000
+/** The owning session acts on a removal (marks the task skipped, tells its agent, drops the row)
+ *  only once it is this old: after the last moment an undo can land, with room to spare. */
+export const REMOVAL_DUE_MS = UNDO_MS + 4_000
+
+/** Whether something pressed at `at` is still inside `windowMs`. No time (an older sidecar's entry)
+ *  or one that does not read — or lies in the future, a clock that moved — is not. */
+export function isWithin(at: string | undefined, nowMs: number, windowMs: number): boolean {
+  if (!at) return false
+  const age = nowMs - Date.parse(at)
+  return age >= 0 && age < windowMs
+}
+
+type Pressed = {
+  entries: readonly Dismissal[]
+  cancelled: readonly string[]
+  cancelledAt?: Record<string, string>
+}
+
+/**
+ * A sidecar's removals split by age: `pending` — pressed less than `windowMs` ago, so they can still
+ * be taken back — and `settled`, the rest. The pane offers an undo for what is pending within
+ * `UNDO_MS`; the owning session acts only on what is settled past `REMOVAL_DUE_MS`.
+ */
+export function splitPressed(
+  sidecar: Pressed | undefined,
+  nowMs: number,
+  windowMs: number,
+): {
+  settled: { entries: Dismissal[]; cancelled: string[] }
+  pending: { entries: Dismissal[]; cancelled: string[] }
+} {
+  const fresh = (d: Dismissal) => isWithin(d.at, nowMs, windowMs)
+  const freshKey = (key: string) => isWithin(sidecar?.cancelledAt?.[key], nowMs, windowMs)
+  const entries = sidecar?.entries ?? []
+  const cancelled = sidecar?.cancelled ?? []
+  return {
+    settled: { entries: entries.filter(d => !fresh(d)), cancelled: cancelled.filter(k => !freshKey(k)) },
+    pending: { entries: entries.filter(fresh), cancelled: cancelled.filter(freshKey) },
+  }
+}
+
+/** What an undo takes back: an open item's removal (its `cancelled` key), one cleared row (its
+ *  entry), or a whole Clear all (every entry of that press). */
+export type Undo =
+  | { kind: 'removal'; key: string }
+  | { kind: 'entry'; id: string; doneAt: string | null }
+  | { kind: 'all'; at: string }
+
+/** The sidecar's removals without the one `undo` names — only while its press is younger than
+ *  `UNDO_PRESS_MS` (later, its session may already have acted on it). The same object when nothing
+ *  is taken back. */
+export function withoutPressed<S extends Pressed>(sidecar: S, undo: Undo, nowMs: number): S {
+  const live = (at: string | undefined) => isWithin(at, nowMs, UNDO_PRESS_MS)
+  if (undo.kind === 'removal') {
+    if (!sidecar.cancelled.includes(undo.key) || !live(sidecar.cancelledAt?.[undo.key])) return sidecar
+    const { [undo.key]: _at, ...cancelledAt } = sidecar.cancelledAt ?? {}
+    return { ...sidecar, cancelled: sidecar.cancelled.filter(k => k !== undo.key), cancelledAt }
+  }
+  const named = (d: Dismissal) =>
+    undo.kind === 'all'
+      ? d.all === true && d.at === undo.at
+      : !d.all && d.id === undo.id && d.doneAt === undo.doneAt
+  const entries = sidecar.entries.filter(d => !(named(d) && live(d.at)))
+  return entries.length === sidecar.entries.length ? sidecar : { ...sidecar, entries }
 }
 
 // --- Reading a stored file: every field is what its type says, or it is left out ----------------
@@ -409,21 +487,26 @@ export function parseSidecar(text: string): SidecarFile | undefined {
   }
   const f = raw as Partial<SidecarFile> | null
   if (f?.version !== 1 || typeof f.sessionId !== 'string' || !Array.isArray(f.entries)) return undefined
-  const entries = f.entries.filter(
-    (d): d is Dismissal =>
-      typeof d === 'object' &&
-      d !== null &&
-      typeof d.id === 'string' &&
-      (d.doneAt === null || typeof d.doneAt === 'string'),
-  )
+  const entries = (f.entries as unknown[])
+    .filter(
+      (d): d is Record<string, unknown> =>
+        isRecord(d) && isString(d.id) && (d.doneAt === null || isString(d.doneAt)),
+    )
+    .map(d => checked(d, { at: asString, all: asTrue }) as unknown as Dismissal)
+  const cancelled = stringsOf(f.cancelled) ?? []
+  // When each removal was pressed: a time per key still listed, anything else left out.
+  const cancelledAt = Object.fromEntries(
+    Object.entries(isRecord(f.cancelledAt) ? f.cancelledAt : {}).filter(
+      ([key, at]) => cancelled.includes(key) && isString(at),
+    ),
+  ) as Record<string, string>
   return {
     version: 1,
     sessionId: f.sessionId,
     entries,
     pipelines: asPipelines(f.pipelines),
-    cancelled: (Array.isArray(f.cancelled) ? f.cancelled : []).filter(
-      (id): id is string => typeof id === 'string',
-    ),
+    cancelled,
+    ...(Object.keys(cancelledAt).length > 0 ? { cancelledAt } : {}),
   }
 }
 

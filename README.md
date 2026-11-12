@@ -117,7 +117,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   call whose description names exactly one task in progress links it on its own. An agent that
   reports while linked to no task shows as a stand-in task `↳ <agent>` for as long as it runs; the
   stand-in goes when the agent ends (or the coordinator links a task of its own).
-- **Remove a task** with the `✕` on its row: every pane hides it at once, its session marks it
+- **Remove a task** with the `✕` on its row: every pane hides it at once, and — once the few
+  seconds in which you can take it back are over (see **Undo** below) — its session marks it
   skipped ("removed in the Progress pane") and tells its agent right after its next step — "do not
   do it; stop if you are on it". Works for any live session's tasks, not only this one's — and at
   every level: a task's **step** (skipped, counted out of its n/m, the agent told), a
@@ -134,9 +135,18 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   highlighted (a task whose hit is in its detail or steps unfolds by itself); sessions without a
   match step aside.
 - Every `▾`/`▸` line folds. **✕** removes a done task (or an ended session, or a subagent that is no
-  longer working — a finished one under Done → Agents included); **Clear all** (shown while its
-  Done list is open) empties the list, finished agents and all. Ask the
+  longer working — a finished one under Done → Agents included); **Clear all (N)** (shown while its
+  Done list is open) empties the whole list — the rows folded behind "N older" and the finished
+  agents too; N says how many go. Ask the
   agent to clear the pane and it does the same for its finished tasks and subagent rows.
+- **Undo.** Every ✕ on a task, a step, a subagent or its step, a done row, a finished agent or a
+  pipeline's row — and Clear all — can be taken back for about 8 seconds: the row leaves at once,
+  and a dim line in its session's group (a pipeline's: in Pipelines) says what went, with
+  **↶ undo** beside it ("– Deploy docs  removed  ↶ undo"; Clear all is one line and one undo).
+  Until that line is gone nothing has happened anywhere else: the session's file is untouched, its
+  agent is not told to stop, a hidden pipeline is still watched. Taken back, it never was. (✕ on an
+  ended session deletes its files at once, and ⊘ stop on a running pipeline acts in CI after its
+  second press: neither can be undone.)
 - **Version and updates:** the pane's top-right corner shows the version it runs; when a newer
   release exists it adds `vX.Y.Z available ↗`, linking that release's notes. The newest release is
   looked up from this repository's GitLab Releases at most every 6 h, shared by every session on
@@ -152,9 +162,9 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
 
 ### Pipelines
 
-**A running pipeline's row has two buttons, kept apart:** **✕ only hides the row** (this session's
-own pipeline stops being watched; another session's is hidden in the panes) — it never touches the
-CI, exactly like ✕ on a finished row. The red **⊘ stop** cancels it — and, by default, deletes it
+**A running pipeline's row has two buttons, kept apart:** **✕ only hides the row** (its session
+stops watching it; the press can be undone for a few seconds, and watching the same pipeline again
+later shows it again) — it never touches the CI, exactly like ✕ on a finished row. The red **⊘ stop** cancels it — and, by default, deletes it
 from the CI — through your own `glab` / `gh` (GitLab: the pipeline's cancel, then delete — deleting
 needs the Maintainer or Owner role, so a refused delete leaves it cancelled and says so on its row;
 GitHub: the run's cancel, then delete). Its first press only asks ("⊘ cancel + delete?"); a second

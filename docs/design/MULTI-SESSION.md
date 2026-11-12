@@ -31,7 +31,8 @@ Sessions                              [Sort: status]
   70 finished tasks and 59 finished agents by evening — and an open Done that long pushed the Now
   line and the open tasks out of a 20-row pane, which then looked frozen: the person saw only old
   finished rows and no live work.
-- "Clear all" shows only while its Done section is open (0.14.0): nothing is cleared unseen.
+- "Clear all (N)" shows only while its Done section is open (0.14.0) and says how many rows it
+  clears: all of Done, the rows behind "N older" and the finished agents included.
 - The pane scrolls when taller than its window (the engine's own scrolling).
 - With anything in Needs you, the status line reads `⚠ N need you`; an item that appears from
   another session also raises a toast once.
@@ -81,7 +82,8 @@ line without control characters: `asPipelines`). The file:
 - **One writer per file.** A session's file is written only by that session (its tool calls,
   its `session.end`, its own auto-clear). Any pane may write only the **sidecar**
   `<session-id>.dismissed.json` — `{ "version": 1, "sessionId": "…", "entries": [{ "id": "t3",
-  "doneAt": "ISO" }], "pipelines": [ … ] }` — on ✕ / Clear all, and with refreshed copies of the
+  "doneAt": "ISO", "at": "ISO" }], "cancelled": ["t5"], "cancelledAt": { "t5": "ISO" },
+  "pipelines": [ … ] }` (`at`, `all` and `cancelledAt` are optional: see "Undo") — on ✕ / Clear all, and with refreshed copies of the
   session's orphaned pipelines (see Pipelines); always read fresh, change, write whole, so neither
   drops the other's part. The plugin API has no file lock and no rename, so `writeSidecar`
   (store.ts) guards twice: one pane's changes to one sidecar run one at a time (a press and a poll
@@ -699,9 +701,72 @@ subagents that no longer run. Other notes (a pipeline's outcome, a switch change
 finish) are still queued in memory. Nothing comes back: `applyUpdate` keeps a removed task skipped on any upsert (an error
 line says so; a new title or id is a new task), a removed step stays as it was in every resent
 `steps` list, and a subagent's list runs with its own `cancelled`. Panes hide a removal at once
-(`removedHere`) before the fold. The engine has no call to stop a subagent: the whole-agent ✕ is the
+(`removedHere`) before the fold — which waits until the removal can no longer be taken back (see
+"Undo"). The engine has no call to stop a subagent: the whole-agent ✕ is the
 notice ("stop now: report what you have so far and end"). Every ✕ sits at the right of its row,
 which lights on hover like the task rows'.
+
+## Undo: a ✕ can be taken back
+
+Asked for with the review of 2026-11-12: ✕ on an open task, a step or a running agent was one
+click with no way back, and it stops an agent's work; the same glyph on a done row only hides.
+Confirms on every ✕ would have made the common case (clearing rows) slower, so instead every ✕ in
+the pane — task, step, a subagent's step, a running subagent, a done row, a finished agent, a
+pipeline's row (running or finished), and Clear all — can be taken back for a short while, from
+the pane itself.
+
+**How it reads.** As before, the row leaves every pane at once. For `UNDO_MS` (8 s) a dim line
+stands at the top of that session's group — a pipeline's at the top of the Pipelines section, which
+is drawn for it even when no pipeline is left — saying what went, with a `↶ undo` button at the
+row's right edge, where the ✕ was: `– Deploy docs  removed`, `– Lane Q  will be stopped`,
+`– Alpha  cleared`, `– app main  hidden`, `– Done cleared: 12 rows` (one line and one undo for a
+whole Clear all). It is a row like the pane's others (left text cut with "…", action on the right),
+and it goes by itself, like the ⊘ button's armed label. A running agent's ✕ is not offered a second
+time while its line stands. `undoRows` (pane.tsx).
+
+**Why the session waits.** An undo that only un-hid a row would be a lie once the owning session
+had folded the removal in: the task is `skipped` by then and its agent told "do not do it". So the
+removal is stamped with the time of the press and nobody acts on it until it can no longer be
+taken back:
+
+- the sidecar's entries carry `at` (and `all: true` for Clear all's, which share one `at` and go
+  back together); its `cancelled` keys have their time in `cancelledAt`, by key;
+- the pane offers the undo while a press is younger than `UNDO_MS`, and honours a press on it up to
+  `UNDO_PRESS_MS` (+2 s: a pane redraws every two seconds, so a button drawn just before the
+  window closed can be pressed just after) — `withoutPressed` takes the key or entries out of the
+  sidecar again, through the same `writeSidecar` as the ✕;
+- the owner (`ownFile`) reads only what is older than `REMOVAL_DUE_MS` (+4 s) — `splitPressed(…).settled`
+  — so between the last press that can land and the first fold there are two seconds; until then
+  its file is as it was: the task open, the agent not told, a hidden pipeline still watched and
+  polled. After it, everything is as before the undo existed (skipped, `owed` notice, the agent
+  stopped across the link, the done row merged into `dismissed`, the finished agent dropped).
+
+So an undone removal never existed for the session or its agent, and one that stood reaches them
+about 12 s after the press instead of within 2 s.
+
+**Old and mixed versions.** All three fields are optional. An entry or key without a time (a
+sidecar written before this, or by an older pane) is acted on at once, exactly as before, and has
+no undo. An older session reading a newer sidecar ignores the times and folds at once: the undo
+line may then still show for a few seconds but takes nothing back (`cancelled` already folded stays
+skipped; the pane's line goes with the window).
+
+**A pipeline's ✕ goes through the sidecar for this session's own rows too** (it edited the session's
+file directly before, which nothing could take back, and could fail on a file caught mid-write).
+A row hidden while it runs is named by that watch — `doneAt: "added:<addedAt>"`
+(`pipelineDismissal`) — so it stays hidden through its finish, the owner drops it from its list
+(= stops watching) once the window is over, and watching the same pipeline again later is a new
+watch and shows; an older sidecar's `doneAt: null` still hides its key for good.
+
+**Not undoable, on purpose:** ✕ on an ended session (it deletes the files at once — there is
+nothing left to restore from), and ⊘ stop (it acts in CI; it has its own second press). **Clear
+all** says how many rows go (`Clear all (12)`): it clears the whole of Done — the rows folded
+behind "N older" and the finished agents, which the count has always included — not only the rows
+listed.
+
+**A press that fails says so** (`pressed`, pane.tsx): a press's work is awaited by nobody, and one
+that rejected — this session's own file caught mid-write (`OwnFileUnreadable`) under ⊘ stop or a
+switch — used to end as an unhandled rejection with the press silently lost. It raises a toast
+("that press could not be saved just now — press again").
 
 ## Tasks never stay in a state that is no longer true (0.23.2)
 

@@ -129,7 +129,7 @@ export const toldNoCi = new Set<string>()
 export const pendingCall = new Map<string, { token: object; toolUseId?: string; what: string }>()
 
 export const sessions = atom({ plugin: 'progress-panel', key: 'sessions' } as const, {} as Loaded, {
-  shape: 'sessions-4',
+  shape: 'sessions-5',
 })
 
 // Bumped after a setting is written from the Settings view: the view redraws with the new value

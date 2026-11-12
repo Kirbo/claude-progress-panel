@@ -246,8 +246,11 @@ export type SessionFile = {
 
 export type Owed = { agentId?: string; text?: string; removed?: { id: string; title: string } }
 
-/** One person's ✕ on a finished task: hides that task while it stays the same completion (`doneAt`). */
-export type Dismissal = { id: string; doneAt: string | null }
+/** One person's ✕ on a finished task: hides that task while it stays the same completion (`doneAt`).
+ *  `at`: when it was pressed — for a short while after, the pane offers to take it back, and the
+ *  session does not act on it yet (absent in older sidecars: acted on at once). `all`: it came from
+ *  Clear all, whose entries (one `at`) are taken back together. */
+export type Dismissal = { id: string; doneAt: string | null; at?: string; all?: true }
 
 /**
  * `<session-id>.dismissed.json` beside a session's file. Only panes write it (✕ / Clear all, and
@@ -260,6 +263,10 @@ export type SidecarFile = {
   entries: Dismissal[]
   /** Open tasks a person removed with ✕ (ids), for the session to fold in and stop (0.16.0). */
   cancelled?: string[]
+  /** When each of those was pressed, by its `cancelled` entry: for a short while after, the pane
+   *  offers to take the removal back and the session does not act on it yet. An entry without a
+   *  time (an older sidecar's) is acted on at once. */
+  cancelledAt?: Record<string, string>
   /** Pipelines of this session that a pane refreshed because the session stopped polling them
    *  (absent in sidecars written before 0.11.1). A copy wins over the file's entry when checked later. */
   pipelines?: Pipeline[]
@@ -271,7 +278,13 @@ export type Loaded = Record<
   {
     mtimeMs: number
     file: SessionFile
-    sidecar?: { mtimeMs: number; entries: Dismissal[]; pipelines: Pipeline[]; cancelled: string[] }
+    sidecar?: {
+      mtimeMs: number
+      entries: Dismissal[]
+      pipelines: Pipeline[]
+      cancelled: string[]
+      cancelledAt?: Record<string, string>
+    }
   }
 >
 

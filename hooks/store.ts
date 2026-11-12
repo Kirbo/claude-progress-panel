@@ -7,7 +7,7 @@ import type { CiMemory } from './cimemory'
 import { CI_MEMORY_FILE, parseCiMemory } from './cimemory'
 import { deleteFile } from './host'
 import { t } from './i18n'
-import type { Dismissal, SessionFile, SidecarFile } from './model'
+import type { Dismissal, SessionFile, SidecarFile, Undo } from './model'
 import {
   addDismissals,
   cancelDeeper,
@@ -18,9 +18,12 @@ import {
   newSession,
   parseSessionFile,
   parseSidecar,
+  REMOVAL_DUE_MS,
   removalKey,
+  splitPressed,
   takeOwedFor,
   withOwed,
+  withoutPressed,
 } from './model'
 import { baseName, resolveProgressDir } from './paths'
 import type { Pipeline } from './pipelines'
@@ -59,7 +62,13 @@ export async function save($: EngineInterface, dir: string, file: SessionFile): 
   }))
 }
 
-export type Sidecar = { entries: Dismissal[]; pipelines: Pipeline[]; cancelled: string[] }
+export type Sidecar = {
+  entries: Dismissal[]
+  pipelines: Pipeline[]
+  cancelled: string[]
+  /** When each `cancelled` entry was pressed (see `SidecarFile`). */
+  cancelledAt?: Record<string, string>
+}
 
 export async function readSidecar($: EngineInterface, dir: string, id: string): Promise<Sidecar> {
   const text = await $.fs.read(`${dir}/${id}${SIDECAR}`).catch(() => undefined)
@@ -68,6 +77,7 @@ export async function readSidecar($: EngineInterface, dir: string, id: string): 
     entries: parsed?.entries ?? [],
     pipelines: parsed?.pipelines ?? [],
     cancelled: parsed?.cancelled ?? [],
+    ...(parsed?.cancelledAt ? { cancelledAt: parsed.cancelledAt } : {}),
   }
 }
 
@@ -110,6 +120,7 @@ export async function changeSidecar(
     entries: next.entries,
     ...(next.pipelines.length > 0 ? { pipelines: next.pipelines } : {}),
     ...(next.cancelled.length > 0 ? { cancelled: next.cancelled } : {}),
+    ...(Object.keys(next.cancelledAt ?? {}).length > 0 ? { cancelledAt: next.cancelledAt } : {}),
   }
   await $.fs.write(path, `${JSON.stringify(file, null, 2)}\n`)
   const stat = await $.fs.stat(path).catch(() => undefined)
@@ -161,7 +172,10 @@ export async function ownFile($: EngineInterface, dir: string): Promise<SessionF
   if (!existing) await refuseUnreadable($, path, id, text)
   if (existing) {
     self.ownUnreadable = undefined
-    const sidecar = await readSidecar($, dir, id)
+    // What the panes removed is acted on only once it can no longer be taken back (`REMOVAL_DUE_MS`
+    // after the press): until then the pane offers an undo, and this file is as it was.
+    const read = await readSidecar($, dir, id)
+    const sidecar = { ...read, ...splitPressed(read, await $.clock.now(), REMOVAL_DUE_MS).settled }
     const merged = withTitle(mergeSidecar(existing, sidecar.entries))
     const pipelines = overlayPipelines(merged.pipelines ?? [], sidecar.pipelines)
     // Tasks the person removed with ✕: skipped here, and the agent told on its next step.
@@ -261,15 +275,58 @@ export async function noteTitle($: EngineInterface, options: PluginOptions, titl
 
 // A press (✕ / Clear all) on any session's rows: the completions go to that session's sidecar, never
 // to its own file, so a pane can't race the session writing its status. Read fresh, union, write.
+// Each is stamped with the time of the press (`all`: one Clear all), which is what an undo goes by.
 export async function dismiss(
   $: EngineInterface,
   options: PluginOptions,
   id: string,
   tasks: readonly Dismissal[],
+  all = false,
 ): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir || tasks.length === 0) return
-  await writeSidecar($, dir, id, sidecar => ({ ...sidecar, entries: addDismissals(sidecar.entries, tasks) }))
+  const stamp = { at: await nowIso($), ...(all ? { all: true as const } : {}) }
+  await writeSidecar($, dir, id, sidecar => ({
+    ...sidecar,
+    entries: addDismissals(sidecar.entries, tasks, stamp),
+  }))
+}
+
+// A ✕ on something still open (a task, a step, a subagent's step, a running subagent): its key goes
+// to that session's sidecar with the time of the press. The session folds it in — and tells its
+// agent — only once the undo window has run out.
+export async function requestRemoval(
+  $: EngineInterface,
+  options: PluginOptions,
+  id: string,
+  key: string,
+): Promise<void> {
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const at = await nowIso($)
+  await writeSidecar($, dir, id, sidecar =>
+    sidecar.cancelled.includes(key)
+      ? sidecar
+      : {
+          ...sidecar,
+          cancelled: [...sidecar.cancelled, key],
+          cancelledAt: { ...sidecar.cancelledAt, [key]: at },
+        },
+  )
+}
+
+// The undo beside a removal: taken out of the sidecar again, while its window is open — the session
+// never saw it. Past the window nothing changes (the row is gone by then, and so is its undo).
+export async function undo(
+  $: EngineInterface,
+  options: PluginOptions,
+  id: string,
+  what: Undo,
+): Promise<void> {
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const nowMs = await $.clock.now()
+  await writeSidecar($, dir, id, sidecar => withoutPressed(sidecar, what, nowMs))
 }
 
 export async function forgetSession($: EngineInterface, options: PluginOptions, id: string): Promise<void> {

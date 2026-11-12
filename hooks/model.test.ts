@@ -27,6 +27,7 @@ import {
   isBlank,
   isClosed,
   isGenericPermission,
+  isWithin,
   linkPushedPipeline,
   markStaleAsked,
   markStopAsked,
@@ -42,6 +43,7 @@ import {
   parseSessionFile,
   parseSidecar,
   pruneDone,
+  REMOVAL_DUE_MS,
   removalKey,
   reopenAgent,
   repoFromCommonDir,
@@ -49,16 +51,20 @@ import {
   settleLinkedTasks,
   sortTasks,
   splitMatches,
+  splitPressed,
   staleTasks,
   syncAgents,
   timeLeft,
   toolCallSummary,
+  UNDO_MS,
+  UNDO_PRESS_MS,
   untouchedDoing,
   visibleAgents,
   visibleTasks,
   waitingOnFrom,
   withAgentActivity,
   withAgentRun,
+  withoutPressed,
 } from './model'
 
 const T0 = Date.UTC(2026, 10, 6, 20, 0, 0)
@@ -1733,4 +1739,108 @@ test('a stored pipeline keeps only well-typed fields: an unknown state reads as 
     error: 'gh: not logged in',
   })
   expect(read([whole])).toEqual([whole])
+})
+
+test('a removal is pending while it can be taken back, then settled; one without a time is settled at once', () => {
+  const side = {
+    entries: [
+      { id: 't1', doneAt: iso(T0) },
+      { id: 't2', doneAt: iso(T0), at: iso(T0 + 1000) },
+      { id: 't3', doneAt: iso(T0), at: iso(T0 + 9000) },
+    ],
+    cancelled: ['old', 'a', 'b'],
+    cancelledAt: { a: iso(T0 + 1000), b: iso(T0 + 9000) },
+  }
+  const split = splitPressed(side, T0 + 10_000, UNDO_MS)
+  expect(split.pending).toEqual({ entries: [side.entries[2]], cancelled: ['b'] })
+  expect(split.settled).toEqual({ entries: [side.entries[0], side.entries[1]], cancelled: ['old', 'a'] })
+  // The session waits longer than the pane offers the undo.
+  expect(REMOVAL_DUE_MS).toBeGreaterThan(UNDO_PRESS_MS)
+  expect(UNDO_PRESS_MS).toBeGreaterThan(UNDO_MS)
+  expect(splitPressed(side, T0 + 10_000, REMOVAL_DUE_MS).settled.cancelled).toEqual(['old'])
+  // No sidecar: nothing either way. A time that lies ahead (a clock that moved) holds nothing back.
+  expect(splitPressed(undefined, T0, UNDO_MS)).toEqual({
+    settled: { entries: [], cancelled: [] },
+    pending: { entries: [], cancelled: [] },
+  })
+  expect(isWithin(iso(T0 + 5000), T0, UNDO_MS)).toBe(false)
+  expect(isWithin('nonsense', T0, UNDO_MS)).toBe(false)
+  expect(isWithin(undefined, T0, UNDO_MS)).toBe(false)
+})
+
+test('an undo takes its removal out of the sidecar only while its press is young enough', () => {
+  const at = iso(T0)
+  const side = {
+    entries: [
+      { id: 't1', doneAt: at, at },
+      { id: 't2', doneAt: at, at, all: true as const },
+      { id: 'agent:a', doneAt: at, at, all: true as const },
+      { id: 't3', doneAt: at },
+    ],
+    cancelled: ['t9', 'step:t1:two'],
+    cancelledAt: { t9: at, 'step:t1:two': at },
+  }
+  const now = T0 + 5000
+  expect(withoutPressed(side, { kind: 'removal', key: 't9' }, now)).toEqual({
+    ...side,
+    cancelled: ['step:t1:two'],
+    cancelledAt: { 'step:t1:two': at },
+  })
+  expect(withoutPressed(side, { kind: 'entry', id: 't1', doneAt: at }, now).entries.map(d => d.id)).toEqual([
+    't2',
+    'agent:a',
+    't3',
+  ])
+  // A whole Clear all goes back together; a single ✕ beside it stays.
+  expect(withoutPressed(side, { kind: 'all', at }, now).entries.map(d => d.id)).toEqual(['t1', 't3'])
+  // One without a time was acted on at once: nothing to take back. Nor anything unknown.
+  expect(withoutPressed(side, { kind: 'entry', id: 't3', doneAt: at }, now)).toBe(side)
+  expect(withoutPressed(side, { kind: 'removal', key: 'nope' }, now)).toBe(side)
+  // Too late: its session may have acted already.
+  const late = T0 + UNDO_PRESS_MS
+  expect(withoutPressed(side, { kind: 'removal', key: 't9' }, late)).toBe(side)
+  expect(withoutPressed(side, { kind: 'all', at }, late)).toBe(side)
+})
+
+test('a sidecar keeps when each removal was pressed; one written before that existed reads as before', () => {
+  const at = iso(T0)
+  const text = JSON.stringify({
+    version: 1,
+    sessionId: 's1',
+    entries: [
+      { id: 't1', doneAt: at, at, all: true },
+      { id: 't2', doneAt: at, at: 5, all: 'yes' },
+    ],
+    cancelled: ['t3', 't4'],
+    cancelledAt: { t3: at, t4: 7, gone: at },
+  })
+  expect(parseSidecar(text)).toMatchObject({
+    entries: [
+      { id: 't1', doneAt: at, at, all: true },
+      { id: 't2', doneAt: at },
+    ],
+    cancelled: ['t3', 't4'],
+    cancelledAt: { t3: at },
+  })
+  const old = parseSidecar(
+    JSON.stringify({ version: 1, sessionId: 's1', entries: [{ id: 't1', doneAt: at }], cancelled: ['t3'] }),
+  )
+  expect(old?.entries).toEqual([{ id: 't1', doneAt: at }])
+  expect(old?.cancelledAt).toBeUndefined()
+  // Stamped entries: the time of the press, and whether it was Clear all — never restamped.
+  const stamped = addDismissals(
+    [{ id: 't1', doneAt: at }],
+    [
+      { id: 't1', doneAt: at },
+      { id: 't2', doneAt: at },
+    ],
+    {
+      at,
+      all: true,
+    },
+  )
+  expect(stamped).toEqual([
+    { id: 't1', doneAt: at },
+    { id: 't2', doneAt: at, at, all: true },
+  ])
 })

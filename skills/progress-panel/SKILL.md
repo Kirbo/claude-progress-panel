@@ -120,7 +120,8 @@ then mark the task done yourself — the plugin never does.
 ## Removed in the pane
 
 The person can remove a task, a task's step, one of a subagent's steps, or a whole subagent's work
-with ✕. You are told once ("… was removed in the Progress pane — do not do it; stop if you are on
+with ✕ (and take it back within a few seconds — you only ever hear of a removal that stood). You
+are told once ("… was removed in the Progress pane — do not do it; stop if you are on
 it"; a subagent is told about its own). Do not do it, and do not send it again: a removed item stays
 skipped whatever a later report says — only a new title or id is a new task. A cancelled subagent
 reports what it has and ends. Across a link: a removed task's agent is stopped too (you are told);

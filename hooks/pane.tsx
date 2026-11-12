@@ -4,7 +4,7 @@ import type { EngineInterface, MatchedHook, PluginOptions, RenderChildren } from
 import type { AgentEntry, Loaded } from '../types'
 import { cancellable, cancelPipeline } from './forge'
 import { t, tn } from './i18n'
-import type { SessionFile, SortBy, Status, Task } from './model'
+import type { SessionFile, SortBy, Status, Task, Undo } from './model'
 import {
   agentDismissal,
   agentHasInside,
@@ -20,13 +20,16 @@ import {
   matchesTask,
   modelLabel,
   OTHER_REPO,
+  parseRemoval,
   removalKey,
   SORTS,
   sortTasks,
   splitMatches,
+  splitPressed,
   stepCounts,
   taskPipeline,
   timeLeft,
+  UNDO_MS,
   visibleAgents,
   visibleTasks,
 } from './model'
@@ -37,6 +40,7 @@ import {
   isFinished,
   jobCounts,
   overlayPipelines,
+  pipelineDismissal,
   pipelineDuration,
   progressBar,
   shownError,
@@ -44,7 +48,6 @@ import {
   visiblePipelines,
 } from './pipelines'
 import {
-  announce,
   askLine,
   isSolo,
   liveNeeds,
@@ -81,7 +84,7 @@ import {
   updateSorting,
   updateViewing,
 } from './state'
-import { dismiss, exclusive, forgetSession, ownFile, progressDir, save, writeSidecar } from './store'
+import { dismiss, forgetSession, requestRemoval, undo } from './store'
 import type { Feature } from './toggles'
 import { defaultsFrom, effective, FEATURES } from './toggles'
 import { isNewer } from './update'
@@ -203,30 +206,27 @@ export async function cycleConfig(
   await setConfig($, key, options[(at + 1) % options.length] ?? current)
 }
 
-// The running pipeline ✕: the first press arms it (the label asks to confirm), a second within
-// CONFIRM_MS does it — never one accidental click.
-// ✕ on a running pipeline only hides it (0.23.2) — CI is never touched: this session's own stops
-// being watched (and polled); another session's is hidden in the panes through its sidecar.
+// A press's work, nobody awaiting it: one that fails — this session's own file caught mid-write
+// (`OwnFileUnreadable`), a progress folder that went away — says so, instead of ending as an
+// unhandled rejection with the press silently lost.
+export function pressed($: EngineInterface, work: Promise<unknown>): void {
+  work.then(undefined, () => $.ui.toast(t('pane.pressFailed'))).catch(() => undefined)
+}
+
+// ✕ on a pipeline's row only hides it — CI is never touched: the row leaves every pane at once, and
+// its session stops watching it once the undo window has run out. Through the session's sidecar for
+// this session's own rows too, so the press can be taken back like any other.
 export async function hidePipeline(
   $: EngineInterface,
   options: PluginOptions,
   sessionId: string,
   p: Pipeline,
 ): Promise<void> {
-  const dir = await progressDir($, options)
-  if (!dir) return
-  if (sessionId === (await $.session.id())) {
-    await exclusive(async () => {
-      const own = await ownFile($, dir)
-      const pipelines = (own.pipelines ?? []).filter(x => x.key !== p.key)
-      if (pipelines.length !== (own.pipelines ?? []).length) await save($, dir, { ...own, pipelines })
-    })
-    await announce($, await readSessions($), sessionId)
-    return
-  }
-  await dismiss($, options, sessionId, [{ id: `pipeline:${p.key}`, doneAt: null }])
+  await dismiss($, options, sessionId, [pipelineDismissal(p)])
 }
 
+// The running pipeline's ⊘: the first press arms it (the label asks to confirm), a second within
+// CONFIRM_MS does it — never one accidental click.
 export async function pressPipelineX(
   $: EngineInterface,
   options: PluginOptions,
@@ -271,21 +271,6 @@ export function offMarker(sw: Record<Feature, boolean>): string {
   if (!sw.reporting) return t('pane.pausedReporting')
   const off = FEATURES.filter(f => f !== 'reporting' && !sw[f]).map(f => t(`toggle.feature.${f}`))
   return off.length > 0 ? t('pane.offFeatures', { list: off.join(', ') }) : ''
-}
-
-// A ✕ on an open task: the removal goes to that session's sidecar (its own file keeps one writer);
-// the session folds it in and tells its agent.
-export async function cancelTask(
-  $: EngineInterface,
-  options: PluginOptions,
-  id: string,
-  taskId: string,
-): Promise<void> {
-  const dir = await progressDir($, options)
-  if (!dir) return
-  await writeSidecar($, dir, id, sidecar =>
-    sidecar.cancelled.includes(taskId) ? sidecar : { ...sidecar, cancelled: [...sidecar.cancelled, taskId] },
-  )
 }
 
 export function asSort(value: unknown): SortBy | undefined {
@@ -433,7 +418,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                       source: t(own ? 'toggle.overridden' : 'toggle.default'),
                     })}
                     plain
-                    onPress={() => void pressSwitch($, options, f, !eff[f])}
+                    onPress={() => pressed($, pressSwitch($, options, f, !eff[f]))}
                   >
                     <Text wrap="truncate-end">{t(`toggle.feature.${f}`)}</Text>
                   </Button>,
@@ -445,7 +430,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                       label={t('settings.reset')}
                       plain
                       dimColor
-                      onPress={() => void setToggle($, options, f, undefined)}
+                      onPress={() => pressed($, setToggle($, options, f, undefined))}
                     />
                   ) : null,
                   <Text
@@ -726,7 +711,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                       : t('pipe.stop')
                   }
                   plain
-                  onPress={() => void pressPipelineX($, options, sessionId, p)}
+                  onPress={() => pressed($, pressPipelineX($, options, sessionId, p))}
                 >
                   <Text
                     color={tint(self.settings.palette, 'red')}
@@ -758,7 +743,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                 label={t('pipe.dismiss')}
                 plain
                 dimColor
-                onPress={() => void hidePipeline($, options, sessionId, p)}
+                onPress={() => pressed($, hidePipeline($, options, sessionId, p))}
               />
             ) : null}
             {finished && p.finishedAt ? (
@@ -767,11 +752,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                 label={t('pipe.dismiss')}
                 plain
                 dimColor
-                onPress={() =>
-                  void dismiss($, options, sessionId, [
-                    { id: `pipeline:${p.key}`, doneAt: p.finishedAt ?? null },
-                  ])
-                }
+                onPress={() => pressed($, hidePipeline($, options, sessionId, p))}
               />
             ) : null}
           </Box>
@@ -917,7 +898,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         label={t('pane.cancel')}
         plain
         dimColor
-        onPress={() => void cancelTask($, options, sessionId, task.id)}
+        onPress={() => pressed($, requestRemoval($, options, sessionId, task.id))}
       />
     ) : null
     // A title too long for its line is cut with "…" and the task folds, so it shows whole when open.
@@ -1040,7 +1021,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                             label={t('pane.cancel')}
                             plain
                             dimColor
-                            onPress={() => void cancelTask($, options, sessionId, stepKey)}
+                            onPress={() => pressed($, requestRemoval($, options, sessionId, stepKey))}
                           />
                         ) : null,
                       )}
@@ -1094,7 +1075,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
               label={t('pane.dismiss')}
               plain
               dimColor
-              onPress={() => void dismiss($, options, sessionId, [task])}
+              onPress={() => pressed($, dismiss($, options, sessionId, [task]))}
             />,
           )}
         </Box>
@@ -1147,7 +1128,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                     label={t('pane.cancel')}
                     plain
                     dimColor
-                    onPress={() => void cancelTask($, options, id, stepKey)}
+                    onPress={() => pressed($, requestRemoval($, options, id, stepKey))}
                   />
                 ) : null,
               )}
@@ -1250,14 +1231,14 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                   .join(' · ')}
               </Text>
               {/* ✕ on a running subagent: its work is cancelled — it is told to stop and wrap up. */}
-              {a.cancelledAt ? null : (
+              {a.cancelledAt || removedHere(id, removalKey({ kind: 'agent', agentId: a.id })) ? null : (
                 <Button
                   key={`cancel:${id}:${removalKey({ kind: 'agent', agentId: a.id })}`}
                   label={t('pane.cancel')}
                   plain
                   dimColor
                   onPress={() =>
-                    void cancelTask($, options, id, removalKey({ kind: 'agent', agentId: a.id }))
+                    pressed($, requestRemoval($, options, id, removalKey({ kind: 'agent', agentId: a.id })))
                   }
                 />
               )}
@@ -1347,7 +1328,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                   label={t('pane.dismiss')}
                   plain
                   dimColor
-                  onPress={() => void dismiss($, options, id, [agentDismissal(a)])}
+                  onPress={() => pressed($, dismiss($, options, id, [agentDismissal(a)]))}
                 />
               )
               // A finished agent with steps folds open to them — each one's reason beneath it.
@@ -1405,6 +1386,74 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       </Box>
     )
   }
+
+  // What the person just removed with ✕ / Clear all, each with its undo: one dim line per press,
+  // for the few seconds it can still be taken back (`UNDO_MS`). The row itself is gone from every
+  // pane at once; its session acts on the removal only after the window. `pipelines`: the ✕ on
+  // pipeline rows (listed in the Pipelines section), else everything else (in the session's group).
+  const undoRows = (file: SessionFile, pipelines: boolean) => {
+    const id = file.session.id
+    const { pending } = splitPressed(all[id]?.sidecar, nowMs, UNDO_MS)
+    const rows: { key: string; text: string; what: Undo }[] = []
+    for (const key of pipelines ? [] : pending.cancelled) {
+      const r = parseRemoval(key)
+      const agent =
+        r.kind === 'agent' || r.kind === 'agentTask' ? file.agents?.find(a => a.id === r.agentId) : undefined
+      const title =
+        r.kind === 'task'
+          ? file.tasks.find(x => x.id === r.taskId)?.title
+          : r.kind === 'step'
+            ? r.step
+            : r.kind === 'agentTask'
+              ? agent?.tasks.find(x => x.id === r.taskId)?.title
+              : agent?.label
+      rows.push({
+        key: `removal:${key}`,
+        text: t(r.kind === 'agent' ? 'undo.stopping' : 'undo.removed', { title: title ?? key }),
+        what: { kind: 'removal', key },
+      })
+    }
+    const cleared = new Map<string, number>()
+    for (const d of pending.entries) {
+      const pipeKey = d.id.startsWith('pipeline:') ? d.id.slice('pipeline:'.length) : undefined
+      if ((pipeKey !== undefined) !== pipelines) continue
+      if (d.all && d.at) {
+        cleared.set(d.at, (cleared.get(d.at) ?? 0) + 1)
+        continue
+      }
+      const title =
+        pipeKey !== undefined
+          ? (file.pipelines ?? []).find(p => p.key === pipeKey)?.label
+          : d.id.startsWith('agent:')
+            ? file.agents?.find(a => `agent:${a.id}` === d.id)?.label
+            : file.tasks.find(x => x.id === d.id)?.title
+      rows.push({
+        key: `entry:${d.id}`,
+        text: t(pipelines ? 'undo.hidden' : 'undo.cleared', { title: title ?? pipeKey ?? d.id }),
+        what: { kind: 'entry', id: d.id, doneAt: d.doneAt },
+      })
+    }
+    for (const [at, count] of cleared)
+      rows.push({ key: `all:${at}`, text: tn('undo.clearedAll', count), what: { kind: 'all', at } })
+    return rows.map(r => (
+      <Box key={`undobox:${id}:${r.key}`} flexDirection="row" justifyContent="space-between" gap={2}>
+        {leftSide(
+          <Text dimColor wrap="truncate-end">
+            {r.text}
+          </Text>,
+        )}
+        {rightSide(
+          <Button
+            key={`undo:${id}:${r.key}`}
+            label={t('pane.undo')}
+            plain
+            onPress={() => pressed($, undo($, options, id, r.what))}
+          />,
+        )}
+      </Box>
+    ))
+  }
+  const pipelineUndos = ordered.flatMap(f => undoRows(f, true))
 
   const group = (stored: SessionFile) => {
     const id = stored.session.id
@@ -1491,13 +1540,14 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                 label={t('pane.forget')}
                 plain
                 dimColor
-                onPress={() => void forgetSession($, options, id)}
+                onPress={() => pressed($, forgetSession($, options, id))}
               />
             ) : null,
           )}
         </Box>
         {isOpen ? (
           <Box flexDirection="column" paddingLeft={INDENT}>
+            {undoRows(stored, false)}
             {work.length > 1
               ? work.map(({ repo, tasks, agents }) => {
                   const repoKey = `repo:${id}:${repo}`
@@ -1544,16 +1594,20 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                   dimColor
                   onPress={() => void toggle($, doneKey, isDoneOpen)}
                 />
-                {/* Only while Done is open: nothing is cleared that the person cannot see. The
-                    finished agents are part of Done (its count includes them) and go with it. */}
+                {/* Only while Done is open. It clears ALL of Done — the rows folded behind "N older"
+                    and the finished agents (Done's count includes them) too — so it says how many
+                    go; and the whole press can be taken back for a few seconds. */}
                 {isDoneOpen ? (
                   <Button
                     key={`clear:${id}`}
-                    label={t('pane.clearAll')}
+                    label={t('pane.clearAll', { count: done.length + finishedAgents.length })}
                     plain
                     dimColor
                     onPress={() =>
-                      void dismiss($, options, id, [...done, ...finishedAgents.map(agentDismissal)])
+                      pressed(
+                        $,
+                        dismiss($, options, id, [...done, ...finishedAgents.map(agentDismissal)], true),
+                      )
                     }
                   />
                 ) : null}
@@ -1680,7 +1734,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                   key={`switch:${f}`}
                   label={label}
                   plain
-                  onPress={() => void pressSwitch($, options, f, !mine[f])}
+                  onPress={() => pressed($, pressSwitch($, options, f, !mine[f]))}
                 >
                   <Text
                     color={tint(self.settings.palette, isArmed ? 'red' : mine[f] ? undefined : 'yellow')}
@@ -1760,7 +1814,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
           </Box>
         </Box>
       ) : null}
-      {pipelineRows.length > 0 ? (
+      {pipelineRows.length > 0 || pipelineUndos.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
           <Button
             key="pipelines"
@@ -1780,6 +1834,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
           </Button>
           {isSectionOpen ? (
             <Box flexDirection="column" paddingLeft={INDENT}>
+              {pipelineUndos}
               {currentRows.map(({ sessionId, pipeline }) => pipelineBlock(sessionId, pipeline))}
               {archivedRows.length > 0 ? (
                 <Button

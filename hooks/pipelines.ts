@@ -414,15 +414,29 @@ function restarted(p: Pipeline, nowIso: string): Pipeline {
   return { ...rest, addedAt: nowIso, checkedAt: null }
 }
 
+/** The sidecar entry for a ✕ on a pipeline's row. A finished one is named by that finish (it shows
+ *  again when it is retried and finishes anew); one hidden while it runs by that WATCH (`added:` +
+ *  when it was added), so it stays hidden through its finish — and watching the same pipeline again
+ *  later is a new watch, which shows. */
+export function pipelineDismissal(p: Pick<Pipeline, 'key' | 'finishedAt' | 'addedAt' | 'state'>): Dismissal {
+  return {
+    id: `pipeline:${p.key}`,
+    doneAt: isFinished(p.state) && p.finishedAt ? p.finishedAt : `added:${p.addedAt}`,
+  }
+}
+
 /** The pipelines a pane shows: minus finished ones a sidecar entry dismissed for that same finish. */
 export function visiblePipelines(list: readonly Pipeline[], entries: readonly Dismissal[]): Pipeline[] {
-  // A finished one hides for that finish; one hidden while it ran (`doneAt: null`, 0.23.2) stays hidden.
+  // A finished one hides for that finish; one hidden while it ran, for that watch (`added:…`; an
+  // older sidecar's `doneAt: null` hides the key for good).
   return list.filter(
     p =>
       !entries.some(
         d =>
           d.id === `pipeline:${p.key}` &&
-          (d.doneAt === null || (p.finishedAt !== undefined && d.doneAt === p.finishedAt)),
+          (d.doneAt === null ||
+            d.doneAt === `added:${p.addedAt}` ||
+            (p.finishedAt !== undefined && d.doneAt === p.finishedAt)),
       ),
   )
 }

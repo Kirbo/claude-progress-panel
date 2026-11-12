@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { STILL_RUNS, WHO_AM_I } from './host'
 import type { SessionFile } from './model'
-import { applyUpdate, formatTime, newSession, stepCounts } from './model'
+import { applyUpdate, formatTime, newSession, REMOVAL_DUE_MS, stepCounts, UNDO_MS } from './model'
 import { resolveProgressDir } from './paths'
 import type { Pipeline } from './pipelines'
 import { INPUT_SCHEMA, schemaProblems } from './schema'
@@ -18,6 +18,9 @@ const LATEST =
 const HOUR = 3_600_000
 const DIR = '/home/me/.claude/progress'
 const TOOL = 'mcp__progress-panel__progress_update'
+// A removal in a pane is acted on by its session only once it can no longer be taken back: this
+// long after the press (the window, then the session's next scan).
+const UNDO_OVER = REMOVAL_DUE_MS + 2100
 
 const PANE = {
   plugin: 'progress-panel',
@@ -581,7 +584,7 @@ test('the owning session marks a removed task skipped and tells its agent once, 
   const ui = await pane($)
   await ui.press({ key: 'cancel:s-me:t1' })
   await ui.unmount()
-  await world.clock.advance(2000)
+  await world.clock.advance(UNDO_OVER)
   expect(read(disk, `${DIR}/s-me.json`).tasks[0]).toMatchObject({
     id: 't1',
     status: 'skipped',
@@ -1403,7 +1406,7 @@ test('another session changing its file shows after the next 2 s tick, with a to
 
 test('Done folds, shows done times; ✕ / Clear all go to the sidecar and stay gone', async ($, on) => {
   const disk = makeDisk()
-  engine(on, disk)
+  const world = engine(on, disk)
   await start($)
   await update($, {
     tasks: [
@@ -1424,12 +1427,15 @@ test('Done folds, shows done times; ✕ / Clear all go to the sidecar and stay g
   expect(alpha?.text).toMatch(/^✓ Alpha {2}\d\d:\d\d$/)
 
   await ui.press({ key: 'dismiss:s-me:t1' })
-  expect(await ui.find({ type: 'Text', text: /Alpha/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^✓ Alpha/ })).toBeUndefined()
   // The pane never writes a session's own file: the dismissal lands in the sidecar.
   expect(disk.files.get(`${DIR}/s-me.json`)?.text).toBe(own)
   expect(sidecar(disk, 's-me').map(d => d.id)).toEqual(['t1'])
 
-  // The owner merges the sidecar on its next write; a re-sent done copy stays gone.
+  // The owner merges the sidecar on its next write once the undo window is over; a re-sent done
+  // copy stays gone.
+  await world.clock.advance(UNDO_OVER)
+  expect(await ui.find({ type: 'Text', text: /Alpha/ })).toBeUndefined()
   await update($, { tasks: [{ id: 't1', title: 'Alpha', status: 'done' }] })
   expect(read(disk, `${DIR}/s-me.json`).tasks.map(t => t.id)).toEqual(['t2', 't3'])
   expect(read(disk, `${DIR}/s-me.json`).dismissed).toEqual(['t1'])
@@ -1437,6 +1443,7 @@ test('Done folds, shows done times; ✕ / Clear all go to the sidecar and stay g
   await ui.press({ key: 'clear:s-me' })
   expect(sidecar(disk, 's-me').map(d => d.id)).toEqual(['t1', 't2'])
   expect(await ui.find({ type: 'Button', key: 'done:s-me' })).toBeUndefined()
+  await world.clock.advance(UNDO_OVER)
   await update($, { now: 'later' })
   expect(read(disk, `${DIR}/s-me.json`).tasks.map(t => t.id)).toEqual(['t3'])
   await ui.unmount()
@@ -1544,9 +1551,11 @@ test('a finished agent has a ✕: every pane hides it at once and its session dr
   expect((await texts(ui)).some(x => x.startsWith('✓ Lane A '))).toBe(false)
   expect((await texts(ui)).some(x => x.startsWith('✓ Lane B '))).toBe(true)
   expect((await ui.find({ type: 'Button', key: 'done:s-me' }))?.text).toBe('▾ Done (1)')
-  expect(sidecar(disk, 's-me')).toEqual([{ id: 'agent:sub-1', doneAt: new Date(T0).toISOString() }])
-  // Its session's next scan drops the row from its own file.
-  await world.clock.advance(2100)
+  expect(sidecar(disk, 's-me')).toEqual([
+    { id: 'agent:sub-1', doneAt: new Date(T0).toISOString(), at: new Date(T0).toISOString() },
+  ])
+  // Its session drops the row from its own file once the undo window is over.
+  await world.clock.advance(UNDO_OVER)
   expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.label)).toEqual(['Lane B'])
   await ui.unmount()
 })
@@ -1561,7 +1570,7 @@ test('Clear all clears the finished agents too — also when no task is done', a
   await ui.press({ key: 'done:s-me' })
   await ui.press({ key: 'clear:s-me' })
   expect(await ui.find({ type: 'Button', key: 'done:s-me' })).toBeUndefined()
-  await world.clock.advance(2100)
+  await world.clock.advance(UNDO_OVER)
   const file = read(disk, `${DIR}/s-me.json`)
   expect(file.agents ?? []).toEqual([])
   expect(file.tasks.map(x => x.title)).toEqual(['Open one'])
@@ -1670,7 +1679,7 @@ test("✕ on another session's task never writes that session's file", async ($,
   await ui.press({ key: 'dismiss:s-other:t1' })
   expect(disk.files.get(`${DIR}/s-other.json`)?.text).toBe(before)
   expect(sidecar(disk, 's-other').map(d => d.id)).toEqual(['t1'])
-  expect(await ui.find({ type: 'Text', text: /Shipped/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /^✓ Shipped/ })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'done:s-other' })).toBeUndefined()
   await ui.unmount()
 })
@@ -4215,8 +4224,8 @@ test('✕ on a step: hidden at once, skipped and counted out, the main loop told
   })
   const ui = await pane($)
   await ui.press({ key: 'cancel:s-me:step:t1:two' })
-  expect((await texts(ui)).join('\n')).not.toContain('two')
-  await world.clock.advance(2100)
+  expect(await texts(ui)).not.toContain('○ two')
+  await world.clock.advance(UNDO_OVER)
   const task = read(disk, `${DIR}/s-me.json`).tasks[0]
   expect(task?.steps?.find(x => x.title === 'two')).toMatchObject({ status: 'skipped', removedByUser: true })
   expect(stepCounts(task as never)).toEqual({ closed: 0, total: 1 })
@@ -4257,7 +4266,7 @@ test("✕ on a subagent's step or the whole subagent tells THAT subagent, not th
   } as never)
   const ui = await pane($)
   await ui.press({ key: 'cancel:s-me:agent:sub-r:t2' })
-  await world.clock.advance(2100)
+  await world.clock.advance(UNDO_OVER)
   const agent = read(disk, `${DIR}/s-me.json`).agents?.[0]
   expect(agent?.tasks.find(x => x.id === 't2')?.status).toBe('skipped')
   const call = async (agentId?: string) =>
@@ -4277,7 +4286,7 @@ test("✕ on a subagent's step or the whole subagent tells THAT subagent, not th
   expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.tasks.find(x => x.id === 't2')?.status).toBe('skipped')
   // The whole subagent: told to stop and wrap up.
   await ui.press({ key: 'cancel:s-me:agentall:sub-r' })
-  await world.clock.advance(2100)
+  await world.clock.advance(UNDO_OVER)
   expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.cancelledAt).toBeTruthy()
   expect(await call('sub-r')).toContain('cancelled your work')
   await ui.unmount()
@@ -4694,9 +4703,18 @@ test('✕ on a running pipeline only hides it: no call reaches the CI, and it st
   // The default (delete) setting: the ⊘ button is there, and red — but ✕ is a different button.
   expect((await ui.find({ type: 'Button', key: `cancelpipe:s-me:${key}` }))?.text).toBe(' ⊘ stop ')
   await ui.press({ key: `hidepipe:s-me:${key}` })
+  // Gone from the pane at once…
+  expect(await ui.find({ type: 'Button', key: `pipe:s-me:${key}` })).toBeUndefined()
+  // …and no longer watched once the press can no longer be taken back.
+  await world.clock.advance(UNDO_OVER)
   expect(calls(world, 'POST')).toEqual([])
   expect(calls(world, 'DELETE')).toEqual([])
   expect(read(disk, `${DIR}/s-me.json`).pipelines ?? []).toEqual([])
+  // Watching it again later is a new watch: it shows.
+  await watch($, world, { watch: [{ project: 'team/app', pipeline: 41 }] })
+  expect(await ui.find({ type: 'Button', key: `pipe:s-me:${key}` })).toBeDefined()
+  await world.clock.advance(2100)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.map(p => p.key)).toEqual([key])
   await ui.unmount()
 })
 
@@ -4723,7 +4741,13 @@ test("another session's running pipeline hidden with ✕ stays hidden in the pan
   const ui = await pane($)
   await ui.press({ key: 'hidepipe:s-other:team/app#9' })
   expect(calls(world, 'POST')).toEqual([])
-  expect(sidecar(disk, 's-other')).toContainEqual({ id: 'pipeline:team/app#9', doneAt: null })
+  // Named by that watch (when it was added), so the same pipeline watched again later shows.
+  expect(sidecar(disk, 's-other')).toContainEqual({
+    id: 'pipeline:team/app#9',
+    doneAt: `added:${iso}`,
+    at: iso,
+  })
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-other:team/app#9' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -6307,4 +6331,187 @@ test("another session's malformed file never breaks the pane: what is unreadable
   await ui.unmount()
   // The scan went through to its end: the status line was set, nothing threw on the way.
   expect(world.status.length).toBeGreaterThan(0)
+})
+
+const pressedFile = (disk: Disk, id: string) =>
+  JSON.parse(disk.files.get(`${DIR}/${id}.dismissed.json`)?.text ?? '{}') as {
+    cancelled?: string[]
+    cancelledAt?: Record<string, string>
+    entries?: { id: string; all?: true; at?: string }[]
+  }
+const mainNote = async ($: $Test, id: string) =>
+  ctx(
+    await $.classic.PostToolUse({
+      tool_name: 'Bash',
+      tool_input: {},
+      tool_response: {},
+      tool_use_id: id,
+    } as never),
+  )
+
+test('a ✕ on an open task can be taken back for a few seconds: its session never acts on it', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { tasks: [{ title: 'Write the docs' }, { title: 'Push' }] })
+  const ui = await pane($)
+  await ui.press({ key: 'cancel:s-me:t1' })
+  // The row is gone at once; in its session's group one dim line says so, with its undo.
+  let lines = await texts(ui)
+  expect(lines).not.toContain('○ Write the docs')
+  expect(lines).toContain('– Write the docs  removed')
+  expect((await ui.find({ type: 'Button', key: 'undo:s-me:removal:t1' }))?.text).toBe('  ↶ undo  ')
+  expect(pressedFile(disk, 's-me')).toMatchObject({
+    cancelled: ['t1'],
+    cancelledAt: { t1: new Date(T0).toISOString() },
+  })
+  // While it can be taken back, its session does nothing: the task is as it was, the agent hears nothing.
+  await world.clock.advance(4000)
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]?.status).toBe('todo')
+  expect(await mainNote($, 'u1')).toBe('')
+  await ui.press({ key: 'undo:s-me:removal:t1' })
+  lines = await texts(ui)
+  expect(lines).toContain('○ Write the docs')
+  expect(lines).not.toContain('– Write the docs  removed')
+  expect(pressedFile(disk, 's-me').cancelled ?? []).toEqual([])
+  expect(pressedFile(disk, 's-me').cancelledAt).toBeUndefined()
+  // …and it stays so: nothing was removed.
+  await world.clock.advance(UNDO_OVER)
+  expect(read(disk, `${DIR}/s-me.json`).tasks.map(x => x.status)).toEqual(['todo', 'todo'])
+  expect(await mainNote($, 'u2')).toBe('')
+  await ui.unmount()
+})
+
+test('an undo not taken runs out: its line goes, then the session marks the task skipped and tells its agent', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { tasks: [{ title: 'Write the docs' }] })
+  const ui = await pane($)
+  await ui.press({ key: 'cancel:s-me:t1' })
+  await world.clock.advance(UNDO_MS + 2000)
+  expect(await ui.find({ type: 'Button', key: 'undo:s-me:removal:t1' })).toBeUndefined()
+  expect((await texts(ui)).some(l => l.includes('Write the docs'))).toBe(false)
+  // Not yet acted on: the session waits past the last moment an undo could land.
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]?.status).toBe('todo')
+  await world.clock.advance(4000)
+  expect(read(disk, `${DIR}/s-me.json`).tasks[0]).toMatchObject({ status: 'skipped' })
+  expect(await mainNote($, 'u1')).toContain('t1 "Write the docs"')
+  await ui.unmount()
+})
+
+test('✕ on a done task, on a finished agent, and Clear all can each be taken back', async ($, on) => {
+  const disk = makeDisk()
+  put(disk, `${DIR}/s-me.json`, withFinishedAgents('s-me', ['Lane A', 'Lane B']))
+  const world = engine(on, disk)
+  await start($)
+  await update($, {
+    tasks: [
+      { title: 'Alpha', status: 'done' },
+      { title: 'Beta', status: 'done' },
+      { title: 'Gamma', status: 'doing' },
+    ],
+  })
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-me' })
+  // (Tasks of the session's repo and agents of none: Done groups them, the agents under "other".)
+  await ui.press({ key: 'doneagents:s-me:\u0000other' })
+  const has = async (re: RegExp) => (await texts(ui)).some(l => re.test(l))
+
+  await ui.press({ key: 'dismiss:s-me:t1' })
+  expect(await has(/^✓ Alpha/)).toBe(false)
+  expect(await texts(ui)).toContain('– Alpha  cleared')
+  expect((await ui.find({ type: 'Button', key: 'done:s-me' }))?.text).toBe('▾ Done (3)')
+  await ui.press({ key: 'undo:s-me:entry:t1' })
+  expect(await has(/^✓ Alpha/)).toBe(true)
+  expect(pressedFile(disk, 's-me').entries).toEqual([])
+
+  await ui.press({ key: 'dismiss:s-me:agent:sub-1' })
+  expect(await has(/^✓ Lane A/)).toBe(false)
+  expect(await texts(ui)).toContain('– Lane A  cleared')
+  await ui.press({ key: 'undo:s-me:entry:agent:sub-1' })
+  expect(await has(/^✓ Lane A/)).toBe(true)
+
+  // Clear all says how many rows go — the whole of Done, finished agents included — and is one undo.
+  expect((await ui.find({ type: 'Button', key: 'clear:s-me' }))?.text).toBe('Clear all (4)')
+  await ui.press({ key: 'clear:s-me' })
+  expect(await ui.find({ type: 'Button', key: 'done:s-me' })).toBeUndefined()
+  expect(await texts(ui)).toContain('– Done cleared: 4 rows')
+  const at = new Date(T0).toISOString()
+  expect(pressedFile(disk, 's-me').entries?.every(d => d.all === true && d.at === at)).toBe(true)
+  await ui.press({ key: `undo:s-me:all:${at}` })
+  expect((await ui.find({ type: 'Button', key: 'done:s-me' }))?.text).toBe('▾ Done (4)')
+  expect(await has(/^✓ Beta/)).toBe(true)
+  await world.clock.advance(UNDO_OVER)
+  expect(read(disk, `${DIR}/s-me.json`).tasks.map(x => x.title)).toEqual(['Alpha', 'Beta', 'Gamma'])
+  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.label)).toEqual(['Lane A', 'Lane B'])
+
+  // Not taken back: gone for good once its session folds it in.
+  await ui.press({ key: 'clear:s-me' })
+  await world.clock.advance(UNDO_OVER)
+  expect((await texts(ui)).some(l => l.includes('Done cleared'))).toBe(false)
+  expect(read(disk, `${DIR}/s-me.json`).tasks.map(x => x.title)).toEqual(['Gamma'])
+  expect(read(disk, `${DIR}/s-me.json`).agents ?? []).toEqual([])
+  await ui.unmount()
+})
+
+test("a hidden pipeline, a running agent's ✕ and a step's ✕ can be taken back", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-r', description: 'Lane R', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [{ title: 'A', status: 'doing', steps: [{ title: 'one' }, { title: 'two' }] }],
+  })
+  await $.tool.call({ tool: TOOL, agentId: 'sub-r', now: 'w', tasks: [{ title: 'read' }] } as never)
+  const key = await runningPipeline(world, $)
+  await world.clock.settle()
+  const ui = await pane($)
+
+  await ui.press({ key: `hidepipe:s-me:${key}` })
+  expect(await ui.find({ type: 'Button', key: `pipe:s-me:${key}` })).toBeUndefined()
+  // The Pipelines section stays for the undo, though no pipeline is listed.
+  expect(await texts(ui)).toContain('– app  hidden')
+  await ui.press({ key: `undo:s-me:entry:pipeline:${key}` })
+  expect(await ui.find({ type: 'Button', key: `pipe:s-me:${key}` })).toBeDefined()
+
+  await ui.press({ key: 'cancel:s-me:agentall:sub-r' })
+  expect(await texts(ui)).toContain('– Lane R  will be stopped')
+  // Pressed: its ✕ is not offered a second time.
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:agentall:sub-r' })).toBeUndefined()
+  await ui.press({ key: 'undo:s-me:removal:agentall:sub-r' })
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:agentall:sub-r' })).toBeDefined()
+
+  await ui.press({ key: 'cancel:s-me:step:t1:two' })
+  expect(await texts(ui)).not.toContain('○ two')
+  expect(await texts(ui)).toContain('– two  removed')
+  await ui.press({ key: 'undo:s-me:removal:step:t1:two' })
+  expect(await texts(ui)).toContain('○ two')
+
+  // Nothing of it ever reached the session: still watched, still running, the step still to do.
+  await world.clock.advance(UNDO_OVER)
+  const file = read(disk, `${DIR}/s-me.json`)
+  expect(file.pipelines?.map(p => p.key)).toEqual([key])
+  expect(file.agents?.[0]?.cancelledAt).toBeUndefined()
+  expect(file.tasks[0]?.steps?.map(x => x.status)).toEqual(['todo', 'todo'])
+  expect(await mainNote($, 'u1')).toBe('')
+  await ui.unmount()
+})
+
+test("a press that cannot be saved says so: this session's file caught unreadable is no silent loss", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  const key = await runningPipeline(world, $)
+  await world.clock.settle()
+  const ui = await pane($)
+  // ⊘ stop, twice: the cancel reaches the CI, then the row's removal needs this session's own file.
+  disk.readFails = `${DIR}/s-me.json`
+  await ui.press({ key: `cancelpipe:s-me:${key}` })
+  await ui.press({ key: `cancelpipe:s-me:${key}` })
+  await world.clock.settle()
+  expect(world.toasts).toContain('Progress pane: that press could not be saved just now — press again.')
+  disk.readFails = undefined
+  await ui.unmount()
 })
