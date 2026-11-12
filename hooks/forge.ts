@@ -17,6 +17,7 @@ import {
   runsOnRef,
   runsPath,
 } from './commit'
+import type { CliProblem } from './doctor'
 import { apiHost } from './forges'
 import { teaLoginFor } from './gitea'
 import { ghEstimateSamples, parseGhJobs } from './github'
@@ -59,11 +60,11 @@ import { exclusive, nowIso, ownFile, progressDir, save, updateCiMemory, writeSid
 
 export const TEA_LOGINS_TTL_MS = 60_000
 
-export async function teaApi(
-  $: EngineInterface,
-  host: string,
-  path: string,
-): Promise<{ text?: string; error?: string }> {
+/** One CLI call's answer: its output, or its error as one line — with the exit code, and what the
+ *  failure means where the plugin itself knows (never read back out of the error's wording). */
+export type CliAnswer = { text?: string; error?: string; exitCode?: number; problem?: CliProblem }
+
+export async function teaApi($: EngineInterface, host: string, path: string): Promise<CliAnswer> {
   const nowMs = await $.clock.now()
   if (!self.teaLogins || nowMs - self.teaLogins.atMs > TEA_LOGINS_TTL_MS) {
     const listed = await runCli($, ['tea', 'login', 'list', '--output', 'json'])
@@ -71,7 +72,7 @@ export async function teaApi(
     self.teaLogins = { atMs: nowMs, text: listed.text }
   }
   const login = teaLoginFor(self.teaLogins.text, host)
-  if (!login) return { error: `tea: no login for ${host} (tea login add)` }
+  if (!login) return { error: t('cli.teaNoLogin', { host }), problem: 'auth' }
   return runCli($, ['tea', 'api', '--login', login, path])
 }
 
@@ -90,7 +91,7 @@ export async function refreshCommandRun(
   const ran = await runCli($, argv)
   const parsed = ran.text === undefined ? undefined : parseCommandStatus(ran.text)
   if (parsed === null) return { ...p, checkedAt: at }
-  if (!parsed) return { ...p, checkedAt: at, error: ran.error ?? `${argv[0]}: not the documented JSON` }
+  if (!parsed) return { ...p, checkedAt: at, error: ran.error ?? t('cli.notJson', { cli: argv[0] ?? '' }) }
   return merged(
     p,
     parsed.head,
@@ -104,14 +105,17 @@ export async function refreshCommandRun(
 
 // One CLI call: its output, or its error as one short line — from stderr only: stdout is the API's
 // answer (a whole jobs list once stood in for the error), never a message.
-export async function runCli($: EngineInterface, argv: string[]): Promise<{ text?: string; error?: string }> {
+export async function runCli($: EngineInterface, argv: string[]): Promise<CliAnswer> {
   const ran = await $.process.run(argv).catch((err: unknown) => ({
     exitCode: 127,
     stdout: '',
     stderr: err instanceof Error ? err.message : String(err),
   }))
   if (ran.exitCode === 0) return { text: ran.stdout }
-  return { error: oneLine(ran.stderr) || `${argv[0]} exited ${ran.exitCode}` }
+  return {
+    error: oneLine(ran.stderr) || t('cli.exited', { cli: argv[0] ?? '', code: ran.exitCode }),
+    exitCode: ran.exitCode,
+  }
 }
 
 // One `<cli> api [--hostname <host>] <path>` (`glab` for GitLab, `gh` for GitHub): the JSON text,
@@ -122,7 +126,7 @@ export async function cliApi(
   cli: 'glab' | 'gh',
   path: string,
   host: string | undefined,
-): Promise<{ text?: string; error?: string }> {
+): Promise<CliAnswer> {
   return runCli($, host ? [cli, 'api', '--hostname', host, path] : [cli, 'api', path])
 }
 
@@ -274,20 +278,16 @@ export function noneYet(p: Pipeline): string {
 
 // One forge API read through the person's own CLI: `glab` (GitLab), `gh` (GitHub) or `tea` (Gitea /
 // Forgejo, the login on the pipeline's host).
-export async function forgeGet(
-  $: EngineInterface,
-  p: Pipeline,
-  path: string,
-): Promise<{ text?: string; error?: string }> {
+export async function forgeGet($: EngineInterface, p: Pipeline, path: string): Promise<CliAnswer> {
   const host = apiHost(p)
   if (p.provider !== 'gitea') return cliApi($, p.provider === 'github' ? 'gh' : 'glab', path, host)
-  if (!host) return { error: 'tea: the pipeline has no host' }
+  if (!host) return { error: t('cli.teaNoHost') }
   return teaApi($, host, path)
 }
 
 function unreadable(p: Pipeline): string {
-  if (p.provider === 'github') return 'gh: unreadable workflow run'
-  return p.provider === 'gitea' ? 'tea: unreadable workflow run' : 'glab: unreadable pipeline'
+  if (p.provider === 'github') return t('cli.unreadable.github')
+  return t(p.provider === 'gitea' ? 'cli.unreadable.gitea' : 'cli.unreadable.gitlab')
 }
 
 // How long a run like this one took before (GitLab and GitHub; none for a finished run, or one

@@ -368,6 +368,45 @@ export const en = {
   'tool.failed': 'progress_update failed; the pane was not changed.',
   'tool.unreadable':
     "progress_update: this session's progress file could not be read just now (it was being written), so nothing was written — send the same update again.",
+  'update.removeNoTask': 'remove: no task {id}',
+  'update.badStatus': '{at}: status must be one of {statuses}',
+  'update.removedStays':
+    'tasks[{i}]: {id} was removed in the Progress pane and stays skipped (a new title makes a new task)',
+  'update.noTask': 'tasks[{i}]: no task {id} (give a title to create one)',
+  'update.needsTitle': 'tasks[{i}]: a new task needs a title',
+  'update.badId':
+    'tasks[{i}]: id "{id}" is not allowed — letters, digits, ".", "_" and "-" only (or leave it out: the tool assigns one)',
+  'update.idRemoved':
+    'tasks[{i}]: id "{id}" was removed in the Progress pane and is not reused — leave the id out (the tool assigns one)',
+  'update.twin':
+    'tasks[{i}]: did you mean {id} ({title})? update it by id — rename it by sending a new title with that id',
+  'update.stepsOfAgent':
+    'tasks[{i}]: linked to agent "{agent}" — its steps come from the agent; send this task only its status and note',
+  'update.stepNeedsTitle': 'tasks[{i}].steps[{j}]: a step needs a title',
+  'update.orderNoTask': 'order: no task {name}',
+  'update.askNeedsText': 'needsYou[{i}]: an ask needs its text',
+  'watch.unwatchNone': 'unwatch: no pipeline {key}',
+  'watch.badProvider': 'watch[{i}]: unknown provider {provider} (gitlab, github, gitea or command)',
+  'watch.needsProject': 'watch[{i}]: a pipeline needs a project ({shape})',
+  'watch.shape.gitlab': 'group/name',
+  'watch.shape.repo': 'owner/repo',
+  'watch.shape.command': 'a name your command knows',
+  'watch.projectDash': 'watch[{i}]: a project may not start with "-"',
+  'watch.badProject': 'watch[{i}]: {project} is not a project path ({shape})',
+  'watch.needsPipeline': 'watch[{i}]: give a pipeline id or a commit sha',
+  'watch.needsRun': 'watch[{i}]: give a run id or a commit sha',
+  'watch.badSha': 'watch[{i}]: {sha} is not a commit sha (7 to 64 hex digits)',
+  'watch.badHost': 'watch[{i}]: {host} is not a host name (like git.example.com)',
+  'watch.giteaNeedsHost':
+    'watch[{i}]: a Gitea/Forgejo pipeline needs a host (or watch it from a session in that repo)',
+  'watch.badRef': 'watch[{i}]: {ref} is not a branch or tag name',
+  'cli.exited': '{cli} exited {code}',
+  'cli.teaNoLogin': 'tea: no login for {host} (tea login add)',
+  'cli.teaNoHost': 'tea: the pipeline has no host',
+  'cli.notJson': '{cli}: not the documented JSON',
+  'cli.unreadable.gitlab': 'glab: unreadable pipeline',
+  'cli.unreadable.github': 'gh: unreadable workflow run',
+  'cli.unreadable.gitea': 'tea: unreadable workflow run',
   'tool.noDir': 'progress_update: no progress folder (no home directory; set the progressDir option).',
 } as const
 

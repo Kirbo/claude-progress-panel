@@ -1349,7 +1349,9 @@ export async function forgeCheck(
       : cli === 'tea'
         ? `tea login add --url https://${host}`
         : `glab auth login --hostname ${host}`
-  switch (classifyCliError(error)) {
+  // What the failure means: the plugin's own word where it has one, else the exit code and the
+  // CLI's own (never translated) error text.
+  switch (ran.problem ?? classifyCliError(error, ran.exitCode)) {
     case 'missing':
       return {
         state: 'fail',
@@ -1393,7 +1395,7 @@ export async function gitCheck(
       stderr: err instanceof Error ? err.message : String(err),
     }))
   if (ran.exitCode === 0) return { state: 'ok', label, detail: t('doctor.git.ok', { remote }) }
-  const error = oneLine(ran.stderr) || `git exited ${ran.exitCode}`
+  const error = oneLine(ran.stderr) || t('cli.exited', { cli: 'git', code: ran.exitCode })
   switch (classifyGitError(ran.stderr)) {
     case 'hostkey':
       return {

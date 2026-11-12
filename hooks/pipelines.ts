@@ -4,6 +4,7 @@
 import type { Dismissal, JobState, Pipeline, PipelineJob, PipelineProvider } from '../types'
 import type { Remote } from './forges'
 import { defaultHost, isHostName, watchHost } from './forges'
+import { t } from './i18n'
 import { baseName } from './paths'
 
 export type { JobState, Pipeline, PipelineJob, PipelineProvider }
@@ -301,29 +302,31 @@ export function applyWatch(
   let next = [...list]
   for (const key of unwatch) {
     if (next.some(p => p.key === key)) next = next.filter(p => p.key !== key)
-    else errors.push(`unwatch: no pipeline ${key}`)
+    else errors.push(t('watch.unwatchNone', { key }))
   }
   watch.forEach((w, i) => {
     const provider = w.provider ?? 'gitlab'
     if (!PROVIDERS.includes(provider)) {
-      errors.push(`watch[${i}]: unknown provider ${String(provider)} (gitlab, github, gitea or command)`)
+      errors.push(t('watch.badProvider', { i, provider: String(provider) }))
       return
     }
     const project = (w.project ?? '').trim()
     if (!project) {
-      errors.push(
-        `watch[${i}]: a pipeline needs a project (${provider === 'gitlab' ? 'group/name' : provider === 'command' ? 'a name your command knows' : 'owner/repo'})`,
-      )
+      errors.push(t('watch.needsProject', { i, shape: t(projectShape(provider)) }))
       return
     }
     // A custom command gets the project as an argument: never one that reads as an option.
     if (project.startsWith('-')) {
-      errors.push(`watch[${i}]: a project may not start with "-"`)
+      errors.push(t('watch.projectDash', { i }))
       return
     }
     if (!isSafeProject(project, provider)) {
       errors.push(
-        `watch[${i}]: ${project} is not a project path (${provider === 'gitlab' ? 'group/name' : 'owner/repo'})`,
+        t('watch.badProject', {
+          i,
+          project,
+          shape: t(provider === 'gitlab' ? 'watch.shape.gitlab' : 'watch.shape.repo'),
+        }),
       )
       return
     }
@@ -332,30 +335,28 @@ export function applyWatch(
     const id = typeof given === 'number' && given > 0 ? given : null
     const sha = w.sha?.trim()
     if (id === null && !sha) {
-      errors.push(`watch[${i}]: give a ${isRun ? 'run' : 'pipeline'} id or a commit sha`)
+      errors.push(t(isRun ? 'watch.needsRun' : 'watch.needsPipeline', { i }))
       return
     }
     // A sha is stored and fills a custom command's `{sha}`; a host is a CLI's `--hostname`: neither
     // is ever anything but what its name says.
     if (sha && !isCommitSha(sha)) {
-      errors.push(`watch[${i}]: ${quoted(sha)} is not a commit sha (7 to 64 hex digits)`)
+      errors.push(t('watch.badSha', { i, sha: quoted(sha) }))
       return
     }
     const host = provider === 'command' ? undefined : watchHost(w.host, project, remote)
     if (host && !isHostName(host)) {
-      errors.push(`watch[${i}]: ${quoted(host)} is not a host name (like git.example.com)`)
+      errors.push(t('watch.badHost', { i, host: quoted(host) }))
       return
     }
     if (provider === 'gitea' && !host) {
-      errors.push(
-        `watch[${i}]: a Gitea/Forgejo pipeline needs a host (or watch it from a session in that repo)`,
-      )
+      errors.push(t('watch.giteaNeedsHost', { i }))
       return
     }
     // Only a watch by commit is per ref, and never a custom command's (its script decides).
     const ref = id === null && provider !== 'command' ? w.ref?.trim() || undefined : undefined
     if (ref && !isRefName(ref)) {
-      errors.push(`watch[${i}]: ${quoted(ref)} is not a branch or tag name`)
+      errors.push(t('watch.badRef', { i, ref: quoted(ref) }))
       return
     }
     const key = pipelineKey(
@@ -489,6 +490,12 @@ export function isSafeProject(project: string, provider: PipelineProvider | unde
 }
 
 // A refused value as its error quotes it: clipped, so an answer never carries a long one back.
+/** How a project is written for each kind of CI (a catalog key). */
+function projectShape(provider: PipelineProvider) {
+  if (provider === 'gitlab') return 'watch.shape.gitlab' as const
+  return provider === 'command' ? ('watch.shape.command' as const) : ('watch.shape.repo' as const)
+}
+
 function quoted(value: string): string {
   return JSON.stringify(value.length > 48 ? `${value.slice(0, 47)}…` : value)
 }

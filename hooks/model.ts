@@ -16,6 +16,7 @@ import type {
   Task,
 } from '../types'
 import { isHostName } from './forges'
+import { t } from './i18n'
 import {
   cleanText,
   httpUrl,
@@ -127,12 +128,12 @@ export function applyUpdate(
 
   for (const id of input.remove ?? []) {
     if (tasks.some(t => t.id === id)) tasks = tasks.filter(t => t.id !== id)
-    else errors.push(`remove: no task ${id}`)
+    else errors.push(t('update.removeNoTask', { id }))
   }
 
   ;(input.tasks ?? []).forEach((patch, i) => {
     if (patch.status !== undefined && !isStatus(patch.status)) {
-      errors.push(`tasks[${i}]: status must be one of ${STATUSES.join(', ')}`)
+      errors.push(t('update.badStatus', { at: `tasks[${i}]`, statuses: STATUSES.join(', ') }))
       return
     }
     const status = patch.status as Status | undefined
@@ -145,9 +146,7 @@ export function applyUpdate(
     // The person removed it in a pane: it stays skipped — a new id or title is a new task.
     const found = tasks[at]
     if (found && (file.cancelled ?? []).includes(found.id)) {
-      errors.push(
-        `tasks[${i}]: ${found.id} was removed in the Progress pane and stays skipped (a new title makes a new task)`,
-      )
+      errors.push(t('update.removedStays', { i, id: found.id }))
       return
     }
 
@@ -156,13 +155,13 @@ export function applyUpdate(
       if (status === undefined || isClosed(status)) return
       dismissed = dismissed.filter(id => id !== patch.id)
     } else if (at < 0 && givenId && !patch.title) {
-      errors.push(`tasks[${i}]: no task ${givenId} (give a title to create one)`)
+      errors.push(t('update.noTask', { i, id: givenId }))
       return
     }
 
     if (at < 0) {
       if (!patch.title) {
-        errors.push(`tasks[${i}]: a new task needs a title`)
+        errors.push(t('update.needsTitle', { i }))
         return
       }
       // An open task with nearly the same title is that task re-added under a new name: refused,
@@ -170,26 +169,20 @@ export function applyUpdate(
       // An id the agent chooses is a plain name: `step:…` / `agent:…` are how a pane's removal of a
       // step or of a subagent's task is written down (`removalKey`), and would be read as one.
       if (givenId && !isTaskId(givenId)) {
-        errors.push(
-          `tasks[${i}]: id "${givenId}" is not allowed — letters, digits, ".", "_" and "-" only (or leave it out: the tool assigns one)`,
-        )
+        errors.push(t('update.badId', { i, id: givenId }))
         return
       }
       // An id the person removed in a pane stays that removal's: a new task under it would be hidden
       // by every pane at once, and its own ✕ would never be folded in (`cancelTasks` removes once).
       if (givenId && (file.cancelled ?? []).includes(givenId)) {
-        errors.push(
-          `tasks[${i}]: id "${givenId}" was removed in the Progress pane and is not reused — leave the id out (the tool assigns one)`,
-        )
+        errors.push(t('update.idRemoved', { i, id: givenId }))
         return
       }
       const twin = givenId
         ? undefined
         : tasks.find(t => !isClosed(t.status) && sameTitle(t.title, patch.title ?? ''))
       if (twin) {
-        errors.push(
-          `tasks[${i}]: did you mean ${twin.id} (${twin.title})? update it by id — rename it by sending a new title with that id`,
-        )
+        errors.push(t('update.twin', { i, id: twin.id, title: twin.title }))
         return
       }
       const created = status ?? 'todo'
@@ -671,17 +664,15 @@ function extras(
   let steps = old.steps
   // A task linked to an agent shows that agent's own steps: copies sent here are dropped, said once.
   if (patch.steps !== undefined && agent) {
-    errors.push(
-      `tasks[${i}]: linked to agent "${agent}" — its steps come from the agent; send this task only its status and note`,
-    )
+    errors.push(t('update.stepsOfAgent', { i, agent }))
   } else if (patch.steps !== undefined) {
     steps = [] as Step[]
     for (const [j, step] of patch.steps.entries()) {
       const title = typeof step?.title === 'string' ? step.title.trim() : ''
       if (!title) {
-        errors.push(`tasks[${i}].steps[${j}]: a step needs a title`)
+        errors.push(t('update.stepNeedsTitle', { i, j }))
       } else if (step.status !== undefined && !isStatus(step.status)) {
-        errors.push(`tasks[${i}].steps[${j}]: status must be one of ${STATUSES.join(', ')}`)
+        errors.push(t('update.badStatus', { at: `tasks[${i}].steps[${j}]`, statuses: STATUSES.join(', ') }))
       } else {
         const before = old.steps?.find(s => s.title === title)
         // A step the person removed in a pane stays removed, whatever a later report says.
@@ -1118,7 +1109,7 @@ function reorder(tasks: Task[], order: readonly string[], errors: string[]): Tas
       tasks.find(t => t.id === name) ??
       tasks.find(t => t.title === name && !isClosed(t.status)) ??
       tasks.find(t => t.title === name)
-    if (!task) errors.push(`order: no task ${name}`)
+    if (!task) errors.push(t('update.orderNoTask', { name }))
     else if (!named.includes(task)) named.push(task)
   }
   return [...named, ...tasks.filter(t => !named.includes(t))]
@@ -2072,7 +2063,7 @@ function needsFrom(
   items.forEach((item, i) => {
     const text = (typeof item === 'string' ? item : (item?.text ?? '')).trim()
     if (!text) {
-      errors.push(`needsYou[${i}]: an ask needs its text`)
+      errors.push(t('update.askNeedsText', { i }))
       return
     }
     needsYou.push(text)
