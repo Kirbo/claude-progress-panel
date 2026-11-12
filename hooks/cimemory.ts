@@ -3,7 +3,8 @@
 // its agent is told once to stop watching its pushes. Pure — the file I/O is register.tsx's.
 
 /** `none`: no CI files (or a mirror on another kind of forge); `nopipeline`: CI files, but a pushed
- *  commit never got a pipeline (CI off on the forge); `yes`: pipelines run. */
+ *  commit got no pipeline AND the forge lists none for the whole project (CI off there); `yes`:
+ *  pipelines run. */
 export type CiVerdict = 'none' | 'nopipeline' | 'yes'
 
 export type RepoMemory = {
@@ -72,7 +73,8 @@ export function withVerdict(memory: CiMemory, key: string, entry: RepoMemory | u
   return { version: 1, repos }
 }
 
-/** A watched commit never got a pipeline: every repo pushing to that forge project runs none. */
+/** The forge has no pipeline for a pushed commit, nor any for its project: every repo pushing to
+ *  that forge project runs none. */
 export function markNoPipeline(
   memory: CiMemory,
   host: string | undefined,

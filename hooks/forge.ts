@@ -7,6 +7,7 @@ import { commandArgv, parseCommandStatus } from './command'
 import type { Run } from './commit'
 import {
   aggregateRuns,
+  anyRunPath,
   isCommitWatch,
   jobsPath,
   parseRun,
@@ -370,6 +371,16 @@ export async function refreshCommit($: EngineInterface, p: Pipeline, at: string)
   return several ? { ...fresh, runs: several } : fresh
 }
 
+// Whether a project has ever run any pipeline / workflow run at all (one small call): false only
+// when the forge answers with an empty list; undefined when it cannot say (a CLI error, a custom
+// command's CI).
+export async function projectRuns($: EngineInterface, p: Pipeline): Promise<boolean | undefined> {
+  if (p.provider === 'command') return undefined
+  const answer = await forgeGet($, p, anyRunPath(p))
+  const runs = answer.text === undefined ? undefined : parseRuns(p.provider, answer.text)
+  return runs === undefined ? undefined : runs.length > 0
+}
+
 // Fetches one pipeline's head and jobs: a watch by commit as every run of that commit, one by id as
 // that run, a custom command's as its command prints it.
 export async function refreshPipeline(
@@ -410,9 +421,16 @@ export async function pollPipelines($: EngineInterface, options: PluginOptions):
     await $.ui.toast(text)
     if (self.settings.bell) await $.ui.notify(text, { title: t('pane.title') }).catch(() => undefined)
   }
-  // A watched commit that never got a pipeline (the 10-minute hint): its repo runs no CI on that
-  // forge — remembered, so its next pushes are not watched for nothing.
-  const none = fresh.filter(p => p.id === null && p.noPipeline)
+  // A PUSHED commit that got no pipeline (the 10-minute hint, as it first shows): one commit proves
+  // nothing — CI on `main` only, a path filter, `[skip ci]` — so the forge is asked, once, whether
+  // the project has ever run anything. Only a project without a single pipeline is remembered as
+  // running none, so its next pushes are not watched for nothing. Never from a watch the agent
+  // sent: a wrong sha there says nothing about the repo.
+  const none: Pipeline[] = []
+  for (const p of fresh) {
+    if (!p.pushed || !p.noPipeline || unfinished.find(u => u.key === p.key)?.noPipeline) continue
+    if ((await projectRuns($, p)) === false) none.push(p)
+  }
   if (none.length > 0)
     await updateCiMemory($, dir, m =>
       none.reduce((acc, p) => markNoPipeline(acc, apiHost(p), p.project, Date.parse(at)), m),

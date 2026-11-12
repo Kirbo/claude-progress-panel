@@ -3459,8 +3459,10 @@ test("another session's verdict is reused; a commit that never got a pipeline is
   await start($)
   ciFile(disk, '/w/app/.gitlab-ci.yml')
   gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
-  // Pushed and watched; then 10 minutes with no pipeline for that commit (CI off on the forge).
+  // Pushed and watched; then 10 minutes with no pipeline for that commit — and the forge says the
+  // project has never run one (CI off there).
   world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${'a'.repeat(40)}&per_page=100`, [])
+  world.gitlab.set('projects/team%2Fapp/pipelines?per_page=1', [])
   expect(await bash($, 'git push')).toContain('watched automatically')
   ageWatches(disk, 11)
   await world.clock.advance(16_000)
@@ -3480,6 +3482,58 @@ test("another session's verdict is reused; a commit that never got a pipeline is
   world.programs.set('git -C /w/app/sub rev-parse --show-toplevel', '/w/app\n')
   expect(await cmd($, 'pipelines recheck')).toContain("Forgot what was remembered about app's CI")
   expect(memoryOf(disk)['/w/app|']).toBeUndefined()
+})
+
+test('one commit without a pipeline never marks a repo that runs CI as "no CI"', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git', branch: 'feature' })
+  const sha = 'a'.repeat(40)
+  // A feature-branch push that starts no pipeline (CI runs on main only, a path filter, [skip ci]):
+  // none for this commit — but the project has pipelines.
+  world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${sha}&per_page=100`, [])
+  world.gitlab.set('projects/team%2Fapp/pipelines?per_page=1', [{ id: 900, status: 'success', ref: 'main' }])
+  expect(await bash($, 'git push')).toContain('watched automatically')
+  ageWatches(disk, 11)
+  await world.clock.advance(16_000)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]).toMatchObject({ noPipeline: true })
+  expect(memoryOf(disk)['/w/app|']).toMatchObject({ ci: 'yes' })
+  // The forge was asked once whether the project runs anything — not again every round.
+  const asked = () => glabCalls(world.runs, 'projects/team%2Fapp/pipelines?per_page=1')
+  expect(asked()).toBe(1)
+  await world.clock.advance(10 * 60_000)
+  expect(asked()).toBe(1)
+  // The next push is watched like any other.
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git', branch: 'main', sha: 'b'.repeat(40) })
+  const next = await bash($, 'git push')
+  expect(next).toContain('watched automatically')
+  expect(next).not.toContain('runs no CI')
+})
+
+test('a `watch` the agent sent — a wrong sha, say — never decides that a repo runs no CI', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk, { remote: 'git@gitlab.com:team/app.git' })
+  await start($)
+  ciFile(disk, '/w/app/.gitlab-ci.yml')
+  gitRepo(world, '/w/app', { url: 'git@gitlab.com:team/app.git' })
+  // The repo is known to run CI (a push was judged), and its project lists no pipeline at all.
+  put(disk, `${DIR}/ci-memory.v1`, {
+    version: 1,
+    repos: {
+      '/w/app|': { ci: 'yes', files: 'L---', host: 'gitlab.com', project: 'team/app', checkedAtMs: T0 },
+    },
+  })
+  const wrong = 'f'.repeat(40)
+  world.gitlab.set(`projects/team%2Fapp/pipelines?sha=${wrong}&per_page=100`, [])
+  world.gitlab.set('projects/team%2Fapp/pipelines?per_page=1', [])
+  await update($, { watch: [{ project: 'team/app', sha: wrong }] })
+  ageWatches(disk, 11)
+  await world.clock.advance(16_000)
+  expect(read(disk, `${DIR}/s-me.json`).pipelines?.[0]?.error).toMatch(/^no pipeline for commit ffffffffffff/)
+  expect(memoryOf(disk)['/w/app|']).toMatchObject({ ci: 'yes' })
+  expect(glabCalls(world.runs, 'projects/team%2Fapp/pipelines?per_page=1')).toBe(0)
 })
 
 test("Claude Code's waits become Needs-you items — and go as the wait ends; the agent's own stay", async ($, on) => {
