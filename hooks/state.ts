@@ -63,6 +63,11 @@ export const RELEASE_CHECK_MS = 6 * 3_600_000
 
 export const RELEASE_KEY = 'latest-release'
 
+// This session's own file, there but not readable as a session file: caught mid-write (writes are
+// not atomic — the plugin API has no rename), so nothing is saved over it. One that still reads the
+// same this long after it was first seen so is damaged, not in flight, and is started over.
+export const OWN_UNREADABLE_MS = 10_000
+
 // Tasks the person removed with ✕ that this session's agent has not been told about yet (id → title):
 // the next main-loop tool call, prompt or progress_update answer carries the note, once.
 export const pendingRemovals = new Map<string, string>()
@@ -317,6 +322,9 @@ export const self: {
   /** A watch was added while a poll round ran: the round looks once more (at what is new) before
    *  it ends, so a new watch never waits a whole interval for its first check. */
   pollWanted: boolean
+  /** This session's own file as it was last found unreadable (see OWN_UNREADABLE_MS): whose, what it
+   *  held ('' for a read that failed) and since when. */
+  ownUnreadable: { id: string; text: string; sinceMs: number } | undefined
   /** `tea`'s logins, as last listed (cached a minute). */
   teaLogins: { atMs: number; text: string } | undefined
   /** The jobs of a finished run of a watch by commit (`<key>#<run id>`), as last read: a run that
@@ -341,6 +349,7 @@ export const self: {
   scanning: false,
   polling: false,
   pollWanted: false,
+  ownUnreadable: undefined,
   teaLogins: undefined,
   runJobs: new Map(),
 }

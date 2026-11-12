@@ -92,6 +92,16 @@ line without control characters: `asPipelines`). The file:
 - **A file caught mid-write is not news.** Writes are not atomic (the plugin API has no rename),
   so a pane may read a half-written file. An unreadable file keeps its last good copy and is
   re-read on the next tick — the group never flickers out and its asks are never re-toasted.
+- **…and never a new session, for its owner.** The owner reads its own file before every write.
+  A read that failed, or a file that did not parse, used to count as "no file": a blank session
+  was then saved over everything the file held (tasks, agents, pipelines, switches). Only a file
+  that is not there (the read fails and so does its `stat`) is a new session now. One that is
+  there but unreadable makes `ownFile` throw `OwnFileUnreadable`: the change is not made and
+  nothing is written — `progress_update` answers that nothing was written and to send the update
+  again (`tool.unreadable`), a hook counts as absent, a scan's own part waits for the next tick. A
+  file still unreadable with the same content `OWN_UNREADABLE_MS` (10 s) after it was first seen
+  so is damaged, not in flight, and the session does start it over — it could never report again
+  otherwise (`refuseUnreadable`, store.ts).
 - Forgetting an ended session deletes both its files.
 - **A blank session is never stored or shown** (0.11.0, asked for 2026-11-07: sessions that never
   reported anything piled up in the pane). Blank = no task, no `now`, no ask, no pipeline. A

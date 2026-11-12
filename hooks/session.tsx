@@ -98,6 +98,7 @@ import {
   forgetSession,
   hasReported,
   nowIso,
+  OwnFileUnreadable,
   ownFile,
   progressDir,
   readCiMemory,
@@ -392,7 +393,8 @@ export const LIVENESS_EVERY_MS = 60_000
 export async function scan($: EngineInterface, options: PluginOptions): Promise<void> {
   const dir = await progressDir($, options)
   if (!dir) return
-  if (isOn(options, 'agents')) await syncOwnAgents($, dir)
+  // (This session's own file caught unreadable: its part waits for the next tick; the rest goes on.)
+  if (isOn(options, 'agents')) await syncOwnAgents($, dir).catch(() => undefined)
   const entries = await $.fs.list(dir).catch(() => undefined)
   // A failed listing keeps what the pane knows; its `checked` stamp then ages into "stale".
   if (!entries) return
@@ -468,7 +470,7 @@ export async function scan($: EngineInterface, options: PluginOptions): Promise<
         // …and so did the fold of a finished agent's ✕: the row leaves the file, not only the panes.
         const cleared = (own.agents?.length ?? 0) !== (file.agents?.length ?? 0)
         if (pruned !== own || folded || cleared) await save($, dir, pruned)
-      })
+      }).catch(() => undefined)
       continue
     }
     if (ended === null) {
@@ -496,6 +498,13 @@ export function summarize(file: SessionFile, errors: readonly string[]): string 
   return lines.join('\n')
 }
 
+// The session's own file could not be read just now (`OwnFileUnreadable`): the update is not made —
+// the answer says so. Anything else is a real failure and stays one.
+export function unreadable(err: unknown): undefined {
+  if (err instanceof OwnFileUnreadable) return undefined
+  throw err
+}
+
 export type ToolInput = UpdateInput & {
   watch?: WatchInput[]
   unwatch?: string[]
@@ -516,7 +525,7 @@ export async function runUpdate(
   const remote = input.watch?.length
     ? parseRemote((await $.session.repo().catch(() => null))?.remote)
     : undefined
-  const { updated, watched, file } = await exclusive(async () => {
+  const done = await exclusive(async () => {
     const applied = applyUpdate(await ownFile($, dir), input, at)
     // Agent rows the coordinator clears (as the pane's ✕ does): never a running one.
     const cleared =
@@ -537,7 +546,9 @@ export async function runUpdate(
     const file = { ...updated.file, pipelines: watched.list }
     await save($, dir, file)
     return { updated, watched, file }
-  })
+  }).catch(unreadable)
+  if (done === undefined) return t('tool.unreadable')
+  const { updated, watched, file } = done
   await announce($, await readSessions($), file.session.id)
   const added = newlyWatched(updated.file.pipelines ?? [], watched.list)
   // Their first check starts now, but the answer does not wait for a forge (`pollSoon`).
@@ -574,7 +585,7 @@ export async function runAgentUpdate(
   const label =
     listed.find(a => a.id === id)?.description?.trim() || t('agent.fallbackLabel', { id: id.slice(0, 8) })
   const at = await nowIso($)
-  const { errors, entry } = await exclusive(async () => {
+  const saved = await exclusive(async () => {
     const r = applyAgentUpdate(pickedUp(await ownFile($, dir), id), { id, label }, input, at)
     // Still on no task of the session: a stand-in task, linked to it (done stays the coordinator's).
     const file =
@@ -583,7 +594,9 @@ export async function runAgentUpdate(
         : r.file
     await save($, dir, file)
     return { errors: r.errors, entry: file.agents?.find(a => a.id === id) }
-  })
+  }).catch(unreadable)
+  if (saved === undefined) return t('tool.unreadable')
+  const { errors, entry } = saved
   const steps = entry ? entry.tasks : []
   const done = steps.filter(x => isClosed(x.status)).length
   return [t('tool.agentSaved', { done, total: steps.length }), ...errors].join('\n')
@@ -963,7 +976,7 @@ export async function setToggle(
     await exclusive(async () => {
       const own = await ownFile($, dir)
       await save($, dir, { ...own, toggles: self.sessionToggles })
-    })
+    }).catch(unreadable)
   if (before[feature] === after[feature]) return
   // What the agent was told is the state before the first change since its last hand-over: the
   // note is worked out then, from the NET change (`netChange`), never one per press.
@@ -1395,7 +1408,7 @@ export async function markEnded($: EngineInterface, options: PluginOptions): Pro
     // Nothing to look back on: the session leaves no file (nor sidecar) behind.
     if (isBlank(file)) return forgetSession($, options, file.session.id)
     await save($, dir, { ...file, session: { ...file.session, endedAt: await nowIso($) } })
-  })
+  }).catch(unreadable)
 }
 
 export async function toggle($: EngineInterface, key: string, isOpenNow: boolean): Promise<void> {

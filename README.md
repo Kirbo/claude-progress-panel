@@ -340,7 +340,8 @@ or test folder) without moving everyone else's.
   `progress_update` tool, one write at a time — nobody else writes it, so sessions never
   overwrite each other. Your ✕ / Clear all, and pipeline refreshes a pane made for a session that
   stopped polling, go to a separate `<session-id>.dismissed.json`, which the session folds in on
-  its next update. A file caught half-written is ignored until the next refresh. The tool takes a
+  its next update. A file caught half-written is ignored until the next refresh — by its own
+  session too, which writes nothing over a file it cannot read. The tool takes a
   patch (`now`, `needsYou`, `tasks` upserted by id or title — with `note`, `detail`, `steps`,
   `repo` — `remove`, `order`, `watch`, `unwatch`, `clearAgents` / `dismissAgents`); the plugin
   stamps the times. Format:

@@ -339,6 +339,8 @@ export const en = {
     'Progress pane: that push is watched automatically ({keys}) — no `watch` call needed for it.',
   'tool.problems': 'Not applied:',
   'tool.failed': 'progress_update failed; the pane was not changed.',
+  'tool.unreadable':
+    "progress_update: this session's progress file could not be read just now (it was being written), so nothing was written — send the same update again.",
   'tool.noDir': 'progress_update: no progress folder (no home directory; set the progressDir option).',
 } as const
 

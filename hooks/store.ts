@@ -24,6 +24,7 @@ import type { Pipeline } from './pipelines'
 import { overlayPipelines, visiblePipelines } from './pipelines'
 import {
   firstFold,
+  OWN_UNREADABLE_MS,
   optionString,
   pendingAgentNotices,
   pendingNotes,
@@ -126,13 +127,47 @@ export async function changeSidecar(
   })
 }
 
+/** This session's own file is there but cannot be read as one right now: nothing may be saved from
+ *  a stand-in for it. */
+export class OwnFileUnreadable extends Error {}
+
+// A file that is there but does not read as a session file was caught mid-write (or its read failed):
+// taking it for "no file" saved a blank session over everything it held. Only a file that is not
+// there is a new session. One that stays unreadable — the same content OWN_UNREADABLE_MS after it
+// was first seen so — is damaged for good: then the session does start over (it could never report
+// again otherwise).
+export async function refuseUnreadable(
+  $: EngineInterface,
+  path: string,
+  id: string,
+  text: string | undefined,
+): Promise<void> {
+  const isThere = text !== undefined || (await $.fs.stat(path).catch(() => undefined)) !== undefined
+  if (!isThere) {
+    self.ownUnreadable = undefined
+    return
+  }
+  const nowMs = await $.clock.now()
+  const seen = self.ownUnreadable
+  const held = text ?? ''
+  if (!seen || seen.id !== id || seen.text !== held) {
+    self.ownUnreadable = { id, text: held, sinceMs: nowMs }
+    throw new OwnFileUnreadable(path)
+  }
+  if (nowMs - seen.sinceMs < OWN_UNREADABLE_MS) throw new OwnFileUnreadable(path)
+}
+
 // This session's file as it is on disk now, with the panes' dismissals folded in; a fresh one when
-// there is none (first write, or after /clear).
+// there is none (first write, or after /clear). Throws `OwnFileUnreadable` when the file is there
+// but unreadable (`refuseUnreadable`): the caller's change is not made, and nothing is written.
 export async function ownFile($: EngineInterface, dir: string): Promise<SessionFile> {
   const id = await $.session.id()
-  const text = await $.fs.read(`${dir}/${id}.json`).catch(() => undefined)
+  const path = `${dir}/${id}.json`
+  const text = await $.fs.read(path).catch(() => undefined)
   const existing = text === undefined ? undefined : parseSessionFile(text)
+  if (!existing) await refuseUnreadable($, path, id, text)
   if (existing) {
+    self.ownUnreadable = undefined
     const sidecar = await readSidecar($, dir, id)
     const merged = withTitle(mergeSidecar(existing, sidecar.entries))
     const pipelines = overlayPipelines(merged.pipelines ?? [], sidecar.pipelines)

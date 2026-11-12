@@ -48,6 +48,7 @@ import {
   takeDeferredRule,
   tick,
   toggleStatus,
+  unreadable,
   watchPushes,
   withPendingNotes,
   withPushNote,
@@ -94,7 +95,7 @@ export const register: Register = (on, options) => {
         const own = await ownFile($, dir)
         self.sessionToggles = own.toggles
         if (!isBlank(own)) await save($, dir, own)
-      })
+      }).catch(unreadable)
     await scan($, options)
     $.clock.every(REFRESH_MS, () => detached(tick($, options)))
     $.clock.every(self.settings.pipelineRefreshMs, () => detached(pollAll($, options)))

@@ -38,6 +38,8 @@ type Disk = {
   tick: number
   /** When set, listing the folder fails (an unreadable or vanished store). */
   listFails?: boolean
+  /** A path whose reads fail while it is still there (an I/O error, a lock). */
+  readFails?: string
   /** Runs once right after the next read of this path: another process writing in between. */
   afterRead?: { path: string; run: () => void }
 }
@@ -57,6 +59,12 @@ function makeDisk(): Disk {
 function put(disk: Disk, path: string, value: unknown) {
   disk.tick += 1
   disk.files.set(path, { text: JSON.stringify(value), mtimeMs: disk.tick })
+}
+
+// A file's raw text, as another writer left it (half a file, damaged JSON).
+function putText(disk: Disk, path: string, text: string) {
+  disk.tick += 1
+  disk.files.set(path, { text, mtimeMs: disk.tick })
 }
 
 function read(disk: Disk, path: string): SessionFile {
@@ -154,6 +162,7 @@ function engine(
       : { deny: `ENOENT: ${e.path}` }
   })
   on('fs.read', (_, e) => {
+    if (disk.readFails === diskKey(e.path)) return { deny: `EIO: ${e.path}` }
     const f = disk.files.get(diskKey(e.path))
     if (!f && diskKey(e.path).endsWith('/.claude-plugin/plugin.json'))
       return {
@@ -1480,6 +1489,56 @@ test(
     expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.label)).toEqual(['Fresh lane'])
   },
 )
+
+test("this session's own file caught unreadable is never taken for a new session: nothing is written over it", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'Working', tasks: [{ title: 'Keep me', status: 'doing' }] })
+  const good = disk.files.get(`${DIR}/s-me.json`)?.text as string
+  // Caught mid-write (another pane ending a session it took for dead, a slow disk): half a file.
+  const half = good.slice(0, good.length / 2)
+  putText(disk, `${DIR}/s-me.json`, half)
+  const answer = JSON.stringify(await update($, { now: 'Next' }))
+  expect(answer).toContain('could not be read')
+  expect(answer).toContain('nothing was written')
+  expect(disk.files.get(`${DIR}/s-me.json`)?.text).toBe(half)
+  // The scans in between write nothing over it either, and the pane keeps the last good copy.
+  await world.clock.advance(4100)
+  expect(disk.files.get(`${DIR}/s-me.json`)?.text).toBe(half)
+  // The write completes: the same update goes through, on top of everything that was there.
+  putText(disk, `${DIR}/s-me.json`, good)
+  await update($, { now: 'Next' })
+  expect(read(disk, `${DIR}/s-me.json`)).toMatchObject({ now: 'Next', tasks: [{ title: 'Keep me' }] })
+})
+
+test('an own file that cannot be read at all (the read fails, the file is there) is not written over either', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, { now: 'Working', tasks: [{ title: 'Keep me', status: 'doing' }] })
+  const good = disk.files.get(`${DIR}/s-me.json`)?.text as string
+  disk.readFails = `${DIR}/s-me.json`
+  expect(JSON.stringify(await update($, { now: 'Next' }))).toContain('could not be read')
+  expect(disk.files.get(`${DIR}/s-me.json`)?.text).toBe(good)
+  disk.readFails = undefined
+  await update($, { now: 'Next' })
+  expect(read(disk, `${DIR}/s-me.json`)).toMatchObject({ now: 'Next', tasks: [{ title: 'Keep me' }] })
+})
+
+test('an own file that stays unreadable is damaged, not in flight: after 10 s the session starts it over', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  put(disk, `${DIR}/s-me.json`, { version: 2, session: 'not a session' })
+  // A session starts and ends beside a damaged file without failing.
+  await start($)
+  expect(JSON.stringify(await update($, { now: 'First' }))).toContain('could not be read')
+  await world.clock.advance(11_000)
+  await update($, { now: 'Second' })
+  expect(read(disk, `${DIR}/s-me.json`)).toMatchObject({ now: 'Second', session: { id: 's-me' } })
+  await $.session.end({ reason: 'exit' } as never)
+  expect(read(disk, `${DIR}/s-me.json`).session.endedAt).not.toBeNull()
+})
 
 test("✕ on another session's task never writes that session's file", async ($, on) => {
   const disk = makeDisk()
