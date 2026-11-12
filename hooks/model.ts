@@ -312,12 +312,33 @@ export function cancelTasks(
   }
 }
 
-/** The owner folds its sidecar into its own file: the named completions become ordinary dismissals. */
+/** The sidecar entry for a finished agent's ✕: it names that ending (`endedAt`), as a task's names its
+ *  completion — an agent that is resumed and ends again shows again. */
+export function agentDismissal(agent: Pick<AgentEntry, 'id' | 'endedAt'>): Dismissal {
+  return { id: `agent:${agent.id}`, doneAt: agent.endedAt }
+}
+
+function isAgentDismissedBy(agent: AgentEntry, entries: readonly Dismissal[]): boolean {
+  if (agent.endedAt === null) return false
+  const mine = agentDismissal(agent)
+  return entries.some(d => d.id === mine.id && d.doneAt === mine.doneAt)
+}
+
+/** The agents a pane shows: the file's, minus finished ones a sidecar entry names for that ending. */
+export function visibleAgents(file: SessionFile, entries: readonly Dismissal[]): AgentEntry[] {
+  const agents = file.agents ?? []
+  return entries.length === 0 ? agents : agents.filter(a => !isAgentDismissedBy(a, entries))
+}
+
+/** The owner folds its sidecar into its own file: the named completions become ordinary dismissals,
+ *  and the finished agents it names leave the file. */
 export function mergeSidecar(file: SessionFile, entries: readonly Dismissal[]): SessionFile {
-  return dismissTasks(
+  const merged = dismissTasks(
     file,
     file.tasks.filter(task => isDismissedBy(task, entries)).map(task => task.id),
   )
+  const agents = visibleAgents(merged, entries)
+  return agents.length === (merged.agents ?? []).length ? merged : { ...merged, agents }
 }
 
 /** The entries for these tasks' current completions, added to a sidecar's (each id + doneAt once). */
@@ -437,17 +458,21 @@ export function isBlank(file: SessionFile): boolean {
   )
 }
 
-/** Auto-clear: done tasks finished more than `hours` ago go (0 = never). Same object when nothing goes. */
+/** Auto-clear: done tasks finished more than `hours` ago go (0 = never), and with them the subagents
+ *  that ended that long ago. Same object when nothing goes. */
 export function pruneDone(file: SessionFile, hours: number, nowMs: number): SessionFile {
   if (hours <= 0) return file
   const cutoff = nowMs - hours * 3_600_000
   const old = file.tasks.filter(t => isClosed(t.status) && t.doneAt !== null && Date.parse(t.doneAt) < cutoff)
-  return old.length === 0
-    ? file
-    : dismissTasks(
-        file,
-        old.map(t => t.id),
-      )
+  const pruned =
+    old.length === 0
+      ? file
+      : dismissTasks(
+          file,
+          old.map(t => t.id),
+        )
+  const agents = (pruned.agents ?? []).filter(a => !(a.endedAt !== null && Date.parse(a.endedAt) < cutoff))
+  return agents.length === (pruned.agents ?? []).length ? pruned : { ...pruned, agents }
 }
 
 const STATUS_ORDER: Record<Status, number> = {

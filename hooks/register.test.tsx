@@ -912,7 +912,7 @@ test("a subagent's first tool call carries the reporting rule once; one that rep
   expect(await call(undefined, 'y4')).not.toContain('you are a subagent')
 })
 
-test('a subagent that stops is marked finished and folded under Agents — and stays, never cleaned up', async ($, on) => {
+test('a subagent that stops is marked finished and folded under Agents — and stays while auto-clear is off', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
   world.agents.push({
@@ -1388,6 +1388,98 @@ test('finished agents under Done list their newest 5; the older rest folds behin
   expect((await texts(ui)).some(x => x.startsWith('✓ Lane 1 '))).toBe(true)
   await ui.unmount()
 })
+
+// A session file holding finished subagents (and nothing else unless given).
+function withFinishedAgents(id: string, labels: readonly string[], endedMs = T0): SessionFile {
+  const at = new Date(endedMs).toISOString()
+  return {
+    ...other(id, 'app', endedMs, { now: 'coordinating' }),
+    agents: labels.map((label, i) => ({
+      id: `sub-${i + 1}`,
+      label,
+      now: null,
+      tasks: [],
+      seq: 0,
+      startedAt: at,
+      updatedAt: at,
+      endedAt: at,
+    })),
+  }
+}
+
+test('a finished agent has a ✕: every pane hides it at once and its session drops the row', async ($, on) => {
+  const disk = makeDisk()
+  put(disk, `${DIR}/s-me.json`, withFinishedAgents('s-me', ['Lane A', 'Lane B']))
+  const world = engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  expect((await ui.find({ type: 'Button', key: 'done:s-me' }))?.text).toBe('▸ Done (2)')
+  await ui.press({ key: 'done:s-me' })
+  await ui.press({ key: 'doneagents:s-me' })
+  await ui.press({ key: 'dismiss:s-me:agent:sub-1' })
+  // Hidden at once (the sidecar names that completion), before the session folds it in.
+  expect((await texts(ui)).some(x => x.startsWith('✓ Lane A '))).toBe(false)
+  expect((await texts(ui)).some(x => x.startsWith('✓ Lane B '))).toBe(true)
+  expect((await ui.find({ type: 'Button', key: 'done:s-me' }))?.text).toBe('▾ Done (1)')
+  expect(sidecar(disk, 's-me')).toEqual([{ id: 'agent:sub-1', doneAt: new Date(T0).toISOString() }])
+  // Its session's next scan drops the row from its own file.
+  await world.clock.advance(2100)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.label)).toEqual(['Lane B'])
+  await ui.unmount()
+})
+
+test('Clear all clears the finished agents too — also when no task is done', async ($, on) => {
+  const disk = makeDisk()
+  put(disk, `${DIR}/s-me.json`, withFinishedAgents('s-me', ['Lane A', 'Lane B']))
+  const world = engine(on, disk)
+  await start($)
+  await update($, { tasks: [{ title: 'Open one', status: 'doing' }] })
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-me' })
+  await ui.press({ key: 'clear:s-me' })
+  expect(await ui.find({ type: 'Button', key: 'done:s-me' })).toBeUndefined()
+  await world.clock.advance(2100)
+  const file = read(disk, `${DIR}/s-me.json`)
+  expect(file.agents ?? []).toEqual([])
+  expect(file.tasks.map(x => x.title)).toEqual(['Open one'])
+  await ui.unmount()
+})
+
+test("✕ on an ended session's finished agent hides it through the sidecar; its file is not written", async ($, on) => {
+  const disk = makeDisk()
+  const gone = withFinishedAgents('s-gone', ['Old lane'], T0 - HOUR)
+  gone.session.endedAt = new Date(T0 - HOUR / 2).toISOString()
+  put(disk, `${DIR}/s-gone.json`, gone)
+  const before = disk.files.get(`${DIR}/s-gone.json`)?.text
+  engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  await ui.press({ key: 'group:s-gone' })
+  await ui.press({ key: 'done:s-gone' })
+  await ui.press({ key: 'doneagents:s-gone' })
+  await ui.press({ key: 'dismiss:s-gone:agent:sub-1' })
+  expect((await texts(ui)).some(x => x.startsWith('✓ Old lane '))).toBe(false)
+  expect(disk.files.get(`${DIR}/s-gone.json`)?.text).toBe(before)
+  await ui.unmount()
+})
+
+test(
+  'retention: finished agents auto-clear with the done tasks, after the set hours',
+  { options: { autoClearDoneHours: '1' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const file = withFinishedAgents('s-me', ['Old lane', 'Fresh lane'])
+    const old = new Date(T0 - HOUR - 2000).toISOString()
+    put(disk, `${DIR}/s-me.json`, {
+      ...file,
+      agents: file.agents?.map(a => (a.label === 'Old lane' ? { ...a, endedAt: old, updatedAt: old } : a)),
+    })
+    const world = engine(on, disk)
+    await start($)
+    await world.clock.advance(2100)
+    expect(read(disk, `${DIR}/s-me.json`).agents?.map(a => a.label)).toEqual(['Fresh lane'])
+  },
+)
 
 test("✕ on another session's task never writes that session's file", async ($, on) => {
   const disk = makeDisk()

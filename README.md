@@ -100,8 +100,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   finished (the median time per finished step × the steps left), the agent's own guess before that,
   marked `(est.)` — and unfolds to what it is on and every step
   with its status and note (a step's own estimate, e.g. `~10 min`). A finished agent moves under the
-  session's **Done**, in its own folded **Agents** heading, and stays — nothing is cleaned up
-  automatically. An open Done lists the newest 10 finished tasks (and 5 finished agents); older
+  session's **Done**, in its own folded **Agents** heading, and stays until you clear it (its ✕,
+  **Clear all**) or `autoClearDoneHours` does. An open Done lists the newest 10 finished tasks (and 5 finished agents); older
   ones fold behind **N older**, so a long day's history never pushes the live work out of view. A subagent that cannot report (one without the tool, such as a read-only
   reviewer) still shows there by its task description while it runs. The coordinator sees its
   running subagents in every `progress_update` answer.
@@ -128,7 +128,8 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   highlighted (a task whose hit is in its detail or steps unfolds by itself); sessions without a
   match step aside.
 - Every `▾`/`▸` line folds. **✕** removes a done task (or an ended session, or a subagent that is no
-  longer working); **Clear all** (shown while its Done list is open) empties the list. Ask the
+  longer working — a finished one under Done → Agents included); **Clear all** (shown while its
+  Done list is open) empties the list, finished agents and all. Ask the
   agent to clear the pane and it does the same for its finished tasks and subagent rows.
 - **Version and updates:** the pane's top-right corner shows the version it runs; when a newer
   release exists it adds `vX.Y.Z available ↗`, linking that release's notes. The newest release is

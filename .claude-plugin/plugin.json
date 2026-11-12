@@ -20,7 +20,7 @@
     "autoClearDoneHours": {
       "type": "string",
       "title": "Auto-clear done tasks after (hours)",
-      "description": "Done and skipped tasks older than this are cleared. 0 = never.",
+      "description": "Done and skipped tasks older than this are cleared, and so are subagents that finished that long ago. 0 = never.",
       "options": ["0", "1", "3", "6", "12", "24", "48", "72", "168"],
       "default": "0",
       "required": false

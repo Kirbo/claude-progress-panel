@@ -6,6 +6,7 @@ import { cancellable, cancelPipeline } from './forge'
 import { t } from './i18n'
 import type { SessionFile, SortBy, Status, Task } from './model'
 import {
+  agentDismissal,
   agentHasInside,
   attentionFor,
   capNewest,
@@ -26,6 +27,7 @@ import {
   stepCounts,
   taskPipeline,
   timeLeft,
+  visibleAgents,
   visibleTasks,
 } from './model'
 import { baseName } from './paths'
@@ -1300,19 +1302,50 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                 label: a.label,
                 when: formatTime(a.endedAt ?? a.updatedAt, nowMs, self.settings.clock),
               })
+              // ✕ clears it from every pane, as on a done task: it names this ending, so an agent
+              // that is resumed and ends again shows again.
+              const clear = (
+                <Button
+                  key={`dismiss:${id}:agent:${a.id}`}
+                  label={t('pane.dismiss')}
+                  plain
+                  dimColor
+                  onPress={() => void dismiss($, options, id, [agentDismissal(a)])}
+                />
+              )
               // A finished agent with steps folds open to them — each one's reason beneath it.
-              if (a.tasks.length === 0) return <Text dimColor>{label}</Text>
+              if (a.tasks.length === 0)
+                return (
+                  <Box
+                    key={`doneagentbox:${id}:${a.id}`}
+                    flexDirection="row"
+                    justifyContent="space-between"
+                    gap={2}
+                  >
+                    {leftSide(
+                      <Text dimColor wrap="truncate-end">
+                        {label}
+                      </Text>,
+                    )}
+                    {rightSide(clear)}
+                  </Box>
+                )
               const agentKey = `doneagent:${id}:${a.id}`
               const agentOpen = folded[agentKey] ?? false
               return (
                 <Box key={`doneagentbox:${id}:${a.id}`} flexDirection="column">
-                  <Button
-                    key={agentKey}
-                    label={t('pane.agentFinishedFold', { fold: agentOpen ? '▾' : '▸', label })}
-                    plain
-                    dimColor
-                    onPress={() => void toggle($, agentKey, agentOpen)}
-                  />
+                  <Box flexDirection="row" justifyContent="space-between" gap={2}>
+                    {leftSide(
+                      <Button
+                        key={agentKey}
+                        label={t('pane.agentFinishedFold', { fold: agentOpen ? '▾' : '▸', label })}
+                        plain
+                        dimColor
+                        onPress={() => void toggle($, agentKey, agentOpen)}
+                      />,
+                    )}
+                    {rightSide(clear)}
+                  </Box>
                   {agentOpen ? (
                     <Box flexDirection="column" paddingLeft={INDENT}>
                       {agentStepRows(id, a, false)}
@@ -1336,8 +1369,13 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     )
   }
 
-  const group = (file: SessionFile) => {
-    const id = file.session.id
+  const group = (stored: SessionFile) => {
+    const id = stored.session.id
+    // A finished agent a pane cleared (✕ / Clear all) is hidden at once, as a done task is, before
+    // its session drops the row from its own file.
+    const shownAgents = visibleAgents(stored, all[id]?.sidecar?.entries ?? [])
+    const file =
+      shownAgents.length === (stored.agents ?? []).length ? stored : { ...stored, agents: shownAgents }
     const ended = file.session.endedAt
     // The session's own switches (its file's, over this pane's defaults): paused = reporting off;
     // tasks off hides its task list.
@@ -1469,14 +1507,17 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                   dimColor
                   onPress={() => void toggle($, doneKey, isDoneOpen)}
                 />
-                {/* Only while Done is open: nothing is cleared that the person cannot see. */}
-                {isDoneOpen && done.length > 0 ? (
+                {/* Only while Done is open: nothing is cleared that the person cannot see. The
+                    finished agents are part of Done (its count includes them) and go with it. */}
+                {isDoneOpen ? (
                   <Button
                     key={`clear:${id}`}
                     label={t('pane.clearAll')}
                     plain
                     dimColor
-                    onPress={() => void dismiss($, options, id, done)}
+                    onPress={() =>
+                      void dismiss($, options, id, [...done, ...finishedAgents.map(agentDismissal)])
+                    }
                   />
                 ) : null}
               </Box>

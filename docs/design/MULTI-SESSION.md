@@ -232,8 +232,8 @@ idle status from a pane that stopped refreshing.)
 | `keepEndedSessionsDays` | 0 (never), 1, 3, 7, 14, 30              | 7        |
 | `sortTasksBy`           | status, title, created, done            | status   |
 
-- Done tasks older than `autoClearDoneHours` are removed by the owning session (or by any
-  session once the owner has ended).
+- Done tasks older than `autoClearDoneHours` — and subagents that ended that long ago — are
+  removed by the owning session (or by any session once the owner has ended).
 - A session that ended more than `keepEndedSessionsDays` ago is deleted (`rm -f` / `del`, the
   plugin API has no file delete). An ended session can also be dismissed with its ✕.
 - The pane's `[Sort: …]` Button cycles the order and remembers it per user (`$.store`); the
@@ -841,8 +841,18 @@ expected to last" and "a separate section for the finished agents … under the 
 is a fold (default open) showing its `now` and each of its steps with status and note — the reporting
 rule asks subagents to put each open step's own estimate in its `note` — beside `n/m`, its run time
 (`startedAt` → now) and `~N min left`. The **Agents** section lists only running agents; a finished one
-moves under the session's **Done** into a folded **Agents** heading (Done's count includes them; *Clear
-all* still clears tasks only — agents are never cleaned up automatically).
+moves under the session's **Done** into a folded **Agents** heading (Done's count includes them).
+
+**Finished agents are cleared like done tasks.** They had no ✕, *Clear all* passed tasks only (and
+was not even shown while only agents were done), and auto-clear ignored them: a session's file grew
+all day — rewritten whole every few seconds per active agent and re-parsed by every pane. Now each
+finished agent's row has a ✕, *Clear all* (shown whenever Done is open) clears the done tasks and
+the finished agents, and `autoClearDoneHours` covers agents by their `endedAt` (`pruneDone`). A ✕
+is a sidecar entry `{ "id": "agent:<agent id>", "doneAt": <its endedAt> }` (`agentDismissal`): like
+a task's it names that ending, so every pane hides the row at once (`visibleAgents`), the owner
+drops it from its file on its next scan (`mergeSidecar`), an ended session's is simply hidden, and
+an agent that is resumed and ends again shows again. (A running agent's ✕ stays the removal
+`agentall:<id>` in `cancelled`: it stops work, it does not clear a row.)
 
 ## Long lines (0.23.0)
 

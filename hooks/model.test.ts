@@ -3,6 +3,7 @@ import type { SessionFile, Task } from './model'
 import {
   AGENT_IDLE_MS,
   addDismissals,
+  agentDismissal,
   agentHasInside,
   agentRepo,
   applyAgentUpdate,
@@ -52,6 +53,7 @@ import {
   timeLeft,
   toolCallSummary,
   untouchedDoing,
+  visibleAgents,
   visibleTasks,
   waitingOnFrom,
   withAgentActivity,
@@ -1374,4 +1376,34 @@ test('a stand-in task goes once its agent is not at work; a namesake that still 
   expect(untouchedDoing(withStandIn, late, late, 60_000, () => false).map(t => t.id)).toEqual(['t1'])
   expect(hasLinkableTask(withStandIn)).toBe(true)
   expect(hasLinkableTask({ ...withStandIn, tasks: withStandIn.tasks.slice(1) })).toBe(false)
+})
+
+test("a finished agent's ✕ names that ending: hidden and folded in, shown again once it ran and ended again", () => {
+  const agent = (endedAt: string | null) => ({
+    id: 'a1',
+    label: 'Lane A',
+    now: null,
+    tasks: [],
+    seq: 0,
+    startedAt: iso(T0),
+    updatedAt: iso(T0),
+    endedAt,
+  })
+  const file: SessionFile = { ...fresh(), now: 'x', agents: [agent(iso(T0))] }
+  const entry = agentDismissal(agent(iso(T0)))
+  expect(entry).toEqual({ id: 'agent:a1', doneAt: iso(T0) })
+  expect(visibleAgents(file, [entry])).toEqual([])
+  expect(mergeSidecar(file, [entry]).agents).toEqual([])
+  expect(mergeSidecar(file, [])).toBe(file)
+  // Resumed, it runs — and its next ending is another one: the old ✕ no longer hides it.
+  const running = { ...file, agents: [agent(null)] }
+  expect(visibleAgents(running, [entry])).toHaveLength(1)
+  expect(mergeSidecar(running, [entry])).toBe(running)
+  const endedAgain = { ...file, agents: [agent(iso(T0 + HOUR))] }
+  expect(visibleAgents(endedAgain, [entry])).toHaveLength(1)
+  // Auto-clear: a finished agent older than the limit goes with the done tasks; a running one never.
+  const aged = { ...file, agents: [agent(iso(T0 - 2 * HOUR)), { ...agent(null), id: 'a2' }] }
+  expect(pruneDone(aged, 1, T0).agents?.map(a => a.id)).toEqual(['a2'])
+  expect(pruneDone(aged, 0, T0)).toBe(aged)
+  expect(pruneDone(aged, 3, T0)).toBe(aged)
 })

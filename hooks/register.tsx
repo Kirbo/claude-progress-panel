@@ -154,8 +154,8 @@ export const register: Register = (on, options) => {
   }).catch(() => undefined)
   // After every main-loop tool call: a task the person removed reaches the agent at its next step
   // (a subagent's calls never take the note — it is the coordinator's).
-  // A subagent stopped: its entry is marked finished — it folds under Agents and stays (nothing is
-  // cleaned up automatically).
+  // A subagent stopped: its entry is marked finished — it folds under Done → Agents and stays until
+  // the person clears it (✕ / Clear all) or the auto-clear setting does.
   on('classic.SubagentStop', async ($, e, next) => {
     const id = fields(e).agent_id
     const dir = await progressDir($, options)

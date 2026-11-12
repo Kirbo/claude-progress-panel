@@ -465,7 +465,9 @@ export async function scan($: EngineInterface, options: PluginOptions): Promise<
         const pruned = dropEndedAutoTasks(pruneDone(own, doneHours, nowMs))
         // The fold of a removal changed it too: save, so the pane shows it skipped.
         const folded = (own.cancelled?.length ?? 0) !== (file.cancelled?.length ?? 0)
-        if (pruned !== own || folded) await save($, dir, pruned)
+        // …and so did the fold of a finished agent's ✕: the row leaves the file, not only the panes.
+        const cleared = (own.agents?.length ?? 0) !== (file.agents?.length ?? 0)
+        if (pruned !== own || folded || cleared) await save($, dir, pruned)
       })
       continue
     }
