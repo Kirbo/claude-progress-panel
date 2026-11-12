@@ -780,7 +780,8 @@ old constants; `clock` (`formatClock` / `formatTime`: 24h default, 12h, or the l
 `reportingEffort` picks the rule's bullets (`ruleKeys(eff, effort)`: `rule.milestones`, or
 `rule.nowOnly` for minimal) and the subagent rule (`prompt.subagent*`); `pipelineRefreshSec` the
 poll timer; `updateCheck` the release lookup (the env var still wins); `palette` passes every
-drawn colour through `tint` (Okabe–Ito blue / orange for colour-blind safe, or none).
+drawn colour through `tint` (Okabe–Ito blue for success and vermillion `#D55E00` for failure when
+colour-blind safe — its orange sat too close to the yellow of what is running — or none).
 
 ## Claude Code's waits as Needs you (0.23.0)
 

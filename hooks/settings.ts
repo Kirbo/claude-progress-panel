@@ -71,10 +71,12 @@ export function readSettings(options: Record<string, unknown>): Settings {
   }
 }
 
-// Okabe–Ito: blue for success and orange for failure tell apart under every common colour blindness.
+// Okabe–Ito: blue for success and vermillion for failure tell apart under every common colour
+// blindness — and from each other's neighbours: its orange (#E69F00) sat too close to the yellow of
+// what is running.
 const COLORBLIND: Record<string, string> = {
   green: 'blue',
-  red: '#E69F00',
+  red: '#D55E00',
   yellow: 'yellow',
   magenta: 'magenta',
 }

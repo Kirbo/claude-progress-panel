@@ -35,7 +35,8 @@ test('every setting has its built-in default, and an unknown value falls back to
 test('the palette: unchanged, colour-blind safe, or no colour at all', () => {
   expect(tint('default', 'green')).toBe('green')
   expect(tint('colorblind', 'green')).toBe('blue')
-  expect(tint('colorblind', 'red')).toBe('#E69F00')
+  // Vermillion, not Okabe–Ito's orange: that one sat too close to the yellow of what is running.
+  expect(tint('colorblind', 'red')).toBe('#D55E00')
   expect(tint('colorblind', 'cyan')).toBe('cyan')
   expect(tint('none', 'red')).toBeUndefined()
   expect(tint('default', undefined)).toBeUndefined()
