@@ -54,7 +54,7 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   draggable. Its starting size comes from the settings below.
 - **Every session reports on its own.** The plugin adds a short rule to each session's system
   prompt (a session already running when you install or reload the plugin gets it with its next
-  prompt, plus a one-line reminder until it first reports): on any task with more than one step the agent's first call sets `now` and the task
+  prompt, plus one one-line reminder if it has still reported nothing by the prompt after): on any task with more than one step the agent's first call sets `now` and the task
   list, **in the order it will do them**; it moves each task as it goes, gives a task its
   subtasks (`steps`) and a longer `detail` when it has parts, tags tasks with their `repo` when it
   works in several, puts every decision only you can make in **Needs you**, and watches every push

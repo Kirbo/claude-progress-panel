@@ -656,9 +656,8 @@ export function detached(work: Promise<unknown>): void {
 }
 
 // With a prompt: the reporting rule itself, once, when no composed system prompt carried it (see
-// `ruleComposed`); then, while this session has reported nothing yet, a one-line reminder — so a
-// session the plugin joined mid-way starts reporting without being told to. Short and steady, and
-// gone with the first report.
+// `ruleComposed`); then, if this session has still reported nothing by its next prompt, ONE one-line
+// reminder — so a session the plugin joined mid-way starts reporting without being told to.
 export async function withReportingNudge<R extends { additionalContext?: string[] }>(
   $: EngineInterface,
   options: PluginOptions,
@@ -675,7 +674,12 @@ export async function withReportingNudge<R extends { additionalContext?: string[
       notes.push(ruleText(options))
     }
   }
-  if (notes.length === 0 && !(await hasReported($, options))) notes.push(t('prompt.nudge'))
+  // Once: a session that only answers questions has nothing to report, and was reminded with every
+  // prompt for as long as it ran.
+  if (notes.length === 0 && !self.nudged && !(await hasReported($, options))) {
+    self.nudged = true
+    notes.push(t('prompt.nudge'))
+  }
   return notes.length
     ? { ...result, additionalContext: [...(result.additionalContext ?? []), ...notes] }
     : result

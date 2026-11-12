@@ -80,7 +80,7 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
   (`todo`), listed in the order you will do them — on your own, never waiting to be asked. The
   pane's default sort is that plan order: when it changes, send `order`. The plugin adds this rule to every session's
   system prompt (section `progress-panel:reporting`) — or, in a session it joined mid-way, to the next
-  prompt (and again after a compaction), with a short reminder until the first report; a subagent
+  prompt (and again after a compaction), with one short reminder if nothing was reported by the prompt after; a subagent
   gets its part inside the Agent call's own prompt — so it holds without loading this skill. A
   subagent whose job is about three tool calls may skip reporting; a longer one reports from its
   first call.

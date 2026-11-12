@@ -180,8 +180,9 @@ it never breaks the prompt cache.
 prompt is rebuilt, so the section above never reached it — and the agent did not report until the
 user asked why the pane was empty (2026-11-09). `UserPromptSubmit` now closes the gap through its
 `additionalContext`: the same `prompt.reporting` text once, when this module composed no prompt,
-then — while the session's own file is still blank — a one-line `prompt.nudge`. The first report
-ends both.
+then — if the session's own file is still blank at a later prompt — a one-line `prompt.nudge`,
+once (it rode every prompt until the first report, so a session of plain questions and answers,
+which has nothing to report, was reminded for as long as it ran).
 
 **…but never both, in a session seen from its start (0.23.3).** A new session's first prompt
 arrived with the whole rule although its system prompt carried it too (2026-11-10): the tool is

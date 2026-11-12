@@ -3511,7 +3511,7 @@ test('a GitHub Actions run shows like a pipeline: found by commit, flat jobs, �
   await ui.unmount()
 })
 
-test('a session the plugin joined mid-way gets the reporting rule with its next prompt, then a reminder until it reports', async ($, on) => {
+test('a session the plugin joined mid-way gets the reporting rule with its next prompt, then one reminder — never one per prompt', async ($, on) => {
   engine(on, makeDisk())
   await start($)
   const context = async () =>
@@ -3522,12 +3522,25 @@ test('a session the plugin joined mid-way gets the reporting rule with its next 
   const first = (await context()).join('\n')
   expect(first).toContain('# Progress pane')
   expect(first).toMatch(/first tool call/i)
-  // Then only a one-line reminder while the session has reported nothing.
+  // Then one one-line reminder, while the session has reported nothing…
   const second = await context()
   expect(second).toHaveLength(1)
   expect(second[0]).not.toContain('# Progress pane')
   expect(second[0]).toContain(TOOL)
-  // The first report ends it.
+  // …and no more: a session of plain questions and answers is not reminded with every prompt.
+  expect(await context()).toEqual([])
+  expect(await context()).toEqual([])
+  await update($, { now: 'Fixing it', tasks: [{ title: 'Fix' }] })
+  expect(await context()).toEqual([])
+})
+
+test('a session that reported before its second prompt gets no reminder at all', async ($, on) => {
+  engine(on, makeDisk())
+  await start($)
+  const context = async () =>
+    ((await $.classic.UserPromptSubmit({ prompt: 'go on' } as never)) as { additionalContext?: string[] })
+      .additionalContext ?? []
+  expect((await context()).join('\n')).toContain('# Progress pane')
   await update($, { now: 'Fixing it', tasks: [{ title: 'Fix' }] })
   expect(await context()).toEqual([])
 })

@@ -280,6 +280,8 @@ export const self: {
    *  relies on never reaches that agent — which then never reports. The next prompt carries it. */
   ruleComposed: boolean
   ruleSent: boolean
+  /** The one-line "this session has not reported yet" reminder was sent: it is sent once. */
+  nudged: boolean
   /** A session this copy saw start (SessionStart `startup`): its system prompt is composed again for
    *  the first request, with the tool offered by then (it is still connecting when the session
    *  starts), so the first prompt leaves the rule to that prompt (`ruleDeferred`) — the first tool
@@ -327,6 +329,7 @@ export const self: {
   sessionTitle: undefined,
   ruleComposed: false,
   ruleSent: false,
+  nudged: false,
   freshStart: false,
   ruleDeferred: false,
   settings: readSettings({}),
@@ -357,6 +360,7 @@ export function forgetSessionMemory(): void {
   self.togglesOptions = undefined
   // A rule that only rode a prompt went with the conversation: the next prompt carries it again.
   self.ruleSent = false
+  self.nudged = false
   self.ruleDeferred = false
   self.freshStart = false
   self.ownUnreadable = undefined
