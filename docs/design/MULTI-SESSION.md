@@ -27,7 +27,11 @@ Sessions                 [Filter tasks]  [Sort: plan]
   update notice and **⚙ Settings** in the header's corner; a **Switches** row, drawn only while a
   switch is off in this session; a **Pipelines** section between Now and Sessions; the Filter
   beside Sort; and, per session, Agents and the undo lines — each in its own section below.
-- Every `▾`/`▸` line is a Button that folds its part. Defaults: live sessions open, ended
+- Every `▾`/`▸` line is a Button that folds its part — and a row has one only while it has
+  something to reveal (`taskHasInside`, `agentHasInside`, `pipelineHasInside`, and a session
+  group's undo lines / open tasks / running agents / Done); otherwise it is a plain line with no
+  arrow, no Button, no `aria`-style toggle, and becomes foldable when sub-items arrive. Now lines
+  and asks never have any, so they are plain lines that wrap. Defaults: live sessions open, ended
   sessions folded, every Done section folded. Fold state is per pane (`$.state`).
 - Done rows read `✓ title  HH:MM  [✕]` — the time the task was done, local time, with the date
   (`YYYY-MM-DD HH:MM`) when that was not today, in the `clock` setting's style (`formatTime`); a

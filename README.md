@@ -139,7 +139,10 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   keeps only the tasks whose title, note, detail or steps hold what you type, the matching text
   highlighted (a task whose hit is in its detail or steps unfolds by itself); sessions without a
   match step aside.
-- Every `▾`/`▸` line folds. **✕** removes a done task, a finished subagent (under Done → Agents) or
+- Every `▾`/`▸` line folds — and only a row with something under it has one: a task without a
+  detail or steps, a session without tasks, agents or Done, an agent with nothing yet to show, a
+  pipeline without jobs, a Now line and an ask are plain lines (a long one wraps), becoming foldable
+  the moment sub-items arrive. **✕** removes a done task, a finished subagent (under Done → Agents) or
   an ended session — on a task, step or subagent still at work it asks for it to stop instead (see
   above); **Clear all (N)** (shown while its
   Done list is open) empties the whole list — the rows folded behind "N older" and the finished

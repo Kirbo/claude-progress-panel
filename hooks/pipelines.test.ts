@@ -30,6 +30,7 @@ import {
   parseSampleIds,
   pipelineDismissal,
   pipelineDuration,
+  pipelineHasInside,
   progressBar,
   RETRY_CHECK_MS,
   RETRY_WATCH_MS,
@@ -742,4 +743,35 @@ test('a pipeline hidden while it runs is hidden for that watch: through its fini
   // A finished one's ✕ names that finish, as before; an older sidecar's `null` still hides the key.
   expect(pipelineDismissal(finished)).toEqual({ id: 'pipeline:g/app#42', doneAt: iso(T0 + 1000) })
   expect(visiblePipelines([again], [{ id: 'pipeline:g/app#42', doneAt: null }])).toEqual([])
+})
+
+test('a pipeline row has something to unfold only with jobs or several runs', () => {
+  const bare: Pipeline = {
+    key: 'g/app#42',
+    project: 'g/app',
+    id: 42,
+    label: 'app',
+    state: 'running',
+    jobs: [],
+    addedAt: iso(T0),
+    checkedAt: iso(T0),
+  }
+  expect(pipelineHasInside(bare)).toBe(false)
+  // One run is the row itself, nothing more to list.
+  expect(pipelineHasInside({ ...bare, runs: [{ id: 42, state: 'running', name: 'CI' }] })).toBe(false)
+  expect(
+    pipelineHasInside({
+      ...bare,
+      jobs: [{ name: 'lint', stage: 'build', state: 'running', durationS: null }],
+    }),
+  ).toBe(true)
+  expect(
+    pipelineHasInside({
+      ...bare,
+      runs: [
+        { id: 42, state: 'running', name: 'CI' },
+        { id: 41, state: 'success', name: 'Docs' },
+      ],
+    }),
+  ).toBe(true)
 })

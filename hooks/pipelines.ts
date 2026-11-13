@@ -465,6 +465,12 @@ export function isOrphaned(p: Pipeline, nowMs: number, limitMs: number): boolean
   return nowMs - Date.parse(p.checkedAt ?? p.addedAt) > limitMs
 }
 
+/** Whether a pipeline's row has anything to unfold: jobs (and their counts) or several runs. A
+ *  watch that has found neither yet is one plain line, never a fold. */
+export function pipelineHasInside(p: Pick<Pipeline, 'jobs' | 'runs'>): boolean {
+  return p.jobs.length > 0 || (p.runs?.length ?? 0) > 1
+}
+
 /** The jobs grouped by stage, stages in the order they first appear (pipeline order). */
 export function stageGroups(jobs: readonly PipelineJob[]): { stage: string; jobs: PipelineJob[] }[] {
   const groups: { stage: string; jobs: PipelineJob[] }[] = []

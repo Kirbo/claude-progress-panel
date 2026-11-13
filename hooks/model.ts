@@ -837,6 +837,12 @@ export function agentHasInside(a: AgentEntry): boolean {
   )
 }
 
+/** Whether a task's row has anything to unfold: a detail or steps. A row with neither is one plain
+ *  line, never a fold (a long title wraps instead of folding). */
+export function taskHasInside(task: Pick<Task, 'detail' | 'steps'>): boolean {
+  return !!task.detail || (task.steps?.length ?? 0) > 0
+}
+
 /** A model id as an agent's row shows it: the family and its version, without the vendor prefix, a
  *  provider's wrapping, the release date or a context tag (`claude-sonnet-5-5-20261001[1m]` →
  *  `sonnet 5.5`). An alias or an id of another shape shows as it is. */

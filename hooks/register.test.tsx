@@ -360,6 +360,16 @@ async function texts(ui: {
   return (await ui.findAll({ type: 'Text' })).map(t => t.text ?? '')
 }
 
+// A session's header line: a Button only while its group has something under it (a task, an agent,
+// Done, an undo line); with nothing it is one plain line with no arrow.
+async function groupHeader(ui: Awaited<ReturnType<typeof pane>>, id: string, plain: RegExp) {
+  expect(await ui.find({ type: 'Button', key: `group:${id}` })).toBeUndefined()
+  const line = (await texts(ui)).find(l => plain.test(l))
+  expect(line).toBeDefined()
+  expect(line).not.toMatch(/^[▾▸]/)
+  return line
+}
+
 test("every session's system prompt tells it to keep its entry current — only where the tool is offered", async ($, on) => {
   engine(on, makeDisk())
   await start($)
@@ -1246,7 +1256,8 @@ test('a session is shown by the name Claude Code gives it, and follows a rename'
   await start($)
   await update($, { now: 'testing', needsYou: ['an OK'] })
   let ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ app \(this session\)/)
+  // Nothing under it (only a Now line and an ask): a plain line, no arrow.
+  await groupHeader(ui, 's-me', /^app \(this session\) · /)
   await ui.unmount()
 
   // `/rename` reaches the plugin with the next prompt (UserPromptSubmit carries the title).
@@ -1256,9 +1267,7 @@ test('a session is shown by the name Claude Code gives it, and follows a rename'
     title: 'Switchboard + Panel',
   })
   ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(
-    /^▾ Switchboard \+ Panel \(this session\)/,
-  )
+  await groupHeader(ui, 's-me', /^Switchboard \+ Panel \(this session\) · /)
   const lines = await texts(ui)
   expect(lines).toContain('Switchboard + Panel · testing')
   expect(lines).toContain('• Switchboard + Panel: an OK')
@@ -1327,7 +1336,7 @@ test("a file that names another session's id is not a session: never shown, writ
   expect(read(disk, `${DIR}/s-victim.json`).now).toBe('Working')
   expect(disk.files.has(`${DIR}/s-busy.json`)).toBe(false)
   const ui = await pane($)
-  expect((await ui.find({ type: 'Button', key: 'group:s-victim' }))?.text).toContain('victim')
+  expect(await groupHeader(ui, 's-victim', /^victim · /)).toContain('victim')
   expect(await texts(ui)).not.toContain('Gone')
   await ui.unmount()
 })
@@ -1347,7 +1356,7 @@ test('blank sessions never show: an ended one is deleted by any pane, a live one
   const ui = await pane($)
   expect(await ui.find({ type: 'Button', key: 'group:s-idle' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'group:s-me' })).toBeUndefined()
-  expect(await ui.find({ type: 'Button', key: 'group:s-busy' })).toBeTruthy()
+  await groupHeader(ui, 's-busy', /^busy · /)
   await ui.unmount()
 })
 
@@ -2144,7 +2153,7 @@ test('an unreadable file in the folder is skipped, not fatal', async ($, on) => 
   await start($)
   await update($, { now: 'x' })
   const ui = await pane($)
-  expect(await ui.find({ type: 'Button', key: 'group:s-me' })).toBeTruthy()
+  await groupHeader(ui, 's-me', /^This session · /)
   await ui.unmount()
 })
 
@@ -4740,7 +4749,8 @@ async function runningPipeline(world: ReturnType<typeof engine>, $: $Test, provi
     ref: 'main',
     web_url: 'u',
   })
-  world.gitlab.set('projects/team%2Fapp/pipelines/41/jobs?per_page=100', [])
+  // One job: a pipeline with none to show is a plain line, and these tests press its row.
+  world.gitlab.set('projects/team%2Fapp/pipelines/41/jobs?per_page=100', jobsOf(['lint', 'running']))
   world.gitlab.set('projects/team%2Fapp/pipelines/41/cancel', {})
   await update($, { watch: [{ project: 'team/app', pipeline: 41 }] })
   return 'team/app#41'
@@ -5464,17 +5474,19 @@ test(
   },
 )
 
-test('a long title is cut with an ellipsis and its right column stays put; unfolded, it shows whole', async ($, on) => {
+test('a long title with steps is cut with an ellipsis and its right column stays put; unfolded, it shows whole; one without steps wraps and never folds', async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
   await start($)
   const long =
     'progress-panel: skipped/failed/unfinished shown with their reason; item 4 dead sessions proven live'
+  const second = 'a second task title far too long for forty columns, with its steps behind a fold'
   await update($, {
     tasks: [
       { title: long, status: 'doing', steps: [{ title: 'a', status: 'done' }, { title: 'b' }] },
       { title: 'short', status: 'todo' },
       { title: `${long} (no steps)`, status: 'todo' },
+      { title: second, status: 'todo', steps: [{ title: 'c' }] },
     ],
   })
   for (const width of [40, 60, 80]) {
@@ -5482,8 +5494,11 @@ test('a long title is cut with an ellipsis and its right column stays put; unfol
     const all = await ui.findAll({ type: 'Text' })
     // A folded title truncates instead of wrapping: its Text says so… (t1 is `doing` with steps,
     // so it starts open and its title wraps whole — shown once.)
-    const title = all.find(x => (x.text ?? '').includes('(no steps)'))
+    const title = all.find(x => (x.text ?? '').includes(second))
     expect(title?.props.wrap, `width ${width}`).toBe('truncate-end')
+    // A long title with nothing under it is not folded and not cut: it wraps, whole.
+    const bare = all.find(x => (x.text ?? '').includes('(no steps)'))
+    expect(bare?.props.wrap, `width ${width}`).toBeUndefined()
     const openTitle = all.filter(x => (x.text ?? '').includes(long) && !(x.text ?? '').includes('(no steps)'))
     expect(openTitle, `width ${width}`).toHaveLength(1)
     // …and its row keeps the bar and n/m in a column that does not shrink.
@@ -5495,48 +5510,151 @@ test('a long title is cut with an ellipsis and its right column stays put; unfol
     expect((await texts(ui)).some(l => l.endsWith('1/2'))).toBe(true)
     await ui.unmount()
   }
-  // A long one-line task folds, so its whole title is one press away — and then shown ONCE.
+  // A long task with steps folds, so its whole title is one press away — and then shown ONCE.
   const ui = await pane($, 40)
-  expect(await ui.find({ type: 'Button', key: 'task:s-me:t3' })).toBeDefined()
-  const occurrences = async () => (await texts(ui)).filter(l => l.includes(`${long} (no steps)`)).length
+  expect(await ui.find({ type: 'Button', key: 'task:s-me:t4' })).toBeDefined()
+  const occurrences = async () => (await texts(ui)).filter(l => l.includes(second)).length
   expect(await occurrences()).toBe(1)
-  await ui.press({ key: 'task:s-me:t3' })
+  await ui.press({ key: 'task:s-me:t4' })
   expect(await occurrences()).toBe(1)
-  const open = (await ui.findAll({ type: 'Text' })).find(x => (x.text ?? '').includes(`${long} (no steps)`))
+  const open = (await ui.findAll({ type: 'Text' })).find(x => (x.text ?? '').includes(second))
   expect(open?.props.wrap).toBeUndefined()
-  // A short one stays one plain line.
+  // A long one with no steps and a short one are plain lines: no Button, no arrow.
+  expect(await ui.find({ type: 'Button', key: 'task:s-me:t3' })).toBeUndefined()
   expect(await ui.find({ type: 'Button', key: 'task:s-me:t2' })).toBeUndefined()
+  expect((await texts(ui)).filter(l => l.includes(`${long} (no steps)`))).toEqual([`○ ${long} (no steps)`])
   await ui.unmount()
 })
 
-test('a Now line too long for the pane is cut and folds open to its whole text', async ($, on) => {
+test('a Now line never folds: a long one wraps and shows whole, a short one is the same plain line', async ($, on) => {
   const disk = makeDisk()
   engine(on, disk)
   await start($)
   const now = 'running the full check suite across every platform, then pushing the branch and watching CI'
   await update($, { now })
-  const ui = await pane($, 40)
-  const key = (await ui.findAll({ type: 'Button' })).find(b =>
-    String(b.props.key ?? '').startsWith('full:now:'),
+  for (const width of [40, 200]) {
+    const ui = await pane($, width)
+    // Nothing is under a Now line: no Button of any kind for it, no arrow, never cut.
+    expect(
+      (await ui.findAll({ type: 'Button' })).some(b => String(b.props.key ?? '').startsWith('full:')),
+    ).toBe(false)
+    const shown = (await ui.findAll({ type: 'Text' })).filter(x => (x.text ?? '').includes(now))
+    expect(shown, `width ${width}`).toHaveLength(1)
+    expect(shown[0]?.props.wrap, `width ${width}`).toBeUndefined()
+    expect(shown[0]?.text, `width ${width}`).toBe(now)
+    await ui.unmount()
+  }
+})
+
+// --- A row folds only when it has something under it ---------------------------------------------
+// One rule for every row: no sub-items → a plain line (no Button, no arrow); the first sub-item
+// makes it foldable, and when the last one goes it is plain again. Now lines and asks have nothing
+// under them ever (see their tests above); a running agent's row is pinned by the agents test.
+
+test('a task folds only with a detail or steps: they arriving makes it foldable, their going makes it plain again', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  const key = 'task:s-me:t1'
+  const shape = async () => {
+    const ui = await pane($)
+    const button = (await ui.find({ type: 'Button', key }))?.text
+    const plain = (await texts(ui)).includes('○ Ship it')
+    await ui.unmount()
+    return { button, plain }
+  }
+  const task = (extra: Record<string, unknown>) =>
+    update($, { tasks: [{ id: 't1', title: 'Ship it', ...extra }] })
+  await task({})
+  expect(await shape()).toEqual({ button: undefined, plain: true })
+  await task({ steps: [{ title: 'push' }] })
+  expect(await shape()).toEqual({ button: '▸ Ship it', plain: false })
+  await task({ steps: [] })
+  expect(await shape()).toEqual({ button: undefined, plain: true })
+  await task({ detail: 'Push, then watch CI.' })
+  expect(await shape()).toEqual({ button: '▸ Ship it', plain: false })
+  await task({ detail: '' })
+  expect(await shape()).toEqual({ button: undefined, plain: true })
+})
+
+test("a session's header folds only with a task, an agent or Done under it, and follows its file live", async ($, on) => {
+  const disk = makeDisk()
+  put(disk, `${DIR}/s-other.json`, other('s-other', 'site', T0, { now: 'Idle' }))
+  const world = engine(on, disk)
+  await start($)
+  await update($, { now: 'here' })
+  const shape = async () => {
+    const ui = await pane($)
+    const button = (await ui.find({ type: 'Button', key: 'group:s-other' }))?.text
+    const plain = (await texts(ui)).find(l => /^site · \d\d:\d\d/.test(l))
+    await ui.unmount()
+    return { button, plain }
+  }
+  // Only a Now line (shown in its own section): nothing under the header, so no arrow.
+  const bare = await shape()
+  expect(bare.button).toBeUndefined()
+  expect(bare.plain).toMatch(/^site · \d\d:\d\d · 0 open · 0 done$/)
+  put(
+    disk,
+    `${DIR}/s-other.json`,
+    other('s-other', 'site', T0 + 1000, { now: 'Idle', tasks: [{ title: 'Deploy', status: 'doing' }] }),
   )
-  expect(key).toBeDefined()
-  const line = now
-  const shown = async () => (await ui.findAll({ type: 'Text' })).filter(x => (x.text ?? '').includes(line))
-  // Folded: one line, cut with "…" in a shrinkable row.
-  expect((await shown()).map(x => x.props.wrap)).toEqual(['truncate-end'])
-  await ui.press({ key: String(key?.props.key) })
-  // Unfolded: the whole text exactly once — the header wraps, nothing repeats beneath it.
-  const open = await shown()
-  expect(open).toHaveLength(1)
-  expect(open[0]?.props.wrap).toBeUndefined()
-  expect(open[0]?.text).toBe(`▾ ${line}`)
+  await world.clock.advance(2000)
+  const open = await shape()
+  expect(open.plain).toBeUndefined()
+  expect(open.button).toMatch(/^▾ site · \d\d:\d\d · 1 open · 0 done$/)
+  put(disk, `${DIR}/s-other.json`, other('s-other', 'site', T0 + 3000, { now: 'Idle' }))
+  await world.clock.advance(2000)
+  const gone = await shape()
+  expect(gone.button).toBeUndefined()
+  expect(gone.plain).toMatch(/^site · \d\d:\d\d · 0 open · 0 done$/)
+})
+
+test('a finished agent folds only with steps under it', async ($, on) => {
+  const disk = makeDisk()
+  const file = withFinishedAgents('s-me', ['Bare lane', 'Busy lane'])
+  put(disk, `${DIR}/s-me.json`, {
+    ...file,
+    agents: file.agents?.map(a =>
+      a.label === 'Busy lane' ? { ...a, tasks: [{ id: 't1', title: 'one step', status: 'done' }] } : a,
+    ),
+  })
+  engine(on, disk)
+  await start($)
+  const ui = await pane($)
+  await ui.press({ key: 'done:s-me' })
+  await ui.press({ key: 'doneagents:s-me' })
+  expect(await ui.find({ type: 'Button', key: 'doneagent:s-me:sub-1' })).toBeUndefined()
+  expect((await texts(ui)).some(l => l.startsWith('✓ Bare lane  finished'))).toBe(true)
+  expect((await ui.find({ type: 'Button', key: 'doneagent:s-me:sub-2' }))?.text).toMatch(
+    /^▸ ✓ Busy lane {2}finished/,
+  )
   await ui.unmount()
-  // Wide enough: a plain line, no fold.
-  const wide = await pane($, 200)
-  expect(
-    (await wide.findAll({ type: 'Button' })).some(b => String(b.props.key ?? '').startsWith('full:now:')),
-  ).toBe(false)
-  await wide.unmount()
+})
+
+test('a pipeline folds only once it has jobs to show; they arriving makes it foldable', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.gitlab.set(PIPE, { id: 42, status: 'running', ref: 'main' })
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, [])
+  await start($)
+  await watch($, world, { watch: [{ project: 'g/app', pipeline: 42 }] })
+  let ui = await pane($)
+  // No jobs yet: the row is a plain line — no Button on its header or its status, no arrow.
+  expect(await ui.find({ type: 'Button', key: 'pipe:s-me:g/app#42' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'pipestate:pipe:s-me:g/app#42' })).toBeUndefined()
+  const lines = await texts(ui)
+  expect(lines.some(l => l.includes('app #42 · main'))).toBe(true)
+  expect(lines.some(l => /^[▾▸]/.test(l) && l.includes('app #42'))).toBe(false)
+  // The section itself has the row under it: it still folds.
+  expect((await ui.find({ type: 'Button', key: 'pipelines' }))?.text).toMatch(/^▾ Pipelines/)
+  await ui.unmount()
+
+  world.gitlab.set(`${PIPE}/jobs?per_page=100`, jobsOf(['lint', 'running']))
+  await world.clock.advance(15_000)
+  ui = await pane($)
+  expect(await pipeLine(ui, 'pipe:s-me:g/app#42')).toBe('● ▸ app #42 · main · running  ░░░░░░░░ 0/1')
+  await ui.unmount()
 })
 
 test('the switches sit under the header while one is off, say their state, and reporting off takes a second press', async ($, on) => {
@@ -6225,7 +6343,7 @@ test('the only open session is never named — not in Needs you, Now, its header
   expect(lines.filter(l => l.includes('reply') && l.endsWith(' here'))).toEqual([])
   expect(lines[0]).toMatch(/^updated \d\d:\d\d$/)
   expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ This session · /)
-  expect((await ui.find({ type: 'Button', key: 'group:s-old' }))?.text).toMatch(/^▸ old · ended /)
+  await groupHeader(ui, 's-old', /^old · ended /)
   expect(world.status.at(-1)).toBe('⚠ 2 need you — Push 1.0? — reply yes or no')
   await ui.unmount()
 })
@@ -6344,7 +6462,7 @@ test('an ask outranks sessions that only finished a turn: first in the pane and 
   await ui.unmount()
 })
 
-test('two open sessions in one repo are told apart: the later one is numbered, and their asks fold apart', async ($, on) => {
+test('two open sessions in one repo are told apart: the later one is numbered, and their long asks wrap as plain lines', async ($, on) => {
   const disk = makeDisk()
   const long = `Decide: ${'which of the two release trains this fix should ride '.repeat(3)}`.trim()
   const world = engine(on, disk)
@@ -6360,22 +6478,19 @@ test('two open sessions in one repo are told apart: the later one is numbered, a
   const lines = await texts(ui)
   expect(lines).toContain('app · mine')
   expect(lines).toContain('app #2 · theirs')
-  expect((await ui.find({ type: 'Button', key: 'group:s-twin' }))?.text).toMatch(/^▾ app #2 · /)
-  expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ app \(this session\) · /)
+  // Nothing under any of the three: plain header lines, no arrow.
+  await groupHeader(ui, 's-twin', /^app #2 · /)
+  await groupHeader(ui, 's-me', /^app \(this session\) · /)
   // An ended session of the same repo takes no number: "ended …" already tells it apart.
-  expect((await ui.find({ type: 'Button', key: 'group:s-old' }))?.text).toMatch(/^▸ app · ended /)
+  await groupHeader(ui, 's-old', /^app · ended /)
   expect(world.toasts).toEqual([`app #2 needs you: ${long}`])
-  // The same ask in both: each folds by itself.
-  const folds = (await ui.findAll({ type: 'Button' })).filter(b =>
-    String(b.props.key ?? '').startsWith('full:needs:'),
-  )
-  expect(folds).toHaveLength(2)
-  expect(new Set(folds.map(b => b.props.key)).size).toBe(2)
-  await ui.press({ key: String(folds[0]?.props.key) })
-  const after = (await ui.findAll({ type: 'Button' })).filter(b =>
-    String(b.props.key ?? '').startsWith('full:needs:'),
-  )
-  expect(after.map(b => (b.text ?? '').slice(0, 1)).sort()).toEqual(['▸', '▾'])
+  // The same ask in both: each a plain line (nothing is under an ask), wrapped, never cut or folded.
+  expect(
+    (await ui.findAll({ type: 'Button' })).filter(b => String(b.props.key ?? '').startsWith('full:')),
+  ).toEqual([])
+  const asks = (await ui.findAll({ type: 'Text' })).filter(x => (x.text ?? '').includes(long))
+  expect(asks.map(x => x.text).sort()).toEqual([`• app #2: ${long}`, `• app: ${long}`])
+  expect(asks.map(x => x.props.wrap)).toEqual([undefined, undefined])
   await ui.unmount()
 })
 
@@ -6400,7 +6515,7 @@ test(
     expect(shown).not.toContain('Approve elsewhere')
     expect(shown).not.toContain('Needs you')
     // The only session this pane lists: it needs no name.
-    expect((await ui.find({ type: 'Button', key: 'group:s-me' }))?.text).toMatch(/^▾ This session · /)
+    await groupHeader(ui, 's-me', /^This session · /)
     await ui.unmount()
     await update($, { needsYou: ['Mine to answer'] })
     expect(world.status.at(-1)).toBe('⚠ Mine to answer')

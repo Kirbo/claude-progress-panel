@@ -54,6 +54,7 @@ import {
   splitPressed,
   staleTasks,
   syncAgents,
+  taskHasInside,
   timeLeft,
   toolCallSummary,
   UNDO_MS,
@@ -1843,4 +1844,11 @@ test('a sidecar keeps when each removal was pressed; one written before that exi
     { id: 't1', doneAt: at },
     { id: 't2', doneAt: at, at, all: true },
   ])
+})
+
+test('a task row has something to unfold only with a detail or steps', () => {
+  expect(taskHasInside({})).toBe(false)
+  expect(taskHasInside({ detail: '', steps: [] })).toBe(false)
+  expect(taskHasInside({ detail: 'Push, then watch CI.' })).toBe(true)
+  expect(taskHasInside({ steps: [{ title: 'push', status: 'todo' }] })).toBe(true)
 })

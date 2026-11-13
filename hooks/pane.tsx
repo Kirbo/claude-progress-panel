@@ -1,6 +1,7 @@
 // The Progress pane: how the sessions, their tasks, agents and pipelines are drawn, and Settings.
 
 import type { EngineInterface, MatchedHook, PluginOptions, RenderChildren } from 'claude-code'
+import type { MessageKey } from '../locales/en'
 import type { AgentEntry, Loaded } from '../types'
 import { cancellable, cancelPipeline } from './forge'
 import { t, tn } from './i18n'
@@ -27,6 +28,7 @@ import {
   splitMatches,
   splitPressed,
   stepCounts,
+  taskHasInside,
   taskPipeline,
   timeLeft,
   UNDO_MS,
@@ -42,6 +44,7 @@ import {
   overlayPipelines,
   pipelineDismissal,
   pipelineDuration,
+  pipelineHasInside,
   progressBar,
   shownError,
   stageGroups,
@@ -93,6 +96,19 @@ import { isNewer } from './update'
  *  themes alike), so the ↗ at its right edge is visibly that row's. */
 export const ROW_HOVER = { backgroundColor: 'subtle' } as const
 
+/** A row's label from a catalog line that starts with `{fold}`. Only a row with something to
+ *  unfold carries the arrow (▾ open, ▸ folded); any other row is the same line without it — no
+ *  arrow, no gap where it was. The one place that decides how a foldable label reads. */
+export function foldLabel(
+  key: MessageKey,
+  vars: Record<string, string | number>,
+  foldable: boolean,
+  isOpen: boolean,
+): string {
+  const text = t(key, { ...vars, fold: foldable ? (isOpen ? '▾' : '▸') : '' })
+  return foldable ? text : text.trimStart()
+}
+
 export const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: string }> = {
   success: { sign: '✓', color: 'green' },
   failed: { sign: '✗', color: 'red' },
@@ -107,9 +123,6 @@ export const JOB_MARK: Record<JobState | 'unknown', { sign: string; color?: stri
 // One indent step (columns) per level: section → item → details → jobs. Rows with an action (✕,
 // Clear all) are full-width, the label left and the action on the pane's right edge.
 export const INDENT = 2
-
-// Cells a task row keeps on its right (`██████░░ 12/14  ✕`): what a title is measured against.
-export const TASK_RIGHT_COLS = 18
 
 export const COUNT_ORDER: JobState[] = [
   'running',
@@ -344,33 +357,48 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     </Box>
   )
   // Whether `text` would be cut: wider than the pane's body less `used` cells before it (indents,
-  // marks) and `reserved` after it (the right column). A cut title shows whole when unfolded.
+  // marks) and `reserved` after it (the right column).
   const wouldCut = (text: string, used: number, reserved: number) =>
     displayWidth(text) > e.props.bodyColumns - used - reserved
-  // A line with nothing on its right (a Now line, a Needs-you item). Fits → the text, no fold.
-  // Too long → a fold: folded, ONE line cut with "…" (inside a shrinkable row, so the cut holds
-  // instead of the line wrapping); unfolded, the same header line shows the whole text wrapped —
-  // once, never repeated beneath it.
-  const cutLine = (
-    key: string,
-    text: string,
-    style: { bold?: boolean; color?: string; dimColor?: boolean },
-  ) => {
-    if (!wouldCut(text, INDENT * 2, 0)) return <Text {...style}>{text}</Text>
-    const foldKey = `full:${key}`
-    const isOpen = folded[foldKey] ?? false
-    return (
-      <Box key={`fullbox:${key}`} flexDirection="row">
-        {leftSide(
-          <Button key={foldKey} label={text} plain onPress={() => void toggle($, foldKey, isOpen)}>
-            <Text {...style} {...(isOpen ? {} : { wrap: 'truncate-end' as const })}>
-              {`${isOpen ? '▾' : '▸'} ${text}`}
-            </Text>
-          </Button>,
-        )}
-      </Box>
+  // The one way a row folds: a toggle (the whole `label`, or `children` standing for it) only when
+  // the row has something to unfold (`foldable`); otherwise the same content as a plain line — no
+  // button, no arrow. Used where a row has two shapes (a pipeline, a session group); a task and an
+  // agent row branch on `taskHasInside` / `agentHasInside` to their plain line before any Button,
+  // and a heading that exists only when it has rows under it is a plain `Button`.
+  // `foldKey`: the fold state's key when it is not the row's own `key`.
+  const foldRow = (o: {
+    key: string
+    foldKey?: string
+    foldable: boolean
+    isOpen: boolean
+    label: string
+    dimColor?: boolean
+    children?: RenderChildren[]
+  }) => {
+    if (!o.foldable) {
+      if (!o.children) return <Text {...(o.dimColor ? { dimColor: true } : {})}>{o.label}</Text>
+      return o.children.length === 1 ? o.children[0] : <Text wrap="truncate-end">{o.children}</Text>
+    }
+    const onPress = () => void toggle($, o.foldKey ?? o.key, o.isOpen)
+    return o.children ? (
+      <Button key={o.key} label={o.label} plain {...(o.dimColor ? { dimColor: true } : {})} onPress={onPress}>
+        {o.children}
+      </Button>
+    ) : (
+      <Button
+        key={o.key}
+        label={o.label}
+        plain
+        {...(o.dimColor ? { dimColor: true } : {})}
+        onPress={onPress}
+      />
     )
   }
+  // A line with nothing under it (a Now line, a Needs-you item): never a fold. A long one wraps, so
+  // the whole text is always shown.
+  const plainLine = (text: string, style: { bold?: boolean; color?: string; dimColor?: boolean }) => (
+    <Text {...style}>{text}</Text>
+  )
   if ((await readViewing($)) === 'settings') {
     // Settings: this session's switches, and the defaults for new sessions — the plugin's own
     // userConfig rows as the engine lists them (their labels, values and options), written back
@@ -637,7 +665,9 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     // kept per run state: unfolded while running, a pipeline folds again once it finishes (it
     // would otherwise reopen unfolded when a new pipeline opens the section).
     const foldKey = finished ? `${key}@${p.finishedAt ?? 'finished'}` : key
-    const isOpen = folded[foldKey] ?? false
+    // Foldable only with jobs or several runs to show; before that, one plain line.
+    const foldable = pipelineHasInside(p)
+    const isOpen = foldable && (folded[foldKey] ?? false)
     const counts = jobCounts(p.jobs)
     // A watch the plugin stopped polling (`stopped`: errors, no pipeline, too old) is not running as
     // far as the pane knows: drawn like a row at rest — no live mark, no bold, no bar, no clock
@@ -648,18 +678,18 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     // many it stands for (the id it carries is only the run its link opens).
     const several = p.runs && p.runs.length > 1 ? p.runs : undefined
     const label = several
-      ? t('pipe.headerRuns', {
-          fold: isOpen ? '▾' : '▸',
-          label: p.label,
-          n: several.length,
-          ref: p.ref ? t('pipe.ref', { ref: p.ref }) : '',
-        })
-      : t('pipe.header', {
-          fold: isOpen ? '▾' : '▸',
-          label: p.label,
-          id: p.id ?? '?',
-          ref: p.ref ? t('pipe.ref', { ref: p.ref }) : '',
-        })
+      ? foldLabel(
+          'pipe.headerRuns',
+          { label: p.label, n: several.length, ref: p.ref ? t('pipe.ref', { ref: p.ref }) : '' },
+          foldable,
+          isOpen,
+        )
+      : foldLabel(
+          'pipe.header',
+          { label: p.label, id: p.id ?? '?', ref: p.ref ? t('pipe.ref', { ref: p.ref }) : '' },
+          foldable,
+          isOpen,
+        )
     // The state, bar, counts and times sit on the right, beside ↗ / ✕.
     const status = t('pipe.status', {
       state: parked ? t('pipe.notWatched') : t(`pipe.state.${p.state}`),
@@ -688,32 +718,41 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       <Box flexDirection="column">
         <Box key={`row:${key}`} flexDirection="row" justifyContent="space-between" gap={2} hover={ROW_HOVER}>
           {leftSide(
-            <Button key={key} label={label} plain onPress={() => void toggle($, foldKey, isOpen)}>
-              {atRest ? null : (
-                <Text color={tint(self.settings.palette, PIPE_STATE_COLOR[p.state] ?? 'cyan')}>
-                  {PIPE_LIVE_MARK[p.state] ?? '● '}
-                </Text>
-              )}
-              <Text bold={!atRest} dimColor={atRest} wrap="truncate-end">
-                {label}
-              </Text>
-            </Button>,
+            foldRow({
+              key,
+              foldKey,
+              foldable,
+              isOpen,
+              label,
+              children: [
+                atRest ? null : (
+                  <Text color={tint(self.settings.palette, PIPE_STATE_COLOR[p.state] ?? 'cyan')}>
+                    {PIPE_LIVE_MARK[p.state] ?? '● '}
+                  </Text>
+                ),
+                <Text bold={!atRest} dimColor={atRest} wrap="truncate-end">
+                  {label}
+                </Text>,
+              ],
+            }),
           )}
           <Box flexDirection="row" flexShrink={0}>
-            <Button
-              key={`pipestate:${key}`}
-              label={status}
-              plain
-              onPress={() => void toggle($, foldKey, isOpen)}
-            >
-              <Text
-                color={parked ? undefined : tint(self.settings.palette, PIPE_STATE_COLOR[p.state])}
-                bold={!parked && (!finished || p.state === 'failed')}
-                dimColor={parked || p.state === 'canceled' || p.state === 'skipped'}
-              >
-                {status}
-              </Text>
-            </Button>
+            {foldRow({
+              key: `pipestate:${key}`,
+              foldKey,
+              foldable,
+              isOpen,
+              label: status,
+              children: [
+                <Text
+                  color={parked ? undefined : tint(self.settings.palette, PIPE_STATE_COLOR[p.state])}
+                  bold={!parked && (!finished || p.state === 'failed')}
+                  dimColor={parked || p.state === 'canceled' || p.state === 'skipped'}
+                >
+                  {status}
+                </Text>,
+              ],
+            })}
             {openLink(p.url)}
             {/* Running: "⊘ stop" — the destructive one, red and apart, two presses — cancels (and
                   by setting deletes) it in CI; "✕" beside it only hides the row, as on a finished one. */}
@@ -964,19 +1003,18 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         onPress={() => pressed($, requestRemoval($, options, sessionId, task.id))}
       />
     ) : null
-    // A title too long for its line is cut with "…" and the task folds, so it shows whole when open.
-    const long = wouldCut(task.title, INDENT * 3 + 4, TASK_RIGHT_COLS)
-    if (!task.detail && !task.steps?.length && !long)
+    // A step a pane removed hides at once, before its session folds the removal in.
+    const steps = (task.steps ?? []).filter(
+      step => !removedHere(sessionId, removalKey({ kind: 'step', taskId: task.id, step: step.title })),
+    )
+    // Folds only with a detail or steps to show. Without, one plain line — a long title wraps (shown
+    // whole) instead of folding; with, a long title is cut while folded and whole once open.
+    if (!taskHasInside({ detail: task.detail, steps }))
       return (
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent="space-between" gap={2}>
             {leftSide(
-              <Text
-                color={tint(self.settings.palette, mark.color)}
-                bold={!mark.dim}
-                dimColor={mark.dim}
-                wrap="truncate-end"
-              >
+              <Text color={tint(self.settings.palette, mark.color)} bold={!mark.dim} dimColor={mark.dim}>
                 {`${mark.sign} `}
                 {hl(task.title)}
               </Text>,
@@ -997,7 +1035,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     // person's own fold wins, and once it is no longer `doing` it folds back by default.
     const inProgress = task.status === 'doing' && (task.steps?.length ?? 0) > 0
     const isOpen = folded[key] ?? (hitInside || inProgress)
-    const steps = stepCounts(task)
+    const counts = stepCounts(task)
     return (
       <Box flexDirection="column">
         <Box key={`row:${key}`} flexDirection="row" justifyContent="space-between" gap={2} hover={ROW_HOVER}>
@@ -1029,12 +1067,12 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             ) : null,
           )}
           <Box flexDirection="row" flexShrink={0}>
-            {steps.total > 0 ? (
+            {counts.total > 0 ? (
               <Text dimColor>
                 {t('pane.taskSteps', {
-                  bar: progressBar(steps.closed, steps.total),
-                  closed: steps.closed,
-                  total: steps.total,
+                  bar: progressBar(counts.closed, counts.total),
+                  closed: counts.closed,
+                  total: counts.total,
                 })}
               </Text>
             ) : null}
@@ -1048,55 +1086,45 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         {isOpen ? (
           <Box flexDirection="column" paddingLeft={INDENT * 2}>
             {task.detail ? <Text dimColor>{hl(task.detail)}</Text> : null}
-            {(task.steps ?? [])
-              // A step a pane removed hides at once, before its session folds the removal in.
-              .filter(
-                step =>
-                  !removedHere(sessionId, removalKey({ kind: 'step', taskId: task.id, step: step.title })),
-              )
-              .map(step => {
-                const m = MARK[step.status] ?? { sign: '?' }
-                const stepKey = removalKey({ kind: 'step', taskId: task.id, step: step.title })
-                const why = reasonOf(step)
-                return (
-                  <Box key={`stepbox:${sessionId}:${stepKey}`} flexDirection="column">
-                    <Box
-                      key={`steprow:${sessionId}:${stepKey}`}
-                      flexDirection="row"
-                      justifyContent="space-between"
-                      gap={2}
-                      hover={ROW_HOVER}
-                    >
-                      {leftSide(
-                        <Text
-                          color={tint(self.settings.palette, m.color)}
-                          dimColor={m.dim}
-                          wrap="truncate-end"
-                        >
-                          {`${m.sign} `}
-                          {hl(step.title)}
-                        </Text>,
-                      )}
-                      {rightSide(
-                        live && !isClosed(step.status) ? (
-                          <Button
-                            key={`cancel:${sessionId}:${stepKey}`}
-                            label={t('pane.cancel')}
-                            plain
-                            dimColor
-                            onPress={() => pressed($, requestRemoval($, options, sessionId, stepKey))}
-                          />
-                        ) : null,
-                      )}
-                    </Box>
-                    {why ? (
-                      <Box paddingLeft={INDENT}>
-                        <Text {...reasonStyle(step.status, false)}>{hl(why)}</Text>
-                      </Box>
-                    ) : null}
+            {steps.map(step => {
+              const m = MARK[step.status] ?? { sign: '?' }
+              const stepKey = removalKey({ kind: 'step', taskId: task.id, step: step.title })
+              const why = reasonOf(step)
+              return (
+                <Box key={`stepbox:${sessionId}:${stepKey}`} flexDirection="column">
+                  <Box
+                    key={`steprow:${sessionId}:${stepKey}`}
+                    flexDirection="row"
+                    justifyContent="space-between"
+                    gap={2}
+                    hover={ROW_HOVER}
+                  >
+                    {leftSide(
+                      <Text color={tint(self.settings.palette, m.color)} dimColor={m.dim} wrap="truncate-end">
+                        {`${m.sign} `}
+                        {hl(step.title)}
+                      </Text>,
+                    )}
+                    {rightSide(
+                      live && !isClosed(step.status) ? (
+                        <Button
+                          key={`cancel:${sessionId}:${stepKey}`}
+                          label={t('pane.cancel')}
+                          plain
+                          dimColor
+                          onPress={() => pressed($, requestRemoval($, options, sessionId, stepKey))}
+                        />
+                      ) : null,
+                    )}
                   </Box>
-                )
-              })}
+                  {why ? (
+                    <Box paddingLeft={INDENT}>
+                      <Text {...reasonStyle(step.status, false)}>{hl(why)}</Text>
+                    </Box>
+                  ) : null}
+                </Box>
+              )
+            })}
           </Box>
         ) : null}
       </Box>
@@ -1154,56 +1182,60 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
   // The session's subagents: the running ones in their own section, each folding open to its steps
   // (status + note — a step's own estimate) beside its progress, run time and estimate; the finished
   // ones in a second section, folded by default.
+  // The steps of an agent a pane has not removed: what its row folds open to (a removal hides at
+  // once, before the session folds it in).
+  const shownAgentSteps = (id: string, a: AgentEntry) =>
+    a.tasks.filter(
+      step => !removedHere(id, removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })),
+    )
   // A subagent's own steps, each with its mark and — when it is not done — why, beneath it. `live`:
   // its open steps take a ✕ (a finished agent's list is a record, nothing left to stop).
   const agentStepRows = (id: string, a: AgentEntry, live: boolean) =>
-    a.tasks
-      .filter(step => !removedHere(id, removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })))
-      .map(step => {
-        // The agent waits on the person: its `doing` step carries the Needs-you mark and why.
-        const agentWait =
-          live && step.status === 'doing' && all[id]?.file
-            ? attentionFor(all[id].file, { agent: a }, waitReasons(all[id].file, isHere(id)))
-            : undefined
-        const m = agentWait
-          ? (MARK.blocked as { sign: string; color?: string; dim?: true })
-          : (MARK[step.status] ?? { sign: '?' })
-        const stepKey = removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })
-        const why = agentWait ?? reasonOf(step)
-        return (
-          <Box key={`agentstepbox:${id}:${stepKey}`} flexDirection="column">
-            <Box
-              key={`agentstep:${id}:${stepKey}`}
-              flexDirection="row"
-              justifyContent="space-between"
-              gap={2}
-              hover={ROW_HOVER}
-            >
-              {leftSide(
-                <Text color={tint(self.settings.palette, m.color)} dimColor={m.dim} wrap="truncate-end">
-                  {`${m.sign} ${step.title}`}
-                </Text>,
-              )}
-              {rightSide(
-                live && !isClosed(step.status) ? (
-                  <Button
-                    key={`cancel:${id}:${stepKey}`}
-                    label={t('pane.cancel')}
-                    plain
-                    dimColor
-                    onPress={() => pressed($, requestRemoval($, options, id, stepKey))}
-                  />
-                ) : null,
-              )}
-            </Box>
-            {why ? (
-              <Box paddingLeft={INDENT}>
-                <Text {...reasonStyle(step.status, agentWait !== undefined)}>{why}</Text>
-              </Box>
-            ) : null}
+    shownAgentSteps(id, a).map(step => {
+      // The agent waits on the person: its `doing` step carries the Needs-you mark and why.
+      const agentWait =
+        live && step.status === 'doing' && all[id]?.file
+          ? attentionFor(all[id].file, { agent: a }, waitReasons(all[id].file, isHere(id)))
+          : undefined
+      const m = agentWait
+        ? (MARK.blocked as { sign: string; color?: string; dim?: true })
+        : (MARK[step.status] ?? { sign: '?' })
+      const stepKey = removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })
+      const why = agentWait ?? reasonOf(step)
+      return (
+        <Box key={`agentstepbox:${id}:${stepKey}`} flexDirection="column">
+          <Box
+            key={`agentstep:${id}:${stepKey}`}
+            flexDirection="row"
+            justifyContent="space-between"
+            gap={2}
+            hover={ROW_HOVER}
+          >
+            {leftSide(
+              <Text color={tint(self.settings.palette, m.color)} dimColor={m.dim} wrap="truncate-end">
+                {`${m.sign} ${step.title}`}
+              </Text>,
+            )}
+            {rightSide(
+              live && !isClosed(step.status) ? (
+                <Button
+                  key={`cancel:${id}:${stepKey}`}
+                  label={t('pane.cancel')}
+                  plain
+                  dimColor
+                  onPress={() => pressed($, requestRemoval($, options, id, stepKey))}
+                />
+              ) : null,
+            )}
           </Box>
-        )
-      })
+          {why ? (
+            <Box paddingLeft={INDENT}>
+              <Text {...reasonStyle(step.status, agentWait !== undefined)}>{why}</Text>
+            </Box>
+          ) : null}
+        </Box>
+      )
+    })
 
   // The session's running agents — or, when its work is grouped by repo, one repo's (`only`, with
   // `scope` keeping that branch's fold key its own).
@@ -1220,7 +1252,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       const key = `agent:${id}:${a.id}`
       // A permission prompt or a question of this agent's: the row says so, magenta like Needs you.
       const personWait = attentionFor(file, { agent: a }, waitReasons(file, isHere(id)))
-      const hasInside = agentHasInside(a)
+      const hasInside = agentHasInside({ ...a, tasks: shownAgentSteps(id, a) })
       const isOpen = hasInside && (folded[key] ?? true)
       const closed = a.tasks.filter(x => isClosed(x.status)).length
       const steps =
@@ -1394,8 +1426,8 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
                   onPress={() => pressed($, dismiss($, options, id, [agentDismissal(a)]))}
                 />
               )
-              // A finished agent with steps folds open to them — each one's reason beneath it.
-              if (a.tasks.length === 0)
+              // A finished agent with steps folds open to them — each one's reason beneath it; one without is a plain line.
+              if (shownAgentSteps(id, a).length === 0)
                 return (
                   <Box
                     key={`doneagentbox:${id}:${a.id}`}
@@ -1572,29 +1604,38 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         : solo
           ? t('pane.thisSessionSolo')
           : t('pane.thisSession', { project: nameOf(file) })
+    const undoLines = undoRows(stored, false)
+    // Folds only with something under it: an undo line, an open task, a running agent or Done.
+    const foldable =
+      undoLines.length > 0 || open.length > 0 || runningAgents.length > 0 || done.length + finishedCount > 0
     const label =
-      t(ended === null ? 'pane.groupLive' : 'pane.groupEnded', {
-        fold: isOpen ? '▾' : '▸',
-        name,
-        when: formatTime(ended ?? file.updatedAt, nowMs, self.settings.clock),
-        open: open.length,
-        done: done.length,
-      }) + (ended === null ? offMarker(sw) : '')
+      foldLabel(
+        ended === null ? 'pane.groupLive' : 'pane.groupEnded',
+        {
+          name,
+          when: formatTime(ended ?? file.updatedAt, nowMs, self.settings.clock),
+          open: open.length,
+          done: done.length,
+        },
+        foldable,
+        isOpen,
+      ) + (ended === null ? offMarker(sw) : '')
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" justifyContent="space-between" gap={2}>
           {leftSide(
-            <Button
-              key={groupKey}
-              label={label}
-              plain
-              dimColor={ended !== null || !sw.reporting}
-              onPress={() => void toggle($, groupKey, isOpen)}
-            >
-              <Text wrap="truncate-end" dimColor={ended !== null || !sw.reporting}>
-                {label}
-              </Text>
-            </Button>,
+            foldRow({
+              key: groupKey,
+              foldable,
+              isOpen,
+              label,
+              dimColor: ended !== null || !sw.reporting,
+              children: [
+                <Text wrap="truncate-end" dimColor={ended !== null || !sw.reporting}>
+                  {label}
+                </Text>,
+              ],
+            }),
           )}
           {rightSide(
             ended !== null ? (
@@ -1608,9 +1649,9 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             ) : null,
           )}
         </Box>
-        {isOpen ? (
+        {foldable && isOpen ? (
           <Box flexDirection="column" paddingLeft={INDENT}>
-            {undoRows(stored, false)}
+            {undoLines}
             {work.length > 1
               ? work.map(({ repo, tasks, agents }) => {
                   const repoKey = `repo:${id}:${repo}`
@@ -1824,10 +1865,9 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             </Text>
           ) : null}
           <Box flexDirection="column" paddingLeft={asks.length > 0 ? INDENT : 0}>
-            {/* Each ask folds by its own session and text: the same ask in two sessions is two. */}
+            {/* An ask has nothing under it: one plain line, wrapped when long. */}
             {asks.map(n =>
-              cutLine(
-                `needs:${n.key}`,
+              plainLine(
                 solo
                   ? t('pane.needsYouItemSolo', { item: n.item })
                   : t('pane.needsYouItem', { project: n.project, item: n.item }),
@@ -1840,8 +1880,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             {/* Sessions that only finished a turn: one dim line, counted — a list of them buried
                 the asks, and nothing is asked there. */}
             {idle.length > 0
-              ? cutLine(
-                  'idle',
+              ? plainLine(
                   solo
                     ? t('pane.idleSolo')
                     : tn('pane.idle', idle.length, {
@@ -1866,8 +1905,7 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
               .filter(f => f.now)
               .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
               .map(f =>
-                cutLine(
-                  `now:${f.session.id}`,
+                plainLine(
                   solo
                     ? t('pane.nowItemSolo', { now: f.now ?? '' })
                     : t('pane.nowItem', { project: nameOf(f), now: f.now ?? '' }),
