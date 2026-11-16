@@ -55,6 +55,7 @@ import {
   staleTasks,
   syncAgents,
   taskHasInside,
+  tasksGlance,
   timeLeft,
   toolCallSummary,
   UNDO_MS,
@@ -1180,6 +1181,27 @@ test('an agent belongs to the repo of the task linked to it, else the repo its c
   // One repo and agents of it: one group (the pane stays flat).
   const single = withTasks([{ id: 'b', title: 'Ship', status: 'doing' }])
   expect(groupWorkByRepo(single, single.tasks, [agent('ag', 'L', 'app')] as never)).toHaveLength(1)
+})
+
+test('a folded Tasks group reads at a glance: the tasks in progress, else the next one up', () => {
+  const titles = (tasks: readonly Task[]) => tasks.map(x => x.title)
+  // Every task in progress, in the order given (the pane's own order).
+  const busy = withTasks([
+    { id: 'a', title: 'Plan', status: 'todo' },
+    { id: 'b', title: 'Build', status: 'doing' },
+    { id: 'c', title: 'Test', status: 'doing' },
+  ]).tasks
+  expect(titles(tasksGlance(busy))).toEqual(['Build', 'Test'])
+  // Nothing in progress: the first open task, whatever its state (a blocked one keeps its mark).
+  const idle = withTasks([
+    { id: 'a', title: 'Wait for review', status: 'blocked' },
+    { id: 'b', title: 'Ship', status: 'todo' },
+  ]).tasks
+  expect(titles(tasksGlance(idle))).toEqual(['Wait for review'])
+  // Closed tasks are never "up next"; nothing open: nothing to say.
+  const closed = withTasks([{ id: 'a', title: 'Shipped', status: 'done' }]).tasks
+  expect(tasksGlance(closed)).toEqual([])
+  expect(tasksGlance([])).toEqual([])
 })
 
 test("a repo's name from git's common dir: a worktree counts as its repo", () => {

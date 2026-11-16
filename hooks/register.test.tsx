@@ -6096,12 +6096,26 @@ test("a session's work in several repos groups by repo, each with its own agents
     cwd: '/tmp/wt-site',
   } as never)
   const ui = await pane($, 100)
-  // Each repo branch holds its agents; the unknown one goes to "other"; no session-level Agents.
-  expect(await ui.find({ type: 'Button', key: 'agents:s-me:panel' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'agents:s-me:site' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'agents:s-me:\u0000other' })).toBeDefined()
-  expect(await ui.find({ type: 'Button', key: 'agents:s-me' })).toBeUndefined()
-  expect((await ui.find({ type: 'Button', key: 'repo:s-me:\u0000other' }))?.text).toBe('▾ other  0 open')
+  // Tasks and Agents each group by repo on their own: the tasks under Tasks, the agents under
+  // Agents — the unknown one in "other" — and no repo heading for a list that has nothing there.
+  expect((await ui.find({ type: 'Button', key: 'repo:s-me:panel' }))?.text).toBe('▾ panel  1 open')
+  expect((await ui.find({ type: 'Button', key: 'repo:s-me:app' }))?.text).toBe('▾ app  1 open')
+  expect(await ui.find({ type: 'Button', key: 'repo:s-me:site' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'repo:s-me:\u0000other' })).toBeUndefined()
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe('▾ Agents  3 running')
+  expect((await ui.find({ type: 'Button', key: 'agentrepo:s-me:panel' }))?.text).toBe('▾ panel  1 running')
+  expect((await ui.find({ type: 'Button', key: 'agentrepo:s-me:site' }))?.text).toBe('▾ site  1 running')
+  expect((await ui.find({ type: 'Button', key: 'agentrepo:s-me:\u0000other' }))?.text).toBe(
+    '▾ other  1 running',
+  )
+  expect(await ui.find({ type: 'Button', key: 'agentrepo:s-me:app' })).toBeUndefined()
+  // An agent's repo heading folds on its own; the Tasks list keeps its rows.
+  await ui.press({ key: 'agentrepo:s-me:site' })
+  expect(await ui.find({ type: 'Button', key: 'agentrepo:s-me:site' })).toMatchObject({
+    text: '▸ site  1 running',
+  })
+  expect((await texts(ui)).some(l => l.includes('Lane W'))).toBe(false)
+  expect((await texts(ui)).some(l => l.includes('Lane X'))).toBe(true)
   await ui.unmount()
 })
 
@@ -6155,6 +6169,144 @@ test('one repo: tasks, then the session-level Agents — no repo headings', asyn
   expect(
     (await ui.findAll({ type: 'Button' })).some(b => String(b.props.key ?? '').startsWith('repo:')),
   ).toBe(false)
+  await ui.unmount()
+})
+
+test("a session's tasks and its subagents are two sibling groups, Tasks and Agents, each folding on its own", async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'sub-1', description: 'Lane A', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, {
+    tasks: [
+      { id: 'a', title: 'Coordinate', status: 'doing' },
+      { id: 'b', title: 'Lane A work', agent: 'Lane A' },
+      { id: 'c', title: 'Plan', status: 'done' },
+    ],
+  })
+  await $.tool.call({
+    tool: TOOL,
+    agentId: 'sub-1',
+    now: 'Reading',
+    tasks: [{ title: 'read', status: 'done' }, { title: 'write' }],
+  } as never)
+  let ui = await pane($, 100)
+  // Under the session, top to bottom: Tasks, Agents, Done — each its own fold, open by default
+  // (Done folded). Tasks counts what is open, and its bar what is closed of all of them.
+  const order = (await ui.findAll({ type: 'Button' }))
+    .map(b => String(b.props.key ?? ''))
+    .filter(k => ['tasks:s-me', 'agents:s-me', 'done:s-me'].includes(k))
+  expect(order).toEqual(['tasks:s-me', 'agents:s-me', 'done:s-me'])
+  expect((await ui.find({ type: 'Button', key: 'tasks:s-me' }))?.text).toBe('▾ Tasks  2 open')
+  expect(await texts(ui)).toContain('███░░░░░ 1/3')
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe('▾ Agents  1 running')
+  // A task linked to an agent still shows that agent's steps under it.
+  expect((await ui.find({ type: 'Button', key: 'task:s-me:b' }))?.text).toBe('▸ Lane A work')
+  await ui.press({ key: 'task:s-me:b' })
+  expect(await texts(ui)).toContain('○ write')
+
+  // Tasks folded: one line says what is in progress; the rows step aside; the agents stay.
+  await ui.press({ key: 'tasks:s-me' })
+  expect((await ui.find({ type: 'Button', key: 'tasks:s-me' }))?.text).toBe('▸ Tasks  2 open')
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:a' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'task:s-me:b' })).toBeUndefined()
+  expect(await texts(ui)).toContain('● Coordinate')
+  expect(await ui.find({ type: 'Button', key: 'agent:s-me:sub-1' })).toBeDefined()
+
+  // Agents folded too: its one line names each running agent with its steps.
+  await ui.press({ key: 'agents:s-me' })
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe('▸ Agents  1 running')
+  expect(await ui.find({ type: 'Button', key: 'agent:s-me:sub-1' })).toBeUndefined()
+  expect(await texts(ui)).toContain('Lane A 1/2')
+  await ui.unmount()
+
+  // Remembered like every fold: a new drawing keeps both folded; a press opens one again.
+  ui = await pane($, 100)
+  expect((await ui.find({ type: 'Button', key: 'tasks:s-me' }))?.text).toBe('▸ Tasks  2 open')
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe('▸ Agents  1 running')
+  await ui.press({ key: 'tasks:s-me' })
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:a' })).toBeDefined()
+  expect((await ui.find({ type: 'Button', key: 'agents:s-me' }))?.text).toBe('▸ Agents  1 running')
+  await ui.unmount()
+})
+
+test('a folded Tasks or Agents group still shows every row that needs you', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push(
+    { id: 'sub-1', description: 'Lane A', type: 'general-purpose', status: 'running' },
+    { id: 'sub-2', description: 'Lane B', type: 'general-purpose', status: 'running' },
+  )
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [
+      { id: 'rel', title: 'Release 1.0', status: 'doing' },
+      { id: 'docs', title: 'Docs', status: 'doing' },
+    ],
+    needsYou: [
+      { text: 'Push 1.0?', reply: 'yes or no', task: 'rel' },
+      { text: 'Pick a model', agent: 'Lane A' },
+    ],
+  })
+  await world.clock.advance(2100)
+  const ui = await pane($, 100)
+  await ui.press({ key: 'tasks:s-me' })
+  await ui.press({ key: 'agents:s-me' })
+  const lines = await texts(ui)
+  // The waiting task keeps its row, its ✕ and its ask beneath; the glance names only the others.
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:rel' })).toBeDefined()
+  expect(lines).toContain('Push 1.0? — reply yes or no')
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:docs' })).toBeUndefined()
+  expect(lines).toContain('● Docs')
+  expect(lines.some(l => l.includes('Release 1.0') && l.includes('Docs'))).toBe(false)
+  // The waiting agent keeps its row and its ask; the one not waiting is only in the glance line.
+  expect(lines).toContain('Pick a model')
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:agentall:sub-1' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:agentall:sub-2' })).toBeUndefined()
+  expect(lines).toContain('Lane B')
+  await ui.unmount()
+})
+
+test("a folded repo heading inside Tasks still shows that repo's task that needs you", async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await update($, {
+    now: 'n',
+    tasks: [
+      { id: 'rel', title: 'Release the panel', status: 'doing', repo: 'panel' },
+      { id: 'fix', title: 'Fix the panel', status: 'doing', repo: 'panel' },
+      { id: 'app', title: 'App fix', status: 'doing' },
+    ],
+    needsYou: [{ text: 'Push the panel?', reply: 'yes or no', task: 'rel' }],
+  })
+  const ui = await pane($, 100)
+  await ui.press({ key: 'repo:s-me:panel' })
+  expect((await ui.find({ type: 'Button', key: 'repo:s-me:panel' }))?.text).toBe('▸ panel  2 open')
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:rel' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:fix' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'cancel:s-me:app' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('an empty Tasks or Agents group is not drawn', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  await start($)
+  // Tasks only: no Agents heading.
+  await update($, { now: 'n', tasks: [{ id: 'a', title: 'Solo work', status: 'doing' }] })
+  let ui = await pane($)
+  expect(await ui.find({ type: 'Button', key: 'tasks:s-me' })).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'agents:s-me' })).toBeUndefined()
+  await ui.unmount()
+  // Agents only (every task closed): no Tasks heading.
+  await update($, { tasks: [{ id: 'a', status: 'done' }] })
+  world.agents.push({ id: 'ag-a', description: 'Lane A', type: 'general-purpose', status: 'running' })
+  await world.clock.advance(2100)
+  ui = await pane($)
+  expect(await ui.find({ type: 'Button', key: 'tasks:s-me' })).toBeUndefined()
+  expect(await ui.find({ type: 'Button', key: 'agents:s-me' })).toBeDefined()
   await ui.unmount()
 })
 

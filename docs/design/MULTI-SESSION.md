@@ -1,6 +1,6 @@
 # Multi-session progress panel
 
-> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0 · task removal, per-list repo groups in 0.16.0 · subagent progress (Agents) in 0.17.0 · pane size settings in 0.18.0 · silent subagents listed in 0.18.1 · agent steps + finished agents under Done in 0.19.0 · later releases (through 0.29.0: removal with ✕ at every level, switches, bounded CI polling, per-ref and multi-run commit rows, undo) are described in their own sections below, each with its version
+> **Status:** shipped in 0.2.0 · 2026-11-06 · single-writer sidecar + mid-write tolerance in 0.3.1 · pipelines in 0.4.0 · GitHub Actions in 0.10.0 · GitLab links in 0.9.0 · orphaned pipelines polled by any pane in 0.11.1 · pipeline finish time in 0.12.0 · reporting rule in every system prompt in 0.13.0 · own-file writes serialized in 0.13.1 · forges/hosts/any CI, session names, plan order, task details, repo groups, filter, quiet transcript rows, Releases in 0.14.0 · version + update notice in 0.15.0 · task removal, per-list repo groups in 0.16.0 · subagent progress (Agents) in 0.17.0 · pane size settings in 0.18.0 · silent subagents listed in 0.18.1 · agent steps + finished agents under Done in 0.19.0 · later releases (through 0.31.0: removal with ✕ at every level, switches, bounded CI polling, per-ref and multi-run commit rows, undo, Tasks and Agents as sibling groups) are described in their own sections below, each with its version
 > **Asked for (2026-11-06):** every Claude Code session on one machine writes to the same store and
 > every pane shows the same status, grouped by session; collapsible groups, a Done section with
 > timestamps, "Clear all" and per-item ✕, sortable tasks, the plugin's own settings.
@@ -17,8 +17,11 @@ Now                                                ← one line per live session
   panel · Writing the design doc
 Sessions                 [Filter tasks]  [Sort: plan]
 ▾ switchboard (this session) · 22:05 · 2 open · 5 done
-    ⚠ macOS build — runner restarted
-    ● Screenshot refresh — capture running
+    ▾ Tasks  2 open                    ██████░░ 5/7
+      ⚠ macOS build — runner restarted
+      ● Screenshot refresh — capture running
+    ▾ Agents  1 running
+      ▾ Lane A                         ██░░ 1/4 · 3m · ~6 min left
     ▸ Done (5)                          ← [Clear all] only while open
 ▸ panel · ended 21:40 · 0 open · 3 done            ← dimmed
 ```
@@ -26,13 +29,15 @@ Sessions                 [Filter tasks]  [Sort: plan]
 - The sketch is the skeleton only. Since then the pane gained, top to bottom: the version, an
   update notice and **⚙ Settings** in the header's corner; a **Switches** row, drawn only while a
   switch is off in this session; a **Pipelines** section between Now and Sessions; the Filter
-  beside Sort; and, per session, Agents and the undo lines — each in its own section below.
+  beside Sort; and, per session, the Tasks and Agents groups (0.31.0) and the undo lines — each in
+  its own section below.
 - Every `▾`/`▸` line is a Button that folds its part — and a row has one only while it has
   something to reveal (`taskHasInside`, `agentHasInside`, `pipelineHasInside`, and a session
   group's undo lines / open tasks / running agents / Done); otherwise it is a plain line with no
   arrow, no Button, no `aria`-style toggle, and becomes foldable when sub-items arrive. Now lines
   and asks never have any, so they are plain lines that wrap. Defaults: live sessions open, ended
-  sessions folded, every Done section folded. Fold state is per pane (`$.state`).
+  sessions folded, a session's Tasks and Agents groups open, every Done section folded. Fold state
+  is per pane (`$.state`).
 - Done rows read `✓ title  HH:MM  [✕]` — the time the task was done, local time, with the date
   (`YYYY-MM-DD HH:MM`) when that was not today, in the `clock` setting's style (`formatTime`); a
   failed one reads `✗ …`, a skipped one `– …`.
@@ -620,7 +625,7 @@ a local plugin.)
   clear like done tasks (✕, Clear all, `autoClearDoneHours`, the tool's `clearAgents`: "Finished
   agents can be cleared" below). The pane
   shows `▾ Agents  N running` per session (each: label, `██░░ n/m · ~N min left`,
-  its `now`). The coordinator's own answers end with `Subagents: <label> n/m, ~N
+  its `now`) — since 0.31.0 a group beside Tasks ("Tasks and Agents: sibling groups" below). The coordinator's own answers end with `Subagents: <label> n/m, ~N
   min left; …`. The reporting rule and the tool description tell subagents to report every few
   steps.
 - **Silent subagents are listed too (0.18.1):** an agent without the progress tool (a read-only
@@ -984,7 +989,7 @@ OFF", OFF in yellow, bold), a hover explains what turning it changes, and turnin
 it silences the whole session — asks a second press within 5 s (the pipeline ✕'s `armed` pattern);
 whole switches wrap, the label goes where the pane is too narrow. Every session's group reads its
 file's switches over this pane's defaults — its header says "· paused: reporting" or "· off: tasks,
-agents", dims a paused one, tasks off hides its tasks, agents off its Agents section. With `autoStart` off a session does not open the pane by itself. Commands:
+agents", dims a paused one, tasks off hides its tasks, agents off its Agents group. With `autoStart` off a session does not open the pane by itself. Commands:
 `/progress on|off` (also enable/disable, resume/pause, start/stop), `/progress <feature> on|off`,
 `/progress status`.
 
@@ -1067,6 +1072,36 @@ lane costs one small write a few seconds apart. The agent's own `progress_update
 activity. An agent type whose tool list leaves out the progress tool (a read-only reviewer, say)
 cannot report steps at all: this line is what its row shows — give such a type the tool
 (`mcp__progress-panel__progress_update` in its `tools:`) to get real steps.
+
+## Tasks and Agents: sibling groups (0.31.0)
+
+User, 2026-11-16: "a new tree level for 'Tasks' … so that both 'Tasks' and 'Agents' would be on same
+level, so that I could collapse the tasks and watch only the Agents". Under a session, after its undo
+lines, come two sibling groups, then Done:
+
+- **`▾ Tasks  N open`** (`tasks:<session>`, open by default) holds the open tasks, open-first as
+  before (finished ones stay under Done). Its right column is `██░░ closed/total` over the tasks the
+  session shows (open + Done, the filter applied) — the same `pane.taskSteps` form as a task's steps.
+- **`▾ Agents  N running`** (`agents:<session>`, the key it always had) holds the running agents.
+- Each list groups by repo **on its own** once its items span more than one repo — tasks under
+  `repo:<session>:<repo>` (`▾ <repo>  N open`, the old key, so a repo folded before stays folded),
+  agents under `agentrepo:<session>:<repo>` (`▾ <repo>  N running`). Before, open tasks and running
+  agents grouped together (each repo: its tasks, then an Agents heading of that repo's agents); with
+  two sibling groups that would have split one repo's work across both, so each groups itself — as
+  Done already did.
+- **Folded, a group keeps one dim line** (cut with "…"): Tasks names the tasks in progress, else the
+  next open one (`tasksGlance`), each with its mark (`● Build · ● Test`); Agents names each running
+  agent with its closed/total steps (`Lane A 3/4 · Lane B`).
+- **Needs you is never folded away.** A task or agent that waits on the person (`attentionFor`: a
+  permission prompt, a reply, an ask linked to it) keeps its whole row — ⚠ mark, the ask beneath —
+  under a folded Tasks or Agents heading, and under a folded repo heading inside either; the glance
+  line leaves it out, so it is said once.
+- **An empty group is not drawn:** no open task, no Tasks heading; no running agent (or agents
+  switched off), no Agents heading. A heading therefore always has something to unfold.
+- A task linked to an agent (`agent`) still shows that agent's live line and steps under the task;
+  the agent is also listed under Agents, as before.
+- The fold state is the same `folds` atom (`Record<string, boolean>`): new keys only, the stored type
+  is unchanged, so its `shape` tag stays `folds-1`. Presses toggle like every other fold Button.
 
 ## Out of scope / later
 

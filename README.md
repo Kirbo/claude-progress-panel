@@ -95,16 +95,23 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   failed task or step shows its reason on the line beneath it. When a subagent stops for good, a step
   it left in progress turns – "agent stopped before finishing", so a finished agent never looks busy;
   a finished agent under Done → Agents folds open to its steps.
+- **Tasks and Agents, side by side:** under each session, its open tasks sit in a **Tasks** group
+  (`▾ Tasks  2 open`, with `██░░ 5/7` of all its tasks closed on the right) and its running
+  subagents in an **Agents** group (`▾ Agents  3 running`), then **Done**. Each folds on its own and
+  stays as you left it — fold Tasks to watch only the agents. Folded, a group keeps one line: the
+  tasks in progress (else the next one up), or each agent's name and steps (`Lane A 3/4 · Lane B`).
+  A task or agent waiting on you is never folded away: its row stays under the folded heading, with
+  its ⚠ and the ask. An empty group is not drawn.
 - **Tasks:** listed in plan order by default — the order the agent will do them (it reshuffles
   with `order`). A task with subtasks or a detail is a fold: its title shows `██░░ n/m` of its steps
   done, and a press opens the detail and each step — a task in progress with steps starts open, so
-  you see what it is on without a click (fold it and it stays folded). Once a session's open work spans several repos
-  it groups under one foldable heading per repo — each repo's tasks, then the **Agents** working on
-  that repo (an agent's repo: the task linked to it, else the repo its commands run in — a worktree
-  counts as its repo — else "other"); one repo: no heading, tasks then Agents. Its Done list groups
-  the same way on its own.
+  you see what it is on without a click (fold it and it stays folded). Once a session's open tasks
+  span several repos, Tasks groups them under one foldable heading per repo; Agents does the same
+  for its agents on its own (an agent's repo: the task linked to it, else the repo its commands
+  run in — a worktree counts as its repo — else "other"). One repo: no heading. Its Done list
+  groups the same way on its own.
 - **Subagents report too:** a subagent's `progress_update` lands under its coordinator's session,
-  in an **Agents** part — never among the session's tasks. Each running agent shows the model and
+  in its **Agents** group — never among the session's tasks. Each running agent shows the model and
   effort it actually runs on (`sonnet 5.5 · medium`, read from its own model requests), its latest
   tool call when it reports no steps of its own (`↳ Read — src/x.rs · 41 tool calls`), its steps
   (`██░░ 3/7`), how long it has run and `~N min left` — the pace it has measured once a step has
@@ -357,7 +364,7 @@ starts from the defaults:
   and `progress_update` writes nothing; the entry stays, shown *paused* in every pane.
 - **tasks** — off = the session reports only `now` and *Needs you*; its task list is hidden.
 - **agents** — off = subagents are not asked to report, their reports are ignored and the
-  session's Agents section is hidden.
+  session's Agents group is hidden.
 - **pipelines** — off = no automatic watches, and the agent's `watch` is ignored.
 
 Switch them in the pane's **⚙ Settings** (turning reporting off asks for a second press, since it

@@ -30,6 +30,7 @@ import {
   stepCounts,
   taskHasInside,
   taskPipeline,
+  tasksGlance,
   timeLeft,
   UNDO_MS,
   visibleAgents,
@@ -930,14 +931,18 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     )
   }
 
+  // What an open task waits on the person for (a permission prompt, a reply, an ask linked to it),
+  // if anything: its row carries the Needs-you mark, and a folded group never hides it.
+  const taskWait = (sessionId: string, task: Task) => {
+    const waitFile = all[sessionId]?.file
+    return waitFile && !isClosed(task.status)
+      ? attentionFor(waitFile, { task }, waitReasons(waitFile, isHere(sessionId)))
+      : undefined
+  }
   const taskRow = (sessionId: string, given: Task) => {
     let task = given
     // Waiting on the person (a permission prompt, a reply): the Needs-you mark, the reason beneath.
-    const waitFile = all[sessionId]?.file
-    const wait =
-      waitFile && !isClosed(task.status)
-        ? attentionFor(waitFile, { task }, waitReasons(waitFile, isHere(sessionId)))
-        : undefined
+    const wait = taskWait(sessionId, task)
     const mark: { sign: string; color?: string; dim?: true } = (wait ? MARK.blocked : MARK[task.status]) ?? {
       sign: '?',
     }
@@ -1237,21 +1242,23 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
       )
     })
 
-  // The session's running agents — or, when its work is grouped by repo, one repo's (`only`, with
-  // `scope` keeping that branch's fold key its own).
-  const agentsBlock = (file: SessionFile, only?: readonly AgentEntry[], scope = '') => {
+  // The session's running agents: the Agents group, a sibling of Tasks under the session. Its
+  // agents group by repo once they span more than one (each repo a heading of its own, as Tasks'
+  // do). Folded, one line names each agent not waiting on the person; one that waits keeps its row.
+  const agentsBlock = (file: SessionFile) => {
     // A session that switched agent reporting off shows no Agents section.
     if (!effective(defaults, file.toggles).agents) return null
     const agents = file.agents ?? []
     const id = file.session.id
-    const running = (only ?? agents).filter(a => a.endedAt === null)
+    const running = agents.filter(a => a.endedAt === null)
     if (running.length === 0) return null
-    const runKey = `agents:${id}${scope}`
+    const runKey = `agents:${id}`
     const runOpen = folded[runKey] ?? true
+    // A permission prompt or a question of this agent's: the row says so, magenta like Needs you.
+    const agentWait = (a: AgentEntry) => attentionFor(file, { agent: a }, waitReasons(file, isHere(id)))
     const agentRow = (a: (typeof agents)[number]) => {
       const key = `agent:${id}:${a.id}`
-      // A permission prompt or a question of this agent's: the row says so, magenta like Needs you.
-      const personWait = attentionFor(file, { agent: a }, waitReasons(file, isHere(id)))
+      const personWait = agentWait(a)
       const hasInside = agentHasInside({ ...a, tasks: shownAgentSteps(id, a) })
       const isOpen = hasInside && (folded[key] ?? true)
       const closed = a.tasks.filter(x => isClosed(x.status)).length
@@ -1371,6 +1378,23 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         </Box>
       )
     }
+    // Folded: the agents not waiting on the person in one line (each with its steps); every one
+    // that waits keeps its own row, so an ask is never folded away.
+    const glance = running
+      .filter(a => agentWait(a) === undefined)
+      .map(a =>
+        a.tasks.length > 0
+          ? t('pane.agentGlance', {
+              label: a.label,
+              done: a.tasks.filter(x => isClosed(x.status)).length,
+              total: a.tasks.length,
+            })
+          : a.label,
+      )
+      .join(' · ')
+    const waitingRows = (list: readonly AgentEntry[]) =>
+      list.filter(a => agentWait(a) !== undefined).map(agentRow)
+    const byRepo = groupWorkByRepo(file, [], running)
     return (
       <Box flexDirection="column">
         <Button
@@ -1379,11 +1403,119 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
           plain
           onPress={() => void toggle($, runKey, runOpen)}
         />
-        {runOpen ? (
-          <Box flexDirection="column" paddingLeft={INDENT}>
-            {running.map(agentRow)}
-          </Box>
-        ) : null}
+        <Box flexDirection="column" paddingLeft={INDENT}>
+          {!runOpen
+            ? [
+                glance ? (
+                  <Text key={`agentsglance:${id}`} dimColor wrap="truncate-end">
+                    {glance}
+                  </Text>
+                ) : null,
+                ...waitingRows(running),
+              ]
+            : byRepo.length > 1
+              ? byRepo.map(({ repo, agents: here }) => {
+                  const repoKey = `agentrepo:${id}:${repo}`
+                  const isRepoOpen = folded[repoKey] ?? true
+                  return (
+                    <Box flexDirection="column">
+                      <Button
+                        key={repoKey}
+                        label={t('pane.repoAgentsGroup', {
+                          fold: isRepoOpen ? '▾' : '▸',
+                          repo: repo === OTHER_REPO ? t('pane.otherRepo') : repo,
+                          running: here.length,
+                        })}
+                        plain
+                        onPress={() => void toggle($, repoKey, isRepoOpen)}
+                      />
+                      <Box flexDirection="column" paddingLeft={INDENT}>
+                        {isRepoOpen ? here.map(agentRow) : waitingRows(here)}
+                      </Box>
+                    </Box>
+                  )
+                })
+              : running.map(agentRow)}
+        </Box>
+      </Box>
+    )
+  }
+
+  // The session's open tasks: the Tasks group, a sibling of Agents under the session — open tasks
+  // only (finished ones are under Done), grouped by repo once they span more than one. Its bar
+  // counts the closed tasks of all of them. Folded, one line says what is in progress; a task that
+  // waits on the person keeps its row, so an ask is never folded away.
+  const tasksBlock = (
+    file: SessionFile,
+    open: readonly Task[],
+    inPlanOrder: readonly Task[],
+    closed: number,
+  ) => {
+    if (open.length === 0) return null
+    const id = file.session.id
+    const key = `tasks:${id}`
+    const isOpen = folded[key] ?? true
+    const waits = (task: Task) => taskWait(id, task) !== undefined
+    const glance = tasksGlance(open.filter(x => !waits(x)))
+      .map(x => t('pane.glanceTask', { mark: (MARK[x.status] ?? { sign: '?' }).sign, title: x.title }))
+      .join(' · ')
+    const byRepo = groupWorkByRepo(file, inPlanOrder, [])
+    return (
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between" gap={2}>
+          {leftSide(
+            <Button
+              key={key}
+              label={t('pane.tasks', { fold: isOpen ? '▾' : '▸', open: open.length })}
+              plain
+              onPress={() => void toggle($, key, isOpen)}
+            />,
+          )}
+          {rightSide(
+            <Text dimColor>
+              {t('pane.taskSteps', {
+                bar: progressBar(closed, open.length + closed),
+                closed,
+                total: open.length + closed,
+              })}
+            </Text>,
+          )}
+        </Box>
+        <Box flexDirection="column" paddingLeft={INDENT}>
+          {!isOpen
+            ? [
+                glance ? (
+                  <Text key={`tasksglance:${id}`} dimColor wrap="truncate-end">
+                    {glance}
+                  </Text>
+                ) : null,
+                ...open.filter(waits).map(task => taskRow(id, task)),
+              ]
+            : byRepo.length > 1
+              ? byRepo.map(({ repo, tasks }) => {
+                  const repoKey = `repo:${id}:${repo}`
+                  const isRepoOpen = folded[repoKey] ?? true
+                  const here = sortTasks(tasks, by)
+                  return (
+                    <Box flexDirection="column">
+                      <Button
+                        key={repoKey}
+                        label={t('pane.repoGroup', {
+                          fold: isRepoOpen ? '▾' : '▸',
+                          repo: repo === OTHER_REPO ? t('pane.otherRepo') : repo,
+                          open: here.length,
+                        })}
+                        plain
+                        onPress={() => void toggle($, repoKey, isRepoOpen)}
+                      />
+                      <Box flexDirection="column" paddingLeft={INDENT}>
+                        {(isRepoOpen ? here : here.filter(waits)).map(task => taskRow(id, task))}
+                      </Box>
+                    </Box>
+                  )
+                })
+              : open.map(task => taskRow(id, task))}
+        </Box>
       </Box>
     )
   }
@@ -1574,17 +1706,12 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     )
     // Tasks of several repos group by repo (in plan order, open and done alike).
     // Each list groups by repo on its own, and only once its tasks span more than one repo: open
-    // tasks in one repo stay flat even when Done holds another.
-    // Open tasks and running agents together, by repo: grouped once they span more than one repo
-    // (each repo: its tasks, then its agents); else the flat layout — tasks, then Agents.
+    // tasks in one repo stay flat even when Done holds another — and so do Tasks and Agents, each
+    // a group of its own under the session.
     const runningAgents = sw.agents ? (file.agents ?? []).filter(a => a.endedAt === null) : []
-    const work = groupWorkByRepo(
-      file,
-      sortTasks(
-        shown.filter(x => !isClosed(x.status)),
-        by === 'status' ? 'plan' : by,
-      ),
-      runningAgents,
+    const openInPlanOrder = sortTasks(
+      shown.filter(x => !isClosed(x.status)),
+      by === 'status' ? 'plan' : by,
     )
     // An open Done lists the newest `doneShown` (a setting); the rest fold behind "N older" (capNewest).
     const doneOlderKey = `doneolder:${id}`
@@ -1652,40 +1779,8 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         {foldable && isOpen ? (
           <Box flexDirection="column" paddingLeft={INDENT}>
             {undoLines}
-            {work.length > 1
-              ? work.map(({ repo, tasks, agents }) => {
-                  const repoKey = `repo:${id}:${repo}`
-                  const isRepoOpen = folded[repoKey] ?? true
-                  const openHere = sortTasks(
-                    tasks.filter(x => !isClosed(x.status)),
-                    by,
-                  )
-                  const runningHere = agents.filter(a => a.endedAt === null)
-                  if (openHere.length === 0 && runningHere.length === 0) return null
-                  const repoName = repo === OTHER_REPO ? t('pane.otherRepo') : repo
-                  return (
-                    <Box flexDirection="column">
-                      <Button
-                        key={repoKey}
-                        label={t('pane.repoGroup', {
-                          fold: isRepoOpen ? '▾' : '▸',
-                          repo: repoName,
-                          open: openHere.length,
-                        })}
-                        plain
-                        onPress={() => void toggle($, repoKey, isRepoOpen)}
-                      />
-                      {isRepoOpen ? (
-                        <Box flexDirection="column" paddingLeft={INDENT}>
-                          {openHere.map(task => taskRow(id, task))}
-                          {agentsBlock(file, agents, `:${repo}`)}
-                        </Box>
-                      ) : null}
-                    </Box>
-                  )
-                })
-              : open.map(task => taskRow(id, task))}
-            {work.length > 1 ? null : agentsBlock(file)}
+            {tasksBlock(file, open, openInPlanOrder, done.length)}
+            {agentsBlock(file)}
             {done.length + finishedCount > 0 ? (
               <Box flexDirection="row" justifyContent="space-between" gap={2}>
                 <Button

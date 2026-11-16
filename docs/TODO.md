@@ -6,7 +6,8 @@ described in their commit / the release notes.
 - **Regenerate `docs/screenshots/pane.png`** (the README's picture). The pane changed visibly since
   it was taken: no switches row while everything is on, no "checked" clock in the first line, the
   idle sessions' one line under Needs you, "Clear all (N)", ✕ on finished agent rows, the undo
-  line, a stopped watch's row and a commit's several runs. Done = the `screenshots` skill run once
+  line, a stopped watch's row, a commit's several runs, and the Tasks and Agents groups under each
+  session (0.31.0). Done = the `screenshots` skill run once
   (headless tmux + `freeze`; neither is installed on the machine it was last attempted on, and the
   recipe starts a second Claude Code session). The demo data is ready for it:
   `scripts/screenshot-demo.mjs` now carries a running and a finished subagent and a commit row of

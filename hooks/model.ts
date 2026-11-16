@@ -2008,6 +2008,14 @@ export function groupWorkByRepo(
   return groups
 }
 
+/** What a folded Tasks group says in one line: every task in progress, in the order given; else
+ *  the first open one (whatever its state); nothing when no task is open. */
+export function tasksGlance(tasks: readonly Task[]): Task[] {
+  const open = tasks.filter(x => !isClosed(x.status))
+  const doing = open.filter(x => x.status === 'doing')
+  return doing.length > 0 ? doing : open.slice(0, 1)
+}
+
 /** A repo's folder name from `git rev-parse --git-common-dir` (absolute): `/w/app/.git` → `app`; a
  *  bare repo's own folder (`/srv/app.git` → `app`). A worktree's common dir is its repo's. */
 export function repoFromCommonDir(commonDir: string): string | undefined {
