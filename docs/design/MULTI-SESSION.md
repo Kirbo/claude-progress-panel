@@ -1103,6 +1103,35 @@ lines, come two sibling groups, then Done:
 - The fold state is the same `folds` atom (`Record<string, boolean>`): new keys only, the stored type
   is unchanged, so its `shape` tag stays `folds-1`. Presses toggle like every other fold Button.
 
+## Reporting enforced, not only asked for (0.32.0)
+
+The rule alone left gaps (owner's report, 2026-11-18): a subagent posted 5 steps, updated them to
+3/5, finished 4 and 5, handed back and never reported again — its row kept "3/5, ~1 min left"; other
+rows kept "waiting on background work" for hours; plans came late or short; the coordinator left
+`doing` tasks whose agent had long reported. 0.32.0 holds every loop to the rule at the points the
+engine gives a plugin, each refusal at most once per agent and spell of work (a resume starts a new
+spell), so nothing can trap a loop:
+
+| Behaviour | Where | Hard or soft | Why not harder |
+| --- | --- | --- | --- |
+| Plan first (subagent) | `tool.call` (every tool): the call past `planGateCalls` without a plan in the entry gets `{ deny }` | a refusal, once | The engine cannot tell a plugin which tools an agent type has: a gate that held until a plan came would trap an agent without the progress tool for good. Engine forks / workflow agents (not in `$.agent.list()`) and teammates are never gated. |
+| Plan first (main loop) | `classic.PostToolUse` → a note with the result, once a turn past 2 × `planGateCalls` calls with no open task / no `now` | a note | The person is there; a question answered in a few reads needs no entry. |
+| Keep it current | `classic.PostToolUse` (`additionalContext`): past `updateEveryCalls` calls or `updateEveryMin` minutes since the agent's last update, then not again for another window | a note | A tool result can only carry text. |
+| Overdue step | the pane: a `doing` step past max(2 × its `~N min`, N + 5) since it was last set (`overdue`) | a mark | — |
+| Settled before the hand-back | `tool.call` on `SubagentHandback` (`{ deny }`), and `classic.SubagentStop` (`block`) for an agent that ends without one | a refusal, once | A second refusal could trap it. `stop_hook_active` always passes. Not while it waits on background work of its own, not for one the person stopped. |
+| Honest end | the hand-back that went through ends the entry at once (`handedBack`: final, never `waiting`); every end marks open steps `unfinished` (`stopped`) | state | — |
+| Coordinator verifies | `toVerify`: an open task whose linked agent ended at or after the task's last update — ◆ in the pane, the "finished" note (with failed / unfinished steps named as a contradiction), and `endOfTurnCheck` lists it at every turn's end until the task is updated | a stop (the stop right after passes) | Same as the existing end-of-turn check: never twice in one stop chain. |
+
+The counts live in memory (`agentTrack` per subagent, `self.main` for the main loop, reset at every
+prompt), never in the file: the store format is unchanged, so 0.31 and 0.32 sessions read each
+other's files as before. A reload starts the counts over (at worst one late reminder) and reads a
+posted plan back from the entry, so a planned agent is never refused after a reload.
+
+`enforcement(settings)` derives what applies: `milestones` doubles the reminder thresholds,
+`minimal` takes `now` as the plan and sends no reminders; the settle check and the end state never
+relax. Settings: `planGate`, `planGateCalls`, `updateEveryCalls`, `updateEveryMin`,
+`settleBeforeHandback`.
+
 ## Out of scope / later
 
 - Other machines: the store is local. Mirroring to a shared place stays the agent's job.

@@ -9,6 +9,7 @@ import type { SessionFile, SortBy, Status, Task, Undo } from './model'
 import {
   agentDismissal,
   agentHasInside,
+  agentIssues,
   attentionFor,
   capNewest,
   displayWidth,
@@ -21,6 +22,7 @@ import {
   matchesTask,
   modelLabel,
   OTHER_REPO,
+  overdue,
   parseRemoval,
   removalKey,
   SORTS,
@@ -173,6 +175,9 @@ export const MARK: Record<string, { sign: string; color?: string; dim?: true }> 
   skipped: { sign: '–', dim: true },
   // An agent stopped with the step still open (set by the plugin, never reported).
   unfinished: { sign: '–', dim: true },
+  // Not a status (0.32.0): an open task whose linked agent ended since the task was last updated —
+  // its coordinator has yet to verify the result. Cyan, never the yellow of work going on.
+  verify: { sign: '◆', color: 'cyan' },
 }
 
 /** The line beneath a task / step: its note — for an `unfinished` one without its own, why it is. */
@@ -943,12 +948,22 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
     let task = given
     // Waiting on the person (a permission prompt, a reply): the Needs-you mark, the reason beneath.
     const wait = taskWait(sessionId, task)
-    const mark: { sign: string; color?: string; dim?: true } = (wait ? MARK.blocked : MARK[task.status]) ?? {
-      sign: '?',
-    }
     // The subagent working on it: its live progress, under the task (its steps stay its own).
     const linkFile = all[sessionId]?.file
     const linked = linkFile && !isClosed(task.status) ? linkedAgent(linkFile, task) : undefined
+    // Its agent ended after the task's last update: the coordinator verifies it (◆), not `doing`.
+    const verifying =
+      linked !== undefined &&
+      linked.endedAt !== null &&
+      !linked.cancelledAt &&
+      Date.parse(task.updatedAt) <= Date.parse(linked.endedAt)
+    const mark: { sign: string; color?: string; dim?: true } = (wait
+      ? MARK.blocked
+      : verifying
+        ? MARK.verify
+        : MARK[task.status]) ?? {
+      sign: '?',
+    }
     const linkLine = linked ? (
       <Box paddingLeft={INDENT}>
         <Text dimColor>
@@ -956,6 +971,9 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             const counts = linked.tasks.filter(x => isClosed(x.status)).length
             const left = timeLeft(linked.tasks, linked.startedAt, linked.etaMin)
             if (linked.cancelledAt) return t('pane.linkedAgentStopped', { agent: linked.label })
+            // Ended with steps failed or unfinished while the task is open: the two contradict.
+            const issues = linked.endedAt === null ? 0 : agentIssues(linked)
+            if (issues > 0) return t('pane.linkedAgentDoneIssues', { agent: linked.label, issues })
             return t(linked.endedAt === null ? 'pane.linkedAgent' : 'pane.linkedAgentDone', {
               agent: linked.label,
               steps: linked.tasks.length > 0 ? ` ${counts}/${linked.tasks.length}` : '',
@@ -1207,6 +1225,8 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
         : (MARK[step.status] ?? { sign: '?' })
       const stepKey = removalKey({ kind: 'agentTask', agentId: a.id, taskId: step.id })
       const why = agentWait ?? reasonOf(step)
+      // A `doing` step of a running agent far past its own estimate (0.32.0).
+      const late = live && a.endedAt === null ? overdue(step, nowMs) : undefined
       return (
         <Box key={`agentstepbox:${id}:${stepKey}`} flexDirection="column">
           <Box
@@ -1236,6 +1256,13 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
           {why ? (
             <Box paddingLeft={INDENT}>
               <Text {...reasonStyle(step.status, agentWait !== undefined)}>{why}</Text>
+            </Box>
+          ) : null}
+          {late ? (
+            <Box paddingLeft={INDENT}>
+              <Text color={tint(self.settings.palette, 'yellow')}>
+                {t('pane.stepOverdue', { est: late.est, spent: late.spent })}
+              </Text>
             </Box>
           ) : null}
         </Box>

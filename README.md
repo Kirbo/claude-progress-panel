@@ -299,6 +299,47 @@ folded "Finished" row.
   (blocked for 40 min) — is that still true?"), never again in that state. A task that is only
   planned is not asked about.
 
+### Agents are held to it, not only told (0.32.0)
+
+The reporting rule is enforced where Claude Code lets a plugin act — each refusal at most once per
+agent (and spell of work), so nothing can ever trap a loop:
+
+- **Plan first (a one-time refusal).** A subagent that has made `planGateCalls` tool calls (3) with
+  no steps in the pane has its next call refused once: "post `now`, every step you are about to
+  execute with its estimate, and `eta`, then repeat this call". A tiny job finishes within the
+  allowance; an agent type without the progress tool repeats the call and is never asked again.
+  Engine forks (compaction, memory), workflow agents and teammates are never gated. The main
+  session is never refused (you are there): once a turn passes twice that many calls with no task
+  list, its next tool result asks for one.
+- **Keep it current (reminders).** After `updateEveryCalls` tool calls (8) or `updateEveryMin`
+  minutes (5) without an update, the subagent's next tool result names the step still `doing` (and
+  how far past its own estimate it is), asks for the step it is on when every step is already
+  closed, or for its plan when there is none. The main session gets the same after twice the calls
+  while a task is `doing`. A `doing` step far past its estimate (`~10 min` in its note; twice the
+  estimate, and at least 5 min more) shows **⏱ over its ~10 min estimate: 25 min so far** in the
+  pane.
+- **Settled before the hand-back (a one-time refusal).** A subagent that hands back
+  (`SubagentHandback`) — or stops (SubagentStop) — with a step still `todo` / `doing`, or after a
+  reminder's worth of calls without an update, is refused once with the list to mark done, failed
+  or skipped. The next attempt passes; whatever is still open then becomes *unfinished* ("agent
+  stopped before finishing"). One that stops with background work of its own still running waits,
+  as before, and is not held.
+- **The row never lies after the end.** A hand-back that went through ends the agent's row at once
+  — final, never *waiting*, no estimate, its steps as they were left (open ones *unfinished*) — and
+  it moves under Done with "finished HH:MM". A resumed agent (SendMessage) reopens, and its next
+  end is settled again.
+- **The coordinator verifies.** When a linked agent ends, its task shows **◆** instead of `●` until
+  the coordinator updates it, with "✓ agent finished — verify and update this task" — or "✗ …
+  finished with N step(s) failed or unfinished — check before you close this task" when the two
+  contradict — and the coordinator is told so. Every turn's end lists such tasks (the stop right
+  after passes) until each gets its real state (done, failed, blocked with a note) or is linked to
+  the agent that carries on.
+
+`reportingEffort` relaxes the first two — `milestones` doubles the reminders' thresholds,
+`minimal` asks only for `now` and sends no reminders — but never the settling or the end state.
+`planGate` and `settleBeforeHandback` turn the two refusals off; `updateEveryCalls` /
+`updateEveryMin` at 0 turn the reminders off.
+
 ### Settings
 
 **⚙ Settings** in the pane's top-right corner (or `/progress settings`) opens them inside the pane
@@ -345,6 +386,11 @@ built-in default below.
 | `successFoldHours`      | 0.5, 1, 3, 12, 24                       | 1                      |
 | `clock`                 | 24h, 12h, system                        | 24h                    |
 | `reportingEffort`       | detailed, milestones, minimal           | detailed               |
+| `planGate`              | on, off                                 | on                     |
+| `planGateCalls`         | 1, 2, 3, 5, 8                           | 3                      |
+| `updateEveryCalls`      | 0 (off), 5, 8, 12, 20, 30               | 8                      |
+| `updateEveryMin`        | 0 (off), 3, 5, 10, 15, 30               | 5                      |
+| `settleBeforeHandback`  | on, off                                 | on                     |
 | `pipelineRefreshSec`    | 10, 15, 30, 60                          | 15                     |
 | `updateCheck`           | on, off                                 | on                     |
 | `palette`               | default, colorblind, none               | default                |

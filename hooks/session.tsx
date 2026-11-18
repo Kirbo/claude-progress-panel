@@ -14,6 +14,7 @@ import { t, tn } from './i18n'
 import type { SessionFile, Task, UpdateInput } from './model'
 import {
   agentHasTask,
+  agentIssues,
   applyAgentUpdate,
   applyUpdate,
   askReply,
@@ -21,8 +22,10 @@ import {
   dismissAgents,
   dropEndedAutoTasks,
   dropReplacedAutoTasks,
+  endAgent,
   endDeadSession,
   hasLinkableTask,
+  hasPlan,
   isBlank,
   isClosed,
   isGenericPermission,
@@ -35,6 +38,8 @@ import {
   mergeScan,
   needsLivenessCheck,
   noticeTool,
+  overdue,
+  ownBackground,
   parseSessionFile,
   parseSidecar,
   pickedUp,
@@ -46,8 +51,11 @@ import {
   syncAgents,
   timeLeft,
   toolCallSummary,
+  toVerify,
   trackedByPipeline,
+  unsettledSteps,
   untouchedDoing,
+  waitingOnFrom,
   withAgentActivity,
   withAgentRun,
   withAutoTask,
@@ -57,7 +65,8 @@ import type { WatchInput } from './pipelines'
 import { applyWatch, newlyWatched, oneLine } from './pipelines'
 import { ciProvider, parsePushes, pushedRef, resolvePath } from './push'
 import { INPUT_SCHEMA } from './schema'
-import { NUMBER_DEFAULTS } from './settings'
+import { enforcement, NUMBER_DEFAULTS } from './settings'
+import type { AgentTrack } from './state'
 import {
   ACTIVITY_EVERY_MS,
   agentActivityAt,
@@ -66,8 +75,10 @@ import {
   agentCallsJoined,
   agentRepoAsked,
   agentRunNoted,
+  agentTrack,
   DAY_MS,
   finishedLinks,
+  HANDBACK_TOOL,
   isOn,
   livenessAskedAt,
   optionNumber,
@@ -195,10 +206,16 @@ export async function endOfTurnCheck(
   const nowMs = await $.clock.now()
   const again = fields(e).stop_hook_active === true
   // Read and marked under the one lock: what is asked about is what is marked asked.
-  const asked = await exclusive(async () => {
+  const found = await exclusive(async () => {
     const own = await ownFile($, dir)
-    const list = untouchedDoing(own, turnStartMs, nowMs, UNTOUCHED_AFTER_MS, task => isTracked(own, task))
-    if (list.length === 0) return []
+    // A task whose linked agent ended since its last update (0.32.0): listed at every turn's end
+    // until the coordinator verifies the agent's result and sets the task's real state.
+    const verify = again ? [] : toVerify(own)
+    const verifying = new Set(verify.map(v => v.task.id))
+    const list = untouchedDoing(own, turnStartMs, nowMs, UNTOUCHED_AFTER_MS, task =>
+      isTracked(own, task),
+    ).filter(task => !verifying.has(task.id))
+    if (list.length === 0) return { fresh: [] as Task[], verify }
     const fresh = again ? [] : list.filter(task => !task.stopAsked)
     const ask = fresh.map(task => task.id)
     const marked = markUnconfirmed(
@@ -206,16 +223,37 @@ export async function endOfTurnCheck(
       list.filter(task => !ask.includes(task.id)).map(task => task.id),
     )
     if (marked !== own) await save($, dir, marked)
-    return fresh
+    return { fresh, verify }
   })
-  if (asked.length === 0) return undefined
-  return t('stop.untouched', {
-    list: asked
-      .map(task =>
-        t('stop.untouchedLine', { id: task.id, task: task.title, min: minutesSince(task.updatedAt, nowMs) }),
-      )
-      .join('\n'),
-  })
+  const parts: string[] = []
+  if (found.verify.length > 0)
+    parts.push(
+      t('stop.verify', {
+        list: found.verify
+          .map(({ task, agent }) => {
+            const issues = agentIssues(agent)
+            return issues > 0
+              ? t('stop.verifyLineIssues', { id: task.id, task: task.title, agent: agent.label, issues })
+              : t('stop.verifyLine', { id: task.id, task: task.title, agent: agent.label })
+          })
+          .join('\n'),
+      }),
+    )
+  if (found.fresh.length > 0)
+    parts.push(
+      t('stop.untouched', {
+        list: found.fresh
+          .map(task =>
+            t('stop.untouchedLine', {
+              id: task.id,
+              task: task.title,
+              min: minutesSince(task.updatedAt, nowMs),
+            }),
+          )
+          .join('\n'),
+      }),
+    )
+  return parts.length > 0 ? parts.join('\n') : undefined
 }
 
 /** The net switch change owed to the agent, as notes; the told state moves to now. */
@@ -648,6 +686,9 @@ export async function runUpdate(
     return { updated, watched, file }
   }).catch(unreadable)
   if (done === undefined) return t('tool.unreadable')
+  // The main loop reported: its reminder counts start over (0.32.0).
+  self.main.sinceUpdate = 0
+  self.main.reported = true
   const { updated, watched, file } = done
   await announce($, await readSessions($), file.session.id)
   const added = newlyWatched(updated.file.pipelines ?? [], watched.list)
@@ -698,6 +739,13 @@ export async function runAgentUpdate(
     return { errors: r.errors, touched: r.touched, entry: file.agents?.find(a => a.id === id) }
   }).catch(unreadable)
   if (saved === undefined) return t('tool.unreadable')
+  // It reported: its reminder counts start over, and a plan in its entry opens the gate for good.
+  const track = trackOf(id, await $.clock.now())
+  track.sinceUpdate = 0
+  track.sinceRemind = 0
+  track.sinceMs = await $.clock.now()
+  delete track.remindedMs
+  if (saved.entry && hasPlan(saved.entry, planKind(options))) track.planned = true
   return summarizeAgent(saved.entry?.tasks ?? [], saved.errors, saved.touched)
 }
 
@@ -820,6 +868,12 @@ export async function reopenIfActive(
     const next = pickedUp(reopenAgent(own, agentId, at), agentId)
     if (next !== own) await save($, dir, next)
   })
+  // Resumed: its next end is settled again, like its first.
+  const track = agentTrack.get(agentId)
+  if (track) {
+    delete track.settleAsked
+    delete track.handedBack
+  }
 }
 
 // A subagent's model request (`turn.step`): what it actually runs on — the model the engine resolved
@@ -1624,4 +1678,250 @@ export function takeDeferredRule(options: PluginOptions): string[] {
   if (!self.ruleDeferred || self.ruleComposed || self.ruleSent || !isOn(options, 'reporting')) return []
   self.ruleSent = true
   return [ruleText(options)]
+}
+
+// --- Reporting enforcement (0.32.0) ----------------------------------------------------------------
+// The plugin holds every loop to the reporting rule, not only tells it: a subagent's plan before its
+// work (one refused call), reminders while it works, its steps settled before it hands back (one
+// refused hand-back / stop), and the coordinator's tasks verified once their agent ended. Every
+// refusal comes at most once per agent and spell of work: nothing ever traps a loop.
+
+/** What counts as a plan in this session: steps, or only `now` (minimal effort, or tasks off). */
+export function planKind(options: PluginOptions): 'tasks' | 'now' {
+  return isOn(options, 'tasks') ? enforcement(self.settings).plan : 'now'
+}
+
+/** This copy's count for a subagent, made on first sight. */
+export function trackOf(id: string, nowMs: number): AgentTrack {
+  const known = agentTrack.get(id)
+  if (known) return known
+  const track: AgentTrack = { calls: 0, sinceUpdate: 0, sinceRemind: 0, sinceMs: nowMs }
+  agentTrack.set(id, track)
+  return track
+}
+
+// A subagent's tool call about to run (`tool.call`): counted, and — past the calls a tiny job may
+// make without a plan — refused ONCE while its entry holds no plan, with the instruction to post it.
+// Only a subagent this session lists (never an engine fork, a workflow's agent or a teammate), not
+// one the person stopped, and never twice: an agent type without the progress tool loses one call.
+export async function planGate(
+  $: EngineInterface,
+  options: PluginOptions,
+  e: unknown,
+): Promise<string | undefined> {
+  const call = fields(e)
+  const id = call.agentId
+  const tool = call.tool
+  if (typeof id !== 'string' || !id || typeof tool !== 'string') return undefined
+  if (tool === TOOL_ID || tool === HANDBACK_TOOL) return undefined
+  if (!isOn(options, 'reporting') || !isOn(options, 'agents')) return undefined
+  const track = trackOf(id, await $.clock.now())
+  track.calls += 1
+  track.sinceUpdate += 1
+  track.sinceRemind += 1
+  const gate = enforcement(self.settings).gateCalls
+  if (gate === undefined || track.planned || track.gated || track.calls <= gate) return undefined
+  track.gated = true
+  const listed = await $.agent.list().catch(() => null)
+  const me = listed?.find(a => a.id === id)
+  if (!me || me.teammateId) return undefined
+  const plain = await readOwnPlain($, options)
+  if (plain === 'nowhere') return undefined
+  const entry = plain?.agents?.find(a => a.id === id)
+  if (entry?.cancelledAt) return undefined
+  const plan = planKind(options)
+  if (entry && hasPlan(entry, plan)) {
+    track.planned = true
+    return undefined
+  }
+  // The refused call never ran.
+  track.calls -= 1
+  track.sinceUpdate -= 1
+  track.sinceRemind -= 1
+  return t(plan === 'now' ? 'gate.planNow' : 'gate.plan', { calls: track.calls })
+}
+
+/** A step as a reminder names it, with how far past its estimate it is when it is. */
+function stepLine(step: Task, nowMs: number): string {
+  const late = overdue(step, nowMs)
+  return late
+    ? t('remind.stepOverdue', { id: step.id, title: step.title, est: late.est, spent: late.spent })
+    : t('remind.step', { id: step.id, title: step.title })
+}
+
+// A subagent's tool call ran (PostToolUse): past the calls or the minutes without an update the
+// settings allow, its result carries one short reminder — no plan yet; the step still `doing`
+// (and how far past its estimate); every step closed while it keeps working (add the one it is
+// on); or none `doing`. Then the count starts over, so it is reminded at most once per window.
+export async function agentReminder(
+  $: EngineInterface,
+  options: PluginOptions,
+  e: unknown,
+): Promise<string | undefined> {
+  const call = fields(e)
+  const id = call.agent_id
+  const tool = call.tool_name
+  if (typeof id !== 'string' || !id || typeof tool !== 'string') return undefined
+  if (tool === TOOL_ID || tool === HANDBACK_TOOL) return undefined
+  if (!isOn(options, 'reporting') || !isOn(options, 'agents')) return undefined
+  const track = agentTrack.get(id)
+  if (!track) return undefined
+  const rules = enforcement(self.settings)
+  const nowMs = await $.clock.now()
+  const byCalls = rules.everyCalls > 0 && track.sinceRemind >= rules.everyCalls
+  const byTime = rules.everyMs > 0 && nowMs - Math.max(track.sinceMs, track.remindedMs ?? 0) >= rules.everyMs
+  if (!byCalls && !byTime) return undefined
+  const plain = await readOwnPlain($, options)
+  if (plain === 'nowhere') return undefined
+  const entry = plain?.agents?.find(a => a.id === id)
+  if (!entry || entry.endedAt !== null || entry.cancelledAt) return undefined
+  track.sinceRemind = 0
+  track.remindedMs = nowMs
+  const calls = track.sinceUpdate
+  const min = Math.max(0, Math.floor((nowMs - track.sinceMs) / 60_000))
+  if (!hasPlan(entry, planKind(options))) return t('remind.noPlan', { calls })
+  if (entry.tasks.length === 0) return t('remind.now', { calls, min })
+  const doing = entry.tasks.filter(x => x.status === 'doing')
+  if (doing.length > 0)
+    return t('remind.update', { calls, min, steps: doing.map(x => stepLine(x, nowMs)).join(', ') })
+  if (unsettledSteps(entry).length === 0) return t('remind.allClosed', { calls, min })
+  return t('remind.noneDoing', { calls, min })
+}
+
+// A subagent about to hand back or stop: while a step it posted is still `todo` / `doing`, or it
+// worked a reminder's worth of calls since its last update, it is refused ONCE with the list to
+// settle. Never a second time, never after a hand-back went through, never for one the person
+// stopped, and never on a stop the engine marks as already continued (`stop_hook_active`).
+export async function settleCheck(
+  $: EngineInterface,
+  options: PluginOptions,
+  id: string,
+  stopHookActive: boolean,
+): Promise<string | undefined> {
+  if (!isOn(options, 'reporting') || !isOn(options, 'agents')) return undefined
+  const rules = enforcement(self.settings)
+  if (!rules.settle || stopHookActive) return undefined
+  const track = trackOf(id, await $.clock.now())
+  if (track.settleAsked || track.handedBack) return undefined
+  const plain = await readOwnPlain($, options)
+  if (plain === 'nowhere') return undefined
+  const entry = plain?.agents?.find(a => a.id === id)
+  if (!entry || entry.endedAt !== null || entry.cancelledAt) return undefined
+  const open = unsettledSteps(entry)
+  const stale = entry.tasks.length > 0 && rules.everyCalls > 0 && track.sinceUpdate >= rules.everyCalls
+  if (open.length === 0 && !stale) return undefined
+  track.settleAsked = true
+  if (open.length === 0) return t('settle.stale', { calls: track.sinceUpdate })
+  return t('settle.open', {
+    list: open.map(x => t('settle.line', { id: x.id, title: x.title, status: x.status })).join('\n'),
+  })
+}
+
+// A subagent ended (its SubagentStop, or its hand-back went through — `final`): its entry is
+// finished — its open steps `unfinished`, no estimate, no waiting — unless it stopped with background
+// work OF ITS OWN still running (it waits and resumes on its own; never after a hand-back, which
+// ends its run). A task linked to it: the coordinator is told to verify it — once, by the call that
+// ended it — with what contradicts the task (failed or unfinished steps).
+export async function agentStopped(
+  $: EngineInterface,
+  options: PluginOptions,
+  id: string,
+  background: unknown,
+  final: boolean,
+): Promise<void> {
+  const dir = await progressDir($, options)
+  if (!dir) return
+  const at = await nowIso($)
+  await exclusive(async () => {
+    const own = await ownFile($, dir)
+    // The event lists the whole session's background work with no owner — the coordinator's
+    // watchers among it — so only tasks this agent's own calls started count.
+    const owned = final ? [] : ownBackground(background, agentBackground.get(id) ?? new Set())
+    const waiting = owned.length > 0
+    const ended = dropEndedAutoTasks(
+      endAgent(own, id, at, waiting, waiting ? waitingOnFrom(owned) : undefined),
+    )
+    if (ended !== own) await save($, dir, ended)
+    if (waiting) return
+    const before = own.agents?.find(a => a.id === id)
+    if (before && before.endedAt !== null) return
+    const after = ended.agents?.find(a => a.id === id)
+    const issues = after ? agentIssues(after) : 0
+    for (const task of own.tasks)
+      if (!task.auto && !isClosed(task.status) && linkedAgent(own, task)?.id === id) {
+        const agent = linkedAgent(own, task)?.label ?? id
+        finishedLinks.push(
+          issues > 0
+            ? t('notice.agentFinishedIssues', { agent, task: task.title, issues, status: task.status })
+            : t('notice.agentFinished', { agent, task: task.title }),
+        )
+      }
+  })
+}
+
+// A subagent's SubagentHandback about to run: refused once while its steps are not settled.
+export async function handbackCheck(
+  $: EngineInterface,
+  options: PluginOptions,
+  e: unknown,
+): Promise<string | undefined> {
+  const call = fields(e)
+  if (call.tool !== HANDBACK_TOOL || typeof call.agentId !== 'string' || !call.agentId) return undefined
+  return settleCheck($, options, call.agentId, false)
+}
+
+// Its SubagentHandback went through: its run is over — the row ends now, not at a SubagentStop
+// that may come later (or, after a hand-back, not at all), and never as `waiting`.
+export async function handedBack($: EngineInterface, options: PluginOptions, e: unknown): Promise<void> {
+  const call = fields(e)
+  if (call.tool !== HANDBACK_TOOL || typeof call.agentId !== 'string' || !call.agentId) return
+  trackOf(call.agentId, await $.clock.now()).handedBack = true
+  await agentStopped($, options, call.agentId, undefined, true)
+}
+
+/** A new turn (the person's prompt): the main loop's counts start over. */
+export function newTurn(): void {
+  self.main = { calls: 0, sinceUpdate: 0, planNudged: false, reported: false }
+}
+
+// A main-loop tool call ran: counted. Past twice the plan gate's calls in a turn with no task list
+// in the pane (no progress_update this turn, no open task), ONE note asks for it; past the reminder's
+// calls without an update while a task is `doing`, one reminder names it. The main loop is never
+// refused: the person is there, and a question answered in a few reads needs no entry.
+export async function mainNudge(
+  $: EngineInterface,
+  options: PluginOptions,
+  e: unknown,
+): Promise<string | undefined> {
+  const tool = fields(e).tool_name
+  if (typeof tool !== 'string' || tool === TOOL_ID) return undefined
+  if (!isOn(options, 'reporting')) return undefined
+  self.main.calls += 1
+  self.main.sinceUpdate += 1
+  const rules = enforcement(self.settings)
+  const plan = planKind(options)
+  const planDue =
+    !self.main.planNudged &&
+    !self.main.reported &&
+    rules.mainPlanCalls > 0 &&
+    self.main.calls >= rules.mainPlanCalls
+  const updateDue =
+    plan === 'tasks' && rules.mainEveryCalls > 0 && self.main.sinceUpdate >= rules.mainEveryCalls
+  if (!planDue && !updateDue) return undefined
+  const plain = await readOwnPlain($, options)
+  if (plain === 'nowhere') return undefined
+  if (planDue) {
+    self.main.planNudged = true
+    const planned =
+      plan === 'now' ? !!plain?.now : (plain?.tasks ?? []).some(x => !isClosed(x.status) && !x.auto)
+    if (!planned) return t(plan === 'now' ? 'main.planNow' : 'main.plan', { calls: self.main.calls })
+  }
+  if (!updateDue) return undefined
+  self.main.sinceUpdate = 0
+  const doing = (plain?.tasks ?? []).filter(x => x.status === 'doing' && !x.auto)
+  if (doing.length === 0) return undefined
+  return t('main.update', {
+    calls: rules.mainEveryCalls,
+    list: doing.map(x => t('remind.step', { id: x.id, title: x.title })).join(', '),
+  })
 }

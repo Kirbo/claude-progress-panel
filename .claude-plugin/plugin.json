@@ -1,6 +1,6 @@
 {
   "name": "progress-panel",
-  "version": "0.31.0",
+  "version": "0.32.0",
   "description": "A pane beside every Claude Code chat showing the progress of every session on the machine, grouped by session",
   "author": {
     "name": "Kirbo"
@@ -190,6 +190,46 @@
       "description": "detailed: every step (today's rule); milestones: the plan, each task done or blocked, Needs you — fewer calls; minimal: only what it is doing and Needs you. Subagents follow it too.",
       "options": ["detailed", "milestones", "minimal"],
       "default": "detailed",
+      "required": false
+    },
+    "planGate": {
+      "type": "string",
+      "title": "Subagents post their plan first",
+      "description": "on: a subagent that has made this many tool calls (the next setting) without posting its steps through progress_update has its next call refused once, with the instruction to post them (a minimal reporting effort asks only for `now`). off: no refusal; the reminders still come.",
+      "options": ["on", "off"],
+      "default": "on",
+      "required": false
+    },
+    "planGateCalls": {
+      "type": "string",
+      "title": "Tool calls before the plan is due",
+      "description": "How many tool calls a subagent may make before its plan must be in the pane (a job of about this size needs none); the main session is reminded once in a turn at twice this many calls without a task list.",
+      "options": ["1", "2", "3", "5", "8"],
+      "default": "3",
+      "required": false
+    },
+    "updateEveryCalls": {
+      "type": "string",
+      "title": "Remind after tool calls without an update",
+      "description": "A subagent that has made this many tool calls since its last progress_update is reminded with its next tool result, naming the step still `doing`; the main session at twice this. milestones doubles it, minimal turns it off. 0 = off.",
+      "options": ["0", "5", "8", "12", "20", "30"],
+      "default": "8",
+      "required": false
+    },
+    "updateEveryMin": {
+      "type": "string",
+      "title": "Remind after minutes without an update",
+      "description": "The same reminder after this many minutes without an update (subagents). milestones doubles it, minimal turns it off. 0 = off.",
+      "options": ["0", "3", "5", "10", "15", "30"],
+      "default": "5",
+      "required": false
+    },
+    "settleBeforeHandback": {
+      "type": "string",
+      "title": "Steps settled before a subagent hands back",
+      "description": "on: a subagent that hands back (or stops) with steps still todo/doing is refused once with the list to close; the next attempt passes, and the plugin marks what is left unfinished. Not relaxed by the reporting effort.",
+      "options": ["on", "off"],
+      "default": "on",
       "required": false
     },
     "pipelineRefreshSec": {

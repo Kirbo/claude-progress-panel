@@ -5,19 +5,13 @@ import { fields } from './events'
 import { pollAll } from './forge'
 import { whoAmI } from './host'
 import { t } from './i18n'
-import {
-  dropEndedAutoTasks,
-  endAgent,
-  isBlank,
-  isClosed,
-  linkedAgent,
-  ownBackground,
-  waitingOnFrom,
-} from './model'
+import { isBlank, ownBackground } from './model'
 import { renderPane } from './pane'
 import { INPUT_SCHEMA } from './schema'
 import type { ToolInput } from './session'
 import {
+  agentReminder,
+  agentStopped,
   answered,
   autoLink,
   callSummary,
@@ -30,7 +24,11 @@ import {
   endPendingCallOf,
   feedAgentPrompt,
   forgetCiVerdicts,
+  handbackCheck,
+  handedBack,
+  mainNudge,
   markEnded,
+  newTurn,
   noteAgentActivity,
   noteAgentBackground,
   noteAgentRepo,
@@ -39,6 +37,7 @@ import {
   ownManifest,
   paneArgs,
   permissionAnswered,
+  planGate,
   queueMessage,
   raiseAutoNeed,
   reopenIfActive,
@@ -46,6 +45,7 @@ import {
   runUpdate,
   scan,
   setToggle,
+  settleCheck,
   staleNudges,
   takeDeferredRule,
   tick,
@@ -61,8 +61,9 @@ import {
 import { readSettings } from './settings'
 import {
   agentBackground,
-  finishedLinks,
+  agentTrack,
   forgetSessionMemory,
+  HANDBACK_TOOL,
   isOn,
   PANE,
   pendingNotes,
@@ -75,7 +76,7 @@ import {
   takeFinishedLinks,
   updateViewing,
 } from './state'
-import { adoptSession, exclusive, noteTitle, nowIso, ownFile, progressDir, save } from './store'
+import { adoptSession, exclusive, noteTitle, ownFile, progressDir, save } from './store'
 import { parseProgressCommand } from './toggles'
 
 export const register: Register = (on, options) => {
@@ -155,6 +156,7 @@ export const register: Register = (on, options) => {
     // The person answered: every automatic Needs-you item goes.
     await clearAutoNeeds($, options, () => true).catch(() => undefined)
     await noteTitle($, options, fields(e).session_title)
+    newTurn()
     const stale = await staleNudges($, options).catch(() => [] as string[])
     const beneath = await next(e)
     const result = withPendingNotes(beneath)
@@ -174,33 +176,27 @@ export const register: Register = (on, options) => {
   // After every main-loop tool call: a task the person removed reaches the agent at its next step
   // (a subagent's calls never take the note — it is the coordinator's).
   // A subagent stopped: its entry is marked finished — it folds under Done → Agents and stays until
-  // the person clears it (✕ / Clear all) or the auto-clear setting does.
+  // the person clears it (✕ / Clear all) or the auto-clear setting does. First (0.32.0): one that
+  // stops with steps still open — and with no background work of its own to wait on, its hand-back
+  // not yet through — is held ONCE with the list to settle; its next stop passes, and what is still
+  // open then is marked unfinished.
   on('classic.SubagentStop', async ($, e, next) => {
-    const id = fields(e).agent_id
-    const dir = await progressDir($, options)
-    if (typeof id === 'string' && dir) {
-      const at = await nowIso($)
-      await exclusive(async () => {
-        const own = await ownFile($, dir)
-        // Still running background work OF ITS OWN: it waits (and resumes on its own). The event lists
-        // the whole session's background work with no owner — the coordinator's watchers among it —
-        // so only tasks this agent's own calls started count; anything else is not its, and it ended.
-        const background = ownBackground(fields(e).background_tasks, agentBackground.get(id) ?? new Set())
-        const waiting = background.length > 0
-        // Ended for good: a stand-in task the plugin made for it goes with it.
-        const ended = dropEndedAutoTasks(
-          endAgent(own, id, at, waiting, waiting ? waitingOnFrom(background) : undefined),
-        )
-        if (ended !== own) await save($, dir, ended)
-        if (waiting) return
-        // A task linked to it: the coordinator is told to verify and update it — never done for it.
-        // (Its own task: a stand-in is nobody's to verify.)
-        for (const task of own.tasks)
-          if (!task.auto && !isClosed(task.status) && linkedAgent(own, task)?.id === id)
-            finishedLinks.push(
-              t('notice.agentFinished', { agent: linkedAgent(own, task)?.label ?? id, task: task.title }),
-            )
-      })
+    const stop = fields(e)
+    const id = stop.agent_id
+    if (typeof id === 'string' && id) {
+      const final = agentTrack.get(id)?.handedBack === true
+      const waits =
+        !final && ownBackground(stop.background_tasks, agentBackground.get(id) ?? new Set()).length > 0
+      if (!final && !waits) {
+        const hold = await settleCheck($, options, id, stop.stop_hook_active === true).catch(() => undefined)
+        if (hold) {
+          const result = await next(e)
+          if (result.block) return result
+          self.cost.noteChars += hold.length
+          return { ...result, block: hold }
+        }
+      }
+      await agentStopped($, options, id, stop.background_tasks, final).catch(() => undefined)
     }
     return next(e)
   }).catch(() => undefined)
@@ -216,15 +212,23 @@ export const register: Register = (on, options) => {
     const result = withPushNote(pushed, beneath, pushNotes)
     const agentId = fields(e).agent_id
     if (typeof agentId === 'string' && agentId) {
+      // Its hand-back ended its run: that call is no sign of a resumed agent.
+      if (fields(e).tool_name === HANDBACK_TOOL) return countNotes(beneath, result)
       await reopenIfActive($, options, agentId).catch(() => undefined)
       await noteAgentRepo($, options, e).catch(() => undefined)
       await noteAgentActivity($, options, e).catch(() => undefined)
       // What the person removed of ITS work (a step, all of it) is told to it, not the main loop.
       const told = await withOwedNotices($, options, result, agentId)
-      return countNotes(beneath, await withSubagentRule($, options, agentId, told, 'call'))
+      // Too long without an update: one short reminder with this result (0.32.0).
+      const reminder = await agentReminder($, options, e).catch(() => undefined)
+      const reminded = reminder
+        ? { ...told, additionalContext: [...(told.additionalContext ?? []), reminder] }
+        : told
+      return countNotes(beneath, await withSubagentRule($, options, agentId, reminded, 'call'))
     }
     if (agentId) return countNotes(beneath, result)
-    pendingNotes.push(...takeFinishedLinks(), ...takeDeferredRule(options))
+    const nudge = await mainNudge($, options, e).catch(() => undefined)
+    pendingNotes.push(...takeFinishedLinks(), ...takeDeferredRule(options), ...(nudge ? [nudge] : []))
     const noted = withPendingNotes(result)
     return countNotes(beneath, isOn(options, 'reporting') ? await withOwedNotices($, options, noted) : noted)
   }).catch(() => undefined)
@@ -243,10 +247,22 @@ export const register: Register = (on, options) => {
   }).catch(() => undefined)
   // Every tool call about to run (PreToolUse rides `tool.call`): remembered per loop, so a
   // permission prompt can say what it is for. It only notes and passes on — never changes a call.
-  on('tool.call', async (_$, e, next) => {
+  // Two refusals ride it too (0.32.0), each at most once per agent: a subagent's call past the plan
+  // gate without its plan posted, and its SubagentHandback while its steps are not settled. A
+  // hand-back that went through ends its row at once.
+  on('tool.call', async ($, e, next) => {
+    const refused =
+      (await planGate($, options, e).catch(() => undefined)) ??
+      (await handbackCheck($, options, e).catch(() => undefined))
+    if (refused) {
+      self.cost.noteChars += refused.length
+      return { deny: refused }
+    }
     const key = notePendingCall(e)
     try {
-      return await next(e)
+      const result = await next(e)
+      if (!result.deny) await handedBack($, options, e).catch(() => undefined)
+      return result
     } finally {
       // The call ended (ran, failed or was refused): it no longer explains a prompt.
       if (key) endPendingCallOf(key)

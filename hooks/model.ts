@@ -2128,3 +2128,63 @@ export function attentionFor(
 export function noticeTool(message: string): string | undefined {
   return /to use ([\w.:-]+)/i.exec(message)?.[1]
 }
+
+// --- Reporting enforcement (0.32.0) ----------------------------------------------------------------
+
+/** A step's own estimate in minutes, read off its note as the rule asks for it ("~10 min", "15m",
+ *  "~1.5 h"); undefined when the note names none. */
+export function estimateMin(note: string | undefined): number | undefined {
+  if (!note) return undefined
+  const m = /(\d+(?:[.,]\d+)?)\s*(h|hours?|hrs?|m|mins?|minutes?)\b/i.exec(note)
+  if (!m) return undefined
+  const n = Number((m[1] as string).replace(',', '.'))
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  return /^h/i.test(m[2] as string) ? n * 60 : n
+}
+
+/** The slack a `doing` step gets past its estimate before it counts as overdue: twice the estimate,
+ *  and at least this many minutes more. */
+export const OVERDUE_GRACE_MIN = 5
+
+/** A `doing` step far past its own estimate (since it was last set): its estimate and the minutes
+ *  spent so far. Undefined for any other step, or one without an estimate. */
+export function overdue(
+  step: Pick<Task, 'status' | 'note' | 'updatedAt'>,
+  nowMs: number,
+): { est: number; spent: number } | undefined {
+  if (step.status !== 'doing') return undefined
+  const est = estimateMin(step.note)
+  if (est === undefined) return undefined
+  const spent = Math.floor((nowMs - Date.parse(step.updatedAt)) / 60_000)
+  if (!Number.isFinite(spent) || spent <= Math.max(est * 2, est + OVERDUE_GRACE_MIN)) return undefined
+  return { est: Math.round(est), spent }
+}
+
+/** Whether an agent's entry holds its plan: its steps, or (at the minimal effort) at least `now`. */
+export function hasPlan(a: Pick<AgentEntry, 'now' | 'tasks'>, plan: 'tasks' | 'now'): boolean {
+  return a.tasks.length > 0 || (plan === 'now' && !!a.now)
+}
+
+/** The steps an agent has not settled: still `todo` or `doing` (a `blocked` one says why). */
+export function unsettledSteps(a: Pick<AgentEntry, 'tasks'>): Task[] {
+  return a.tasks.filter(x => x.status === 'todo' || x.status === 'doing')
+}
+
+/** An ended agent's steps that did not come out done: failed, or left unfinished. */
+export function agentIssues(a: Pick<AgentEntry, 'tasks'>): number {
+  return a.tasks.filter(x => x.status === 'failed' || x.status === 'unfinished').length
+}
+
+/** The coordinator's open tasks whose linked agent ended after the task's last update: each waits
+ *  for the coordinator to verify the agent's result and set the task's real state (or re-link it).
+ *  An agent the person stopped in a pane is not one (that task reads "re-plan or skip"). */
+export function toVerify(file: SessionFile): { task: Task; agent: AgentEntry }[] {
+  const out: { task: Task; agent: AgentEntry }[] = []
+  for (const task of file.tasks) {
+    if (task.auto || isClosed(task.status) || !task.agent) continue
+    const agent = linkedAgent(file, task)
+    if (!agent || agent.endedAt === null || agent.cancelledAt) continue
+    if (Date.parse(task.updatedAt) <= Date.parse(agent.endedAt)) out.push({ task, agent })
+  }
+  return out
+}

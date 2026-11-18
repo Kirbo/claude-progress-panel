@@ -118,6 +118,28 @@ export const agentCallsJoined = new Set<string>()
 export const agentActivityAt = new Map<string, number>()
 export const ACTIVITY_EVERY_MS = 3000
 
+// What the reporting enforcement (0.32.0) counts per subagent, in memory: its tool calls (the plan
+// gate's count), the calls since its last progress_update and since its last reminder, when it last
+// reported (or was first seen), and the one-time refusals it already had — the plan gate's and the
+// settle check's (never a second: an agent is never trapped). `handedBack`: its SubagentHandback
+// went through, so its stop is final. A reload starts the counts over; what matters is read back
+// from its entry (a plan already posted).
+export type AgentTrack = {
+  calls: number
+  sinceUpdate: number
+  sinceRemind: number
+  sinceMs: number
+  remindedMs?: number
+  planned?: true
+  gated?: true
+  settleAsked?: true
+  handedBack?: true
+}
+export const agentTrack = new Map<string, AgentTrack>()
+
+// The tool through which a subagent hands its final report back (the call ends its run).
+export const HANDBACK_TOOL = 'SubagentHandback'
+
 // Subagents told the reporting rule (once each, process-wide).
 export const subagentRuleSent = new Set<string>()
 
@@ -328,6 +350,10 @@ export const self: {
    *  answers and how many, the notes handed over with hook results, and the rule appended to Agent
    *  calls' prompts. Memory only: a reload starts it over. */
   cost: { ruleChars: number; answers: number; answerChars: number; noteChars: number; promptChars: number }
+  /** The main loop's tool calls in this turn (0.32.0), and since its last progress_update: the plan
+   *  note (once a turn) and the update reminder count them. `reported`: it sent progress_update this
+   *  turn. Reset at every prompt. */
+  main: { calls: number; sinceUpdate: number; planNudged: boolean; reported: boolean }
 } = {
   manifest: undefined,
   seenNeeds: undefined,
@@ -352,6 +378,7 @@ export const self: {
   teaLogins: undefined,
   runJobs: new Map(),
   cost: { ruleChars: 0, answers: 0, answerChars: 0, noteChars: 0, promptChars: 0 },
+  main: { calls: 0, sinceUpdate: 0, planNudged: false, reported: false },
 }
 
 // The conversation ended but the process goes on under another session id (`/clear`, a resume in
@@ -384,6 +411,8 @@ export function forgetSessionMemory(): void {
   agentCalls.clear()
   agentCallsJoined.clear()
   agentActivityAt.clear()
+  agentTrack.clear()
+  self.main = { calls: 0, sinceUpdate: 0, planNudged: false, reported: false }
   pendingCall.clear()
 }
 

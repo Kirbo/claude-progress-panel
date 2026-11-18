@@ -1158,6 +1158,13 @@ test('skipped, failed and unfinished read differently — each with its reason b
       { title: '4. Dead sessions', status: 'doing' },
     ],
   } as never)
+  // A step still open: held at its first stop (0.32.0), ended by the second.
+  await $.classic.SubagentStop({
+    agent_id: 'sub-9',
+    agent_type: 'general-purpose',
+    stop_hook_active: false,
+    agent_transcript_path: '/t',
+  } as never)
   await $.classic.SubagentStop({
     agent_id: 'sub-9',
     agent_type: 'general-purpose',
@@ -4599,6 +4606,13 @@ test('a task linked to a subagent shows its live progress; its finish is told to
   expect((await texts(ui)).some(x => x.startsWith('● Lane L 1/2'))).toBe(true)
   await ui.unmount()
   // The agent stops: the coordinator is told — in its next answer, once — and the task stays open.
+  // A step still open: held at its first stop (0.32.0), ended by the second.
+  await $.classic.SubagentStop({
+    agent_id: 'sub-l',
+    agent_type: 'general-purpose',
+    stop_hook_active: false,
+    agent_transcript_path: '/t',
+  } as never)
   await $.classic.SubagentStop({
     agent_id: 'sub-l',
     agent_type: 'general-purpose',
@@ -4647,14 +4661,19 @@ test('a subagent that stopped and was resumed is running again; one that only st
     } as never)
   await report('sub-z')
   await report('sub-y')
-  const stop = (agent_id: string, extra: object = {}) =>
-    $.classic.SubagentStop({
-      agent_id,
-      agent_type: 'general-purpose',
-      stop_hook_active: false,
-      agent_transcript_path: '/t',
-      ...extra,
-    } as never)
+  // Each has a step still open: held at its first stop (0.32.0), ended by the second.
+  const stop = async (agent_id: string, extra: object = {}) => {
+    const once = () =>
+      $.classic.SubagentStop({
+        agent_id,
+        agent_type: 'general-purpose',
+        stop_hook_active: false,
+        agent_transcript_path: '/t',
+        ...extra,
+      } as never)
+    await once()
+    return once()
+  }
   await stop('sub-z')
   await stop('sub-y')
   // The list keeps saying "completed" for both (a resumed run's old status).
@@ -4941,13 +4960,18 @@ test('an agent on no task: the coordinator is told, a stand-in task appears on i
   expect(read(disk, `${DIR}/s-me.json`).tasks.some(x => x.auto)).toBe(false)
 })
 
-const stopAgent = ($: $Test, id: string) =>
-  $.classic.SubagentStop({
-    agent_id: id,
-    agent_type: 'general-purpose',
-    stop_hook_active: false,
-    agent_transcript_path: '/t',
-  } as never)
+// An agent with steps still open is held at its first stop (0.32.0): its second one ends it.
+const stopAgent = async ($: $Test, id: string) => {
+  const once = () =>
+    $.classic.SubagentStop({
+      agent_id: id,
+      agent_type: 'general-purpose',
+      stop_hook_active: false,
+      agent_transcript_path: '/t',
+    } as never)
+  await once()
+  return once()
+}
 
 test('a stand-in task lives only while its agent works: gone when the agent ends, and nobody is asked to close it', async ($, on) => {
   on('tool.call', { tool: 'Agent' }, () => ({ result: {} }) as never)
@@ -7022,4 +7046,343 @@ test("a commit's several runs show on its row: how many, each one's state, and e
   expect(links).toContain('https://github.com/o/r/actions/runs/11')
   expect(lines.some(l => l.startsWith('● unit'))).toBe(true)
   await ui.unmount()
+})
+
+// --- Reporting enforcement (0.32.0) ----------------------------------------------------------------
+
+// A subagent's tool call as the engine runs it: `tool.call` (where the plan gate stands), then its
+// PostToolUse (where a reminder rides). Answers the refusal, or the notes its result carried.
+async function agentCall($: $Test, agent: string, tool = 'Read') {
+  const ran = (await $.tool.call({ tool, agentId: agent, file_path: '/w/app/x' } as never)) as {
+    deny?: string
+  }
+  if (ran.deny) return { deny: ran.deny, notes: '' }
+  const post = (await $.classic.PostToolUse({
+    tool_name: tool,
+    tool_input: { file_path: '/w/app/x' },
+    tool_response: {},
+    agent_id: agent,
+  } as never)) as { additionalContext?: string[] }
+  return { deny: undefined, notes: (post.additionalContext ?? []).join('\n') }
+}
+
+async function agentReport($: $Test, agent: string, input: Record<string, unknown>) {
+  return $.tool.call({ tool: TOOL, agentId: agent, ...input } as never)
+}
+
+test('a subagent past the plan gate without its steps has its next call refused ONCE; one that planned, an engine fork and a teammate never', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push(
+    { id: 'lazy', description: 'Lane L', type: 'general-purpose', status: 'running' },
+    { id: 'tidy', description: 'Lane T', type: 'general-purpose', status: 'running' },
+    { id: 'mate', description: 'Mate', type: 'teammate', status: 'running', teammateId: 'm@team' } as never,
+  )
+  await start($)
+  await update($, { now: 'coordinating' })
+  // A tiny job: three calls pass without a plan.
+  for (let i = 0; i < 3; i++) expect((await agentCall($, 'lazy')).deny).toBeUndefined()
+  // The fourth is refused, with the instruction.
+  const refused = await agentCall($, 'lazy')
+  expect(refused.deny).toContain('refused once')
+  expect(refused.deny).toContain('mcp__progress-panel__progress_update')
+  expect(refused.deny).toContain('made 3 tool calls')
+  // Never twice: the agent carries on even if it cannot report (no progress tool).
+  for (let i = 0; i < 5; i++) expect((await agentCall($, 'lazy')).deny).toBeUndefined()
+  // One that posted its steps first is never refused.
+  await agentReport($, 'tidy', { now: 'reading', tasks: [{ title: 'read', status: 'doing' }], eta: 5 })
+  for (let i = 0; i < 6; i++) expect((await agentCall($, 'tidy')).deny).toBeUndefined()
+  // An engine fork (no listed agent) and a teammate are never gated.
+  for (let i = 0; i < 6; i++) {
+    expect((await agentCall($, 'compaction-fork')).deny).toBeUndefined()
+    expect((await agentCall($, 'mate')).deny).toBeUndefined()
+  }
+  // The main loop is never refused.
+  for (let i = 0; i < 6; i++)
+    expect(
+      ((await $.tool.call({ tool: 'Read', file_path: '/w/app/y' } as never)) as { deny?: string }).deny,
+    ).toBeUndefined()
+})
+
+test(
+  'the plan gate is off with planGate off, and asks only for `now` at the minimal effort',
+  { options: { reportingEffort: 'minimal' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    world.agents.push({ id: 'a1', description: 'Lane 1', type: 'general-purpose', status: 'running' })
+    await start($)
+    await update($, { now: 'coordinating' })
+    await agentReport($, 'a1', { now: 'reading the code' })
+    // `now` is a plan at the minimal effort: never refused, and no reminders either.
+    for (let i = 0; i < 12; i++) {
+      const r = await agentCall($, 'a1')
+      expect(r.deny).toBeUndefined()
+      expect(r.notes).not.toContain('Progress pane:')
+    }
+  },
+)
+
+test('a planGate switched off never refuses', { options: { planGate: 'off' } }, async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'a2', description: 'Lane 2', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, { now: 'coordinating' })
+  for (let i = 0; i < 8; i++) expect((await agentCall($, 'a2')).deny).toBeUndefined()
+})
+
+test(
+  'a subagent working on without an update is reminded with a tool result: by calls, by minutes, naming the step still doing and how far past its estimate',
+  { options: { updateEveryMin: '3' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    world.agents.push({ id: 'w1', description: 'Lane W', type: 'general-purpose', status: 'running' })
+    await start($)
+    await update($, { now: 'coordinating' })
+    await agentReport($, 'w1', {
+      now: 'building',
+      tasks: [
+        { title: 'build', status: 'doing', note: '~2 min' },
+        { title: 'test', note: '~5 min' },
+      ],
+      eta: 7,
+    })
+    // Seven calls: quiet. The eighth since the update carries the reminder.
+    for (let i = 0; i < 7; i++) expect((await agentCall($, 'w1')).notes).not.toContain('Progress pane:')
+    const eighth = (await agentCall($, 'w1')).notes
+    expect(eighth).toContain('8 tool calls')
+    expect(eighth).toContain('still `doing`: t1 "build"')
+    // At most once per window: the next call is quiet again.
+    expect((await agentCall($, 'w1')).notes).not.toContain('Progress pane:')
+    // An update starts the count over.
+    await agentReport($, 'w1', { tasks: [{ id: 't1', status: 'doing' }] })
+    for (let i = 0; i < 3; i++) expect((await agentCall($, 'w1')).notes).not.toContain('Progress pane:')
+    // Three minutes without an update: the next call is reminded, even below the call count.
+    await world.clock.advance(3 * 60_000)
+    expect((await agentCall($, 'w1')).notes).toContain('since your last update')
+    // The step's age set by hand (never minutes of simulated ticks): 9 min `doing` on a ~2 min
+    // estimate is overdue — the next reminder says so, and the pane marks the step.
+    const file = read(disk, `${DIR}/s-me.json`)
+    put(disk, `${DIR}/s-me.json`, {
+      ...file,
+      agents: file.agents?.map(a => ({
+        ...a,
+        tasks: a.tasks.map(x =>
+          x.id === 't1' ? { ...x, updatedAt: new Date(T0 - 6 * 60_000).toISOString() } : x,
+        ),
+      })),
+    })
+    for (let i = 0; i < 7; i++) await agentCall($, 'w1')
+    expect((await agentCall($, 'w1')).notes).toContain('t1 "build" (over its ~2 min estimate: 9 min so far)')
+    await world.clock.advance(2100)
+    const ui = await pane($)
+    expect((await texts(ui)).some(l => l.includes('⏱ over its ~2 min estimate: 9 min so far'))).toBe(true)
+    await ui.unmount()
+    // Every step closed while it keeps working: it is asked to add the step it is on.
+    await agentReport($, 'w1', {
+      tasks: [
+        { id: 't1', status: 'done' },
+        { id: 't2', status: 'done' },
+      ],
+    })
+    for (let i = 0; i < 7; i++) await agentCall($, 'w1')
+    expect((await agentCall($, 'w1')).notes).toContain('every step of yours is closed')
+  },
+)
+
+test('a subagent that hands back with steps open is refused ONCE with the list; the second hand-back passes and its row ends honestly', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'h1', description: 'Lane H', type: 'general-purpose', status: 'running' })
+  await start($)
+  await update($, { tasks: [{ title: 'Lane H', status: 'doing', agent: 'Lane H' }] })
+  await agentReport($, 'h1', {
+    now: 'working',
+    tasks: [
+      { title: 'one', status: 'done' },
+      { title: 'two', status: 'doing', note: '~5 min' },
+      { title: 'three', note: '~5 min' },
+    ],
+    eta: 10,
+  })
+  const handBack = async () =>
+    (await $.tool.call({ tool: 'SubagentHandback', agentId: 'h1', message: 'report' } as never)) as {
+      deny?: string
+    }
+  const first = await handBack()
+  expect(first.deny).toContain('settle your steps')
+  expect(first.deny).toContain('- t2 "two" (doing)')
+  expect(first.deny).toContain('- t3 "three" (todo)')
+  // Not ended by the refused hand-back.
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.endedAt).toBeNull()
+  // It settles one, not the other — and hands back again: it passes.
+  await agentReport($, 'h1', { tasks: [{ id: 't2', status: 'done', note: 'shipped' }] })
+  expect((await handBack()).deny).toBeUndefined()
+  // Its row ended right there: no waiting, no estimate, the step it left open unfinished.
+  const ended = read(disk, `${DIR}/s-me.json`).agents?.[0]
+  expect(ended?.endedAt).toBe(new Date(T0).toISOString())
+  expect(ended?.waiting).toBeUndefined()
+  expect(ended?.tasks.map(x => x.status)).toEqual(['done', 'done', 'unfinished'])
+  // Its later SubagentStop — even with background work listed — neither holds it nor reopens it.
+  const stop = (await $.classic.SubagentStop({
+    agent_id: 'h1',
+    agent_type: 'general-purpose',
+    stop_hook_active: false,
+    agent_transcript_path: '/t',
+    background_tasks: [{ id: 'bg-1', description: 'a watcher' }],
+  } as never)) as { block?: string }
+  expect(stop.block).toBeUndefined()
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.endedAt).toBe(new Date(T0).toISOString())
+  // The hand-back's own PostToolUse is no sign of a resumed agent.
+  await $.classic.PostToolUse({
+    tool_name: 'SubagentHandback',
+    tool_input: {},
+    tool_response: {},
+    agent_id: 'h1',
+  } as never)
+  expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.endedAt).not.toBeNull()
+  // The coordinator is told once — with the contradiction (a step unfinished, the task still doing).
+  const told = JSON.stringify(await update($, { now: 'checking' }))
+  expect(told).toContain('finished with 1 step(s) failed or unfinished')
+  expect(told).toContain('still says doing')
+  expect(JSON.stringify(await update($, { now: 'checking more' }))).not.toContain('finished with')
+})
+
+test('a subagent that stops with steps open is held ONCE; its next stop ends it, open steps unfinished — one waiting on its own background work is never held', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push(
+    { id: 's1', description: 'Lane S', type: 'general-purpose', status: 'running' },
+    { id: 's2', description: 'Lane BG', type: 'general-purpose', status: 'running' },
+  )
+  await start($)
+  await update($, { now: 'coordinating' })
+  await agentReport($, 's1', { now: 'w', tasks: [{ title: 'a', status: 'doing' }] })
+  const stop = async (agent: string, again = false, background: unknown[] = []) =>
+    (await $.classic.SubagentStop({
+      agent_id: agent,
+      agent_type: 'general-purpose',
+      stop_hook_active: again,
+      agent_transcript_path: '/t',
+      background_tasks: background,
+    } as never)) as { block?: string }
+  const held = await stop('s1')
+  expect(held.block).toContain('- t1 "a" (doing)')
+  expect(read(disk, `${DIR}/s-me.json`).agents?.find(a => a.id === 's1')?.endedAt).toBeNull()
+  // The next stop passes — the engine's own flag or not — and the plugin closes what is left.
+  expect((await stop('s1')).block).toBeUndefined()
+  const s1 = read(disk, `${DIR}/s-me.json`).agents?.find(a => a.id === 's1')
+  expect(s1?.endedAt).not.toBeNull()
+  expect(s1?.tasks[0]?.status).toBe('unfinished')
+  // Waiting on background work of its own: it resumes by itself — not held, not ended.
+  await agentReport($, 's2', { now: 'w', tasks: [{ title: 'b', status: 'doing' }] })
+  await $.classic.PostToolUse({
+    tool_name: 'Bash',
+    tool_input: { command: 'sleep 1' },
+    tool_response: { backgroundTaskId: 'bg-9' },
+    agent_id: 's2',
+  } as never)
+  expect((await stop('s2', false, [{ id: 'bg-9', description: 'build' }])).block).toBeUndefined()
+  const s2 = read(disk, `${DIR}/s-me.json`).agents?.find(a => a.id === 's2')
+  expect(s2?.endedAt).toBeNull()
+  expect(s2?.waiting).toBe(true)
+})
+
+test(
+  'settleBeforeHandback off: a hand-back and a stop with open steps pass at once',
+  { options: { settleBeforeHandback: 'off' } },
+  async ($, on) => {
+    const disk = makeDisk()
+    const world = engine(on, disk)
+    world.agents.push({ id: 'x1', description: 'Lane X', type: 'general-purpose', status: 'running' })
+    await start($)
+    await update($, { now: 'coordinating' })
+    await agentReport($, 'x1', { now: 'w', tasks: [{ title: 'a', status: 'doing' }] })
+    expect(
+      (
+        (await $.tool.call({ tool: 'SubagentHandback', agentId: 'x1', message: 'r' } as never)) as {
+          deny?: string
+        }
+      ).deny,
+    ).toBeUndefined()
+    expect(read(disk, `${DIR}/s-me.json`).agents?.[0]?.tasks[0]?.status).toBe('unfinished')
+  },
+)
+
+test('a task whose agent finished shows ◆ verify, and every turn end lists it until the coordinator sets its real state', async ($, on) => {
+  const disk = makeDisk()
+  const world = engine(on, disk)
+  world.agents.push({ id: 'v1', description: 'Lane V', type: 'general-purpose', status: 'running' })
+  await start($)
+  await $.classic.UserPromptSubmit({ prompt: 'go' } as never)
+  await update($, { tasks: [{ title: 'Lane V', status: 'doing', agent: 'Lane V' }] })
+  await agentReport($, 'v1', { now: 'w', tasks: [{ title: 'a', status: 'done' }] })
+  await $.classic.SubagentStop({
+    agent_id: 'v1',
+    agent_type: 'general-purpose',
+    stop_hook_active: false,
+    agent_transcript_path: '/t',
+  } as never)
+  // The pane: ◆ in place of the doing mark, and the agent's end beneath (the list says so too).
+  world.agents.splice(0, 1, { id: 'v1', description: 'Lane V', type: 'general-purpose', status: 'completed' })
+  await world.clock.advance(2100)
+  const rows = async (ui: Awaited<ReturnType<typeof pane>>) => [
+    ...(await texts(ui)),
+    ...(await ui.findAll({ type: 'Button' })).map(b => b.text ?? ''),
+  ]
+  let ui = await pane($)
+  expect(await rows(ui)).toContain('◆')
+  expect((await texts(ui)).some(l => l.includes('✓ Lane V finished — verify and update this task'))).toBe(
+    true,
+  )
+  await ui.unmount()
+  // The turn's end lists it (the stop right after passes); a later turn lists it again.
+  const first = (await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }
+  expect(first.block).toContain('- t1 "Lane V" (agent "Lane V" finished)')
+  expect(
+    ((await $.classic.Stop({ stop_hook_active: true } as never)) as { block?: string }).block,
+  ).toBeUndefined()
+  await $.classic.UserPromptSubmit({ prompt: 'next' } as never)
+  expect(
+    ((await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }).block,
+  ).toContain('"Lane V"')
+  // Verified: done with a note — no more listing, no ◆.
+  await world.clock.advance(1000)
+  await update($, { tasks: [{ id: 't1', status: 'done', note: 'verified: tests green' }] })
+  await $.classic.UserPromptSubmit({ prompt: 'more' } as never)
+  expect(
+    ((await $.classic.Stop({ stop_hook_active: false } as never)) as { block?: string }).block,
+  ).toBeUndefined()
+  await world.clock.advance(2100)
+  ui = await pane($)
+  expect(await rows(ui)).not.toContain('◆')
+  await ui.unmount()
+})
+
+test('the main loop is told once a turn to post its task list after twice the plan gate’s calls, and reminded of a doing task it leaves without updates', async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  await start($)
+  await $.classic.UserPromptSubmit({ prompt: 'do it' } as never)
+  const mainCall = async () => {
+    const post = (await $.classic.PostToolUse({
+      tool_name: 'Read',
+      tool_input: {},
+      tool_response: {},
+    } as never)) as {
+      additionalContext?: string[]
+    }
+    return (post.additionalContext ?? []).join('\n')
+  }
+  for (let i = 0; i < 5; i++) expect(await mainCall()).not.toContain('no task list')
+  expect(await mainCall()).toContain('this turn has made 6 tool calls and the pane shows no task list')
+  // Once a turn.
+  for (let i = 0; i < 5; i++) expect(await mainCall()).not.toContain('no task list')
+  // With a task doing: sixteen calls without an update bring a reminder naming it.
+  await $.classic.UserPromptSubmit({ prompt: 'next' } as never)
+  await update($, { now: 'w', tasks: [{ title: 'Fix the bug', status: 'doing' }] })
+  for (let i = 0; i < 15; i++) expect(await mainCall()).not.toContain('since your last update')
+  expect(await mainCall()).toContain('16 tool calls since your last update; still `doing`: t1 "Fix the bug"')
 })

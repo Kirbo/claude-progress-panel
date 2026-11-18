@@ -83,7 +83,15 @@ The plugin then refreshes it through the user's `glab` (GitLab), `gh` (GitHub), 
   prompt (and again after a compaction), with one short reminder if nothing was reported by the prompt after; a subagent
   gets its part inside the Agent call's own prompt — so it holds without loading this skill. A
   subagent whose job is about three tool calls may skip reporting; a longer one reports from its
-  first call.
+  first call: `now`, every step it is about to execute (each open step's `note` its estimate) and
+  `eta`. The plugin holds it to that (0.32.0): past `planGateCalls` calls (3) with no steps posted,
+  its next call is refused once; after `updateEveryCalls` calls (8) or `updateEveryMin` minutes (5)
+  without an update its tool result names the step still `doing` (or asks for the step it is on,
+  when all are closed) — add a new step the moment you start it; and its hand-back (or stop) with a
+  step still `todo` / `doing` is refused once with the list: mark each done, failed or skipped with
+  a one-line note, then hand back. What is still open after that is marked unfinished. The main
+  session is reminded the same way (never refused): once a turn past twice the plan calls with no
+  task list, and after twice the update calls while a task is `doing`.
 - **Each change:** mark the task `doing` when you start it, `done` (with a one-line outcome in
   `note`: commit hash, pipeline id) when verified, `blocked` with the reason when stuck.
 - **Never keep a task open to wait for CI:** a push links its pipeline to your `doing` task of that
@@ -114,8 +122,11 @@ later needs no copy either: its new steps show there as it adds them. An agent t
 task of yours is shown as a stand-in task "↳ <agent>" while it runs, or until you link the real
 one (you are told once, when you have a task it could be); the stand-in is the plugin's and goes
 when the agent ends — never update or close it. When an agent linked to a task of yours finishes
-you are told once ("agent … finished — verify its result and update task …"): check its result,
-then mark the task done yourself — the plugin never does.
+you are told once ("agent … finished — verify its result and update task …", naming its failed or
+unfinished steps when there are any): check its result, then set the task's real state yourself
+(done, failed, or blocked with a note) — the plugin never does. Until you update it the task shows
+◆ instead of ●, and every turn's end lists it (the stop right after passes); link it to another
+agent when one carries the work on.
 
 ## Removed in the pane
 

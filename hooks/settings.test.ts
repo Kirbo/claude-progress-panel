@@ -1,6 +1,14 @@
 import { expect, test } from 'claude-code/testing'
 
-import { groupSettings, isChangedSetting, notifiesFinish, readSettings, tint, valueTone } from './settings'
+import {
+  enforcement,
+  groupSettings,
+  isChangedSetting,
+  notifiesFinish,
+  readSettings,
+  tint,
+  valueTone,
+} from './settings'
 
 test('every setting has its built-in default, and an unknown value falls back to it', () => {
   const d = readSettings({})
@@ -75,4 +83,48 @@ test('the Settings view groups the defaults in order, an unknown field last; val
   expect(isChangedSetting('on', 'off')).toBe(true)
   expect(isChangedSetting('84', '84')).toBe(false)
   expect(isChangedSetting('', undefined)).toBe(false)
+})
+
+test('the enforcement follows the reporting effort: milestones relaxes the reminders, minimal asks only for `now` — the settling never relaxes', () => {
+  const detailed = enforcement(readSettings({}))
+  expect(detailed).toEqual({
+    gateCalls: 3,
+    plan: 'tasks',
+    everyCalls: 8,
+    everyMs: 300_000,
+    mainPlanCalls: 6,
+    mainEveryCalls: 16,
+    settle: true,
+  })
+  expect(enforcement(readSettings({ reportingEffort: 'milestones' }))).toMatchObject({
+    gateCalls: 3,
+    plan: 'tasks',
+    everyCalls: 16,
+    everyMs: 600_000,
+    mainEveryCalls: 32,
+    settle: true,
+  })
+  expect(enforcement(readSettings({ reportingEffort: 'minimal' }))).toMatchObject({
+    gateCalls: 3,
+    plan: 'now',
+    everyCalls: 0,
+    everyMs: 0,
+    mainEveryCalls: 0,
+    settle: true,
+  })
+  // Switched off one by one; an unknown value falls back to the default.
+  expect(
+    enforcement(
+      readSettings({
+        planGate: 'off',
+        updateEveryCalls: '0',
+        updateEveryMin: '0',
+        settleBeforeHandback: 'off',
+      }),
+    ),
+  ).toMatchObject({ gateCalls: undefined, everyCalls: 0, everyMs: 0, mainEveryCalls: 0, settle: false })
+  expect(enforcement(readSettings({ planGateCalls: '4', updateEveryCalls: '9' }))).toMatchObject({
+    gateCalls: 3,
+    everyCalls: 8,
+  })
 })

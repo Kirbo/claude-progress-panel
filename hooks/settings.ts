@@ -29,6 +29,17 @@ export type Settings = {
   palette: 'default' | 'colorblind' | 'none'
   /** ✕ on a running pipeline: cancel it and delete it from the CI, only cancel, or no ✕. */
   runningPipelineX: 'delete' | 'cancel' | 'off'
+  /** A subagent past `planGateCalls` tool calls without its plan in the pane has its next call
+   *  refused once (0.32.0). */
+  planGate: boolean
+  /** The tool calls a subagent may make before its plan is due (a tiny job needs none). */
+  planGateCalls: number
+  /** A reminder after this many tool calls without a progress_update (0 = off), at `detailed`. */
+  updateEveryCalls: number
+  /** …or after this long without one (0 = off), at `detailed`. */
+  updateEveryMs: number
+  /** A subagent's hand-back / stop with steps still open is refused once (0.32.0). */
+  settleBeforeHandback: boolean
 }
 
 /**
@@ -68,6 +79,44 @@ export function readSettings(options: Record<string, unknown>): Settings {
     updateCheck: pick(options.updateCheck, ['on', 'off'], 'on') === 'on',
     palette: pick(options.palette, ['default', 'colorblind', 'none'], 'default'),
     runningPipelineX: pick(options.runningPipelineX, ['delete', 'cancel', 'off'], 'delete'),
+    planGate: pick(options.planGate, ['on', 'off'], 'on') === 'on',
+    planGateCalls: num(options.planGateCalls, [1, 2, 3, 5, 8], 3),
+    updateEveryCalls: num(options.updateEveryCalls, [0, 5, 8, 12, 20, 30], 8),
+    updateEveryMs: num(options.updateEveryMin, [0, 3, 5, 10, 15, 30], 5) * 60_000,
+    settleBeforeHandback: pick(options.settleBeforeHandback, ['on', 'off'], 'on') === 'on',
+  }
+}
+
+/** What the plugin enforces at the session's reporting effort (0.32.0). A lower effort relaxes the
+ *  plan gate and the reminders — `milestones` doubles the reminders' thresholds, `minimal` asks only
+ *  for `now` and sends no reminders — but never the settling of an agent's steps at its end, nor
+ *  what the pane shows once it ended. 0 = off. */
+export type Enforcement = {
+  /** A subagent's call past this many without a plan is refused once; undefined = no gate. */
+  gateCalls: number | undefined
+  /** What counts as a plan: steps (`tasks`), or only `now` (minimal). */
+  plan: 'tasks' | 'now'
+  /** Subagent reminders: after this many calls / this long without an update. */
+  everyCalls: number
+  everyMs: number
+  /** The main session: one note per turn after this many calls without a task list, and a reminder
+   *  after this many calls without an update while a task is `doing`. */
+  mainPlanCalls: number
+  mainEveryCalls: number
+  /** A subagent's hand-back / stop with open steps is refused once. */
+  settle: boolean
+}
+
+export function enforcement(s: Settings): Enforcement {
+  const factor = s.effort === 'milestones' ? 2 : s.effort === 'minimal' ? 0 : 1
+  return {
+    gateCalls: s.planGate ? s.planGateCalls : undefined,
+    plan: s.effort === 'minimal' ? 'now' : 'tasks',
+    everyCalls: s.updateEveryCalls * factor,
+    everyMs: s.updateEveryMs * factor,
+    mainPlanCalls: s.planGateCalls * 2,
+    mainEveryCalls: s.updateEveryCalls * 2 * factor,
+    settle: s.settleBeforeHandback,
   }
 }
 
@@ -100,7 +149,17 @@ export function notifiesFinish(setting: Settings['pipelineNotify'], state: strin
 export const SETTING_GROUPS = [
   {
     heading: 'settings.group.reporting',
-    fields: ['autoStart', 'tasksDefault', 'agentsDefault', 'reportingEffort'],
+    fields: [
+      'autoStart',
+      'tasksDefault',
+      'agentsDefault',
+      'reportingEffort',
+      'planGate',
+      'planGateCalls',
+      'updateEveryCalls',
+      'updateEveryMin',
+      'settleBeforeHandback',
+    ],
   },
   {
     heading: 'settings.group.pipelines',

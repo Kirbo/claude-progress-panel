@@ -220,7 +220,7 @@ export const en = {
   'rule.intro':
     "A Progress pane beside every Claude Code session on this machine shows what each session is doing. This session's entry is written only through the `mcp__progress-panel__progress_update` tool. Keep it current on your own, without being asked:",
   'rule.plan':
-    '- As soon as a task takes more than one step, your first tool call is progress_update with `now` and the task list (one task per unit of work: diagnose, fix, verify, push…), listed in the order you will do them. When that order changes (a new ask goes first, you reshuffle), send `order` with the task ids in the new order — the pane lists tasks in that order by default.',
+    '- As soon as a task takes more than one step, your first tool call is progress_update with `now` and the task list (one task per unit of work: diagnose, fix, verify, push…), listed in the order you will do them (a turn that runs on without one is reminded). When that order changes (a new ask goes first, you reshuffle), send `order` with the task ids in the new order — the pane lists tasks in that order by default.',
   'rule.repo':
     "- A session that works in more than one repo gives every task its `repo` (the repo's name, e.g. its folder): the pane groups the tasks by repo. Keep the repo out of the title.",
   'rule.steps':
@@ -235,11 +235,11 @@ export const en = {
     "- A `git push` you run is watched automatically (the repo's CI, forge and host detected; its result tells you). A repo without CI is remembered and skipped, and you are told once: never `watch` a repo the plugin said runs no CI. `watch` yourself only what the plugin cannot see: a run by id, another repo's pipeline, a push made outside this session.",
   'rule.oneReply': '- A question answered in one reply needs no entry.',
   'rule.delegate':
-    "- When you hand a task to a subagent, set that task's `agent` to the Agent call's description: the pane shows the agent's own steps under it — never copy or mirror them into the task; send the task only its status and note. Work you send a running agent later needs no copy either: its new steps show there as it adds them. You still mark the task done yourself, once you verified the agent's result (you are told when it finishes).",
+    "- When you hand a task to a subagent, set that task's `agent` to the Agent call's description: the pane shows the agent's own steps under it — never copy or mirror them into the task; send the task only its status and note. Work you send a running agent later needs no copy either: its new steps show there as it adds them. You still mark the task done yourself, once you verified the agent's result: when it finishes you are told, the task shows ◆ \"agent finished — verify\" in the pane, and every turn's end lists it until you set its real state (done, failed or blocked with a note) or link it to the agent that carries on.",
   'rule.clearPane':
     '- When the person asks to clear the pane, `remove` the finished tasks and send `clearAgents: true`: every subagent row that is no longer working leaves the pane (a running one stays).',
   'rule.subagent':
-    "- A subagent reports too, under its coordinator's session (never as the session's tasks): every few steps — and when its plan changes — call progress_update with `now`, its steps as `tasks` (statuses moving; each open step's `note` its own estimate, e.g. ~10 min) and `eta` (minutes it expects the rest to take). Its coordinator sees them in its own progress_update answers and in the pane. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
+    "- A subagent reports too, under its coordinator's session (never as the session's tasks): every few steps — and when its plan changes — call progress_update with `now`, its steps as `tasks` (statuses moving; each open step's `note` its own estimate, e.g. ~10 min) and `eta` (minutes it expects the rest to take); it posts its plan before it works and settles every step before it hands back (the plugin holds it to both). Its coordinator sees them in its own progress_update answers and in the pane. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
   'rule.milestones':
     '- Report at the milestones only, to keep your calls few: your plan when multi-step work starts (`now` + the task list, in order), each task as it is done (with a one-line outcome), blocked, skipped or failed (with why), and `now` when what you are on changes. No step-by-step updates.',
   'rule.nowOnly':
@@ -309,6 +309,9 @@ export const en = {
     'Progress pane: agent "{agent}" finished — verify its result and update task "{task}" yourself.',
   'pane.linkedAgent': '● {agent}{steps}{left}',
   'pane.linkedAgentDone': '✓ {agent} finished — verify and update this task',
+  'pane.linkedAgentDoneIssues':
+    '✗ {agent} finished with {issues} step(s) failed or unfinished — check before you close this task',
+  'pane.stepOverdue': '⏱ over its ~{est} min estimate: {spent} min so far',
   'pipe.confirmDelete': ' ⊘ cancel + delete? ',
   'pipe.confirmCancel': ' ⊘ cancel? ',
   'pipe.stop': ' ⊘ stop ',
@@ -338,6 +341,40 @@ export const en = {
   'task.pipelineCanceled': 'pipeline {id} canceled',
   'notice.taskPipelineDone': 'Progress pane: task "{task}" is done — {note}.',
   'notice.taskPipelineFailed': 'Progress pane: task "{task}" failed — {note}. Fix it, or re-plan it.',
+  'gate.plan':
+    "Progress pane: refused once — you have made {calls} tool calls and your steps are not in the pane yet. Call mcp__progress-panel__progress_update now with `now`, every step you are about to execute as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta`; then repeat this call. (If you have no progress_update tool, just repeat the call: this is not asked again.)",
+  'gate.planNow':
+    'Progress pane: refused once — you have made {calls} tool calls and the pane does not say what you are doing yet. Call mcp__progress-panel__progress_update with `now` first; then repeat this call. (If you have no progress_update tool, just repeat the call: this is not asked again.)',
+  'remind.noPlan':
+    'Progress pane: {calls} tool calls and your steps are still not in the pane — post them with progress_update (`now`, `tasks`, `eta`).',
+  'remind.now':
+    'Progress pane: {calls} tool calls / {min} min since your last update — is `now` still true? Update it.',
+  'remind.update':
+    'Progress pane: {calls} tool calls / {min} min since your last update; still `doing`: {steps}. Update each by its id (done with a one-line note, or still doing) and add any step you are on that the list does not name; refresh `eta`.',
+  'remind.allClosed':
+    'Progress pane: every step of yours is closed, yet you kept working for {calls} tool calls / {min} min — add the step you are on now (progress_update, `tasks`), with its estimate.',
+  'remind.noneDoing':
+    'Progress pane: {calls} tool calls / {min} min since your last update and no step of yours is `doing` — set the one you are on to `doing` (or add it).',
+  'remind.step': '{id} "{title}"',
+  'remind.stepOverdue': '{id} "{title}" (over its ~{est} min estimate: {spent} min so far)',
+  'settle.open':
+    'Progress pane: before you hand back, settle your steps — these are still open:\n{list}\nMark each done, failed or skipped with a one-line note (progress_update, by id), then hand back. This is asked once; whatever is still open after that is marked unfinished.',
+  'settle.line': '- {id} "{title}" ({status})',
+  'settle.stale':
+    'Progress pane: you made {calls} tool calls since your last update — before you hand back, bring your steps up to date (each done, failed or skipped with a one-line note), then hand back. This is asked once.',
+  'notice.agentFinishedIssues':
+    'Progress pane: agent "{agent}" finished with {issues} step(s) failed or unfinished, while task "{task}" still says {status} — check its result and set the task\'s real state yourself (done, failed or blocked with a note, or re-plan it).',
+  'stop.verify':
+    "Progress pane: these tasks' agents finished after the task was last updated — verify each agent's result and set the task's real state (done, failed, blocked with a note), or link it to the agent that carries on:\n{list}",
+  'stop.verifyLine': '- {id} "{task}" (agent "{agent}" finished)',
+  'stop.verifyLineIssues':
+    '- {id} "{task}" (agent "{agent}" finished with {issues} step(s) failed or unfinished)',
+  'main.plan':
+    'Progress pane: this turn has made {calls} tool calls and the pane shows no task list. If this request takes more than one step, send progress_update with `now` and the tasks you are about to do now; if it is one quick answer, carry on.',
+  'main.planNow':
+    'Progress pane: this turn has made {calls} tool calls and the pane does not say what you are doing — send progress_update with `now`.',
+  'main.update':
+    'Progress pane: {calls} tool calls since your last update; still `doing`: {list}. Is that still true? Update each to its real state.',
   'stale.nudge':
     'Progress pane: no update for a while on {list} — is that still true? Update each to its real state.',
   'stale.nudgeItem': '{id} "{task}" ({status} for {min} min)',
@@ -356,11 +393,11 @@ export const en = {
   'tool.tasksOff': 'Tasks are off for this session: `tasks`, `order` and `remove` were ignored.',
   'tool.pipelinesOff': 'Pipelines are off for this session: `watch` was ignored.',
   'prompt.subagent':
-    "Progress pane: you are a subagent, and your coordinator's session shows you in the Progress pane. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta` (minutes left); then again every few steps and when your plan changes — updating each step by its `id`, never re-adding it under a new title. It lands under your coordinator's session, never as its tasks. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
+    "Progress pane: you are a subagent, and your coordinator's session shows you in the Progress pane. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, every step you are about to execute as `tasks` (each open step's `note` its estimate, e.g. ~10 min) and `eta` (minutes left) — the plugin refuses a later call once if your steps are not there. Then update as soon as a step changes: each by its `id` (never re-added under a new title), a step you take on that the list does not name added the moment you start it, `eta` refreshed; a long stretch without an update is reminded with your tool results. Before you hand back your final report, every step is settled — done, failed or skipped with a one-line note: the plugin refuses the hand-back once while one is still todo or doing, and marks what is left unfinished. It lands under your coordinator's session, never as its tasks. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
   'prompt.subagentMilestones':
-    "Progress pane: you are a subagent, shown under your coordinator's session. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` and `eta` (minutes left); then only when a step is done or blocked. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
+    "Progress pane: you are a subagent, shown under your coordinator's session. Unless your job is done in about three tool calls, your FIRST call is mcp__progress-panel__progress_update with `now`, your steps as `tasks` and `eta` (minutes left) — the plugin refuses a later call once if they are not there; then when a step is done or blocked, adding any new step as you start it. Before you hand back your final report, every step is settled — done, failed or skipped with a note: the plugin refuses the hand-back once while one is still open. Estimates are YOUR OWN wall-clock time as an agent — the tool calls, builds and tests still to run — never the time the work would take a person.",
   'prompt.subagentMinimal':
-    "Progress pane: you are a subagent, shown under your coordinator's session. Unless your job is done in about three tool calls, call mcp__progress-panel__progress_update with `now` (what you are doing) when you start and when that changes — nothing more.",
+    "Progress pane: you are a subagent, shown under your coordinator's session. Unless your job is done in about three tool calls, call mcp__progress-panel__progress_update with `now` (what you are doing) when you start and when that changes. Any steps you post are settled (done, failed or skipped) before you hand back.",
   'toast.pipelineFinished': 'Pipeline {label} {state}',
   'prompt.nudge':
     'Progress pane: this session has not reported yet. If this request takes more than one step, your first tool call is mcp__progress-panel__progress_update with `now` and the task list (progress-panel skill); a question answered in one reply needs none.',

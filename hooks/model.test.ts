@@ -5,6 +5,7 @@ import {
   addDismissals,
   agentDismissal,
   agentHasInside,
+  agentIssues,
   agentRepo,
   applyAgentUpdate,
   applyUpdate,
@@ -20,10 +21,12 @@ import {
   dropEndedAutoTasks,
   endAgent,
   endDeadSession,
+  estimateMin,
   formatClock,
   formatTime,
   groupWorkByRepo,
   hasLinkableTask,
+  hasPlan,
   isBlank,
   isClosed,
   isGenericPermission,
@@ -39,6 +42,7 @@ import {
   needsLivenessCheck,
   newSession,
   OTHER_REPO,
+  overdue,
   ownBackground,
   parseSessionFile,
   parseSidecar,
@@ -58,8 +62,10 @@ import {
   tasksGlance,
   timeLeft,
   toolCallSummary,
+  toVerify,
   UNDO_MS,
   UNDO_PRESS_MS,
+  unsettledSteps,
   untouchedDoing,
   visibleAgents,
   visibleTasks,
@@ -1873,4 +1879,77 @@ test('a task row has something to unfold only with a detail or steps', () => {
   expect(taskHasInside({ detail: '', steps: [] })).toBe(false)
   expect(taskHasInside({ detail: 'Push, then watch CI.' })).toBe(true)
   expect(taskHasInside({ steps: [{ title: 'push', status: 'todo' }] })).toBe(true)
+})
+
+test("a step's estimate is read off its note; a doing step far past it is overdue", () => {
+  expect(estimateMin('~10 min')).toBe(10)
+  expect(estimateMin('15m')).toBe(15)
+  expect(estimateMin('~1.5 h')).toBe(90)
+  expect(estimateMin('about 2 hours')).toBe(120)
+  expect(estimateMin('commit abc123')).toBeUndefined()
+  expect(estimateMin(undefined)).toBeUndefined()
+  const at = Date.UTC(2026, 10, 18, 12, 0, 0)
+  const step = (status: Task['status'], note: string | undefined, minutesAgo: number) => ({
+    status,
+    note,
+    updatedAt: new Date(at - minutesAgo * 60_000).toISOString(),
+  })
+  // ~10 min: overdue only past twice the estimate (20 min).
+  expect(overdue(step('doing', '~10 min', 20), at)).toBeUndefined()
+  expect(overdue(step('doing', '~10 min', 21), at)).toEqual({ est: 10, spent: 21 })
+  // ~2 min: at least 5 minutes of slack (7 min).
+  expect(overdue(step('doing', '~2 min', 7), at)).toBeUndefined()
+  expect(overdue(step('doing', '~2 min', 8), at)).toEqual({ est: 2, spent: 8 })
+  // Only a doing step with an estimate.
+  expect(overdue(step('todo', '~1 min', 60), at)).toBeUndefined()
+  expect(overdue(step('doing', 'no estimate', 600), at)).toBeUndefined()
+})
+
+test('a plan is steps, or only `now` at the minimal effort; open and failed steps are told apart', () => {
+  const s = (status: Task['status']) =>
+    ({ id: status, title: status, status, createdAt: '', updatedAt: '', doneAt: null }) as Task
+  expect(hasPlan({ now: 'reading', tasks: [] }, 'tasks')).toBe(false)
+  expect(hasPlan({ now: 'reading', tasks: [] }, 'now')).toBe(true)
+  expect(hasPlan({ now: null, tasks: [s('todo')] }, 'tasks')).toBe(true)
+  const tasks = [s('todo'), s('doing'), s('blocked'), s('done'), s('failed'), s('unfinished'), s('skipped')]
+  expect(unsettledSteps({ tasks }).map(x => x.status)).toEqual(['todo', 'doing'])
+  expect(agentIssues({ tasks })).toBe(2)
+})
+
+test('an open task whose linked agent ended after its last update waits for the coordinator to verify it', () => {
+  const iso = (m: number) => new Date(Date.UTC(2026, 10, 18, 12, m, 0)).toISOString()
+  let file = newSession({ id: 's1', project: 'p', cwd: '/p' }, iso(0))
+  file = applyUpdate(
+    file,
+    {
+      tasks: [
+        { title: 'Lane A', status: 'doing', agent: 'Lane A' },
+        { title: 'Lane B', status: 'doing', agent: 'Lane B' },
+        { title: 'Lane C', status: 'done', agent: 'Lane C' },
+      ],
+    },
+    iso(1),
+  ).file
+  const agent = (label: string, endedAt: string | null, extra: object = {}) => ({
+    id: label,
+    label,
+    now: null,
+    tasks: [],
+    seq: 0,
+    startedAt: iso(0),
+    updatedAt: iso(0),
+    endedAt,
+    ...extra,
+  })
+  file = {
+    ...file,
+    agents: [agent('Lane A', iso(5)), agent('Lane B', null), agent('Lane C', iso(5))],
+  }
+  expect(toVerify(file).map(x => x.task.title)).toEqual(['Lane A'])
+  // Updated after the agent ended: verified.
+  const touched = applyUpdate(file, { tasks: [{ id: 't1', status: 'doing', note: 'checking' }] }, iso(6)).file
+  expect(toVerify(touched)).toEqual([])
+  // Stopped by the person in a pane: not a result to verify.
+  const cancelled = { ...file, agents: [agent('Lane A', iso(5), { cancelledAt: iso(4) })] }
+  expect(toVerify(cancelled)).toEqual([])
 })
