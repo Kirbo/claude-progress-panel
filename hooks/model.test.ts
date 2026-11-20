@@ -44,6 +44,7 @@ import {
   OTHER_REPO,
   overdue,
   ownBackground,
+  pagedOffset,
   parseSessionFile,
   parseSidecar,
   pruneDone,
@@ -1952,4 +1953,17 @@ test('an open task whose linked agent ended after its last update waits for the 
   // Stopped by the person in a pane: not a result to verify.
   const cancelled = { ...file, agents: [agent('Lane A', iso(5), { cancelledAt: iso(4) })] }
   expect(toVerify(cancelled)).toEqual([])
+})
+
+test('pagedOffset: a scroll the plugin asks for moves its pane one window in that direction, clamped to the tree', () => {
+  // Down from the top: one window; the current row is `offset - by`.
+  expect(pagedOffset({ offset: 100, by: 100, bodyRows: 20, contentRows: 120 })).toBe(20)
+  // Down from row 90: clamped to the last window (120 - 20).
+  expect(pagedOffset({ offset: 100, by: 10, bodyRows: 20, contentRows: 120 })).toBe(100)
+  // Up from row 50: one window back; from row 5, the top.
+  expect(pagedOffset({ offset: 0, by: -50, bodyRows: 20, contentRows: 120 })).toBe(30)
+  expect(pagedOffset({ offset: 0, by: -5, bodyRows: 20, contentRows: 120 })).toBe(0)
+  // Nothing to scroll (the tree fits, or no distance): stays where it is.
+  expect(pagedOffset({ offset: 0, by: 0, bodyRows: 20, contentRows: 10 })).toBe(0)
+  expect(pagedOffset({ offset: 0, by: 0, bodyRows: 20, contentRows: 120 })).toBe(0)
 })

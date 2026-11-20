@@ -49,7 +49,14 @@ Sessions                 [Filter tasks]  [Sort: plan]
   finished rows and no live work.
 - "Clear all (N)" shows only while its Done section is open (0.14.0) and says how many rows it
   clears: all of Done, the rows behind "N older" and the finished agents included.
-- The pane scrolls when taller than its window (the engine's own scrolling).
+- The pane scrolls when taller than its window (the engine's own scrolling: the wheel, and the
+  page/arrow/Home/End keys while the pane holds the keyboard). From the prompt (0.33.0): the
+  corner's `▲ ▼` Buttons carry the engine's `pane:pageUp` / `pane:pageDown` actions, so a chord the
+  person binds to them in `keybindings.json` presses them while the prompt has the keys (a click
+  pages too). A press asks `$.ui.scroll` for the pane's `start` / `end`; the plugin's `ui.scroll`
+  hook (origin `plugin`, this pane) lands the window one `bodyRows` away from where it stands
+  (`pagedOffset`: the current row is `offset - by`, the ask's direction the page's), clamped to the
+  tree. The person's own wheel and keys pass through the hook untouched.
 - With anything in Needs you, the status line names the first ask, cut with "…" (`⚠ <session>:
   <ask>`; `⚠ N need you — <session>: <ask>` for several; no session name while only one is open —
   see "Needs you" further down); an ask that appears from another session also raises a toast once

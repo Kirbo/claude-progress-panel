@@ -2188,3 +2188,19 @@ export function toVerify(file: SessionFile): { task: Task; agent: AgentEntry }[]
   }
   return out
 }
+
+/** Where the pane's window lands when this plugin asks the engine to scroll it: one window up or
+ *  down from where it stands, clamped to the tree. The engine resolves the ask (`to: 'start'` /
+ *  `'end'`) to the edge and says the distance (`by`), so the current row is `offset - by`; the
+ *  plugin only ever scrolls its pane by a page, so the ask's direction is the page's. */
+export function pagedOffset(e: {
+  offset: number
+  by: number
+  bodyRows: number
+  contentRows: number
+}): number {
+  const current = e.offset - e.by
+  const last = Math.max(0, e.contentRows - e.bodyRows)
+  const page = Math.sign(e.by) * e.bodyRows
+  return Math.min(last, Math.max(0, current + page))
+}

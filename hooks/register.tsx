@@ -5,7 +5,7 @@ import { fields } from './events'
 import { pollAll } from './forge'
 import { whoAmI } from './host'
 import { t } from './i18n'
-import { isBlank, ownBackground } from './model'
+import { isBlank, ownBackground, pagedOffset } from './model'
 import { renderPane } from './pane'
 import { INPUT_SCHEMA } from './schema'
 import type { ToolInput } from './session'
@@ -381,4 +381,10 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => renderPane($, e, options))
+  // A scroll this plugin asks for (the corner's ▲ ▼, or a chord bound to the engine's page actions
+  // pressing them from the prompt) is a page: the engine resolved the ask to the pane's edge, the
+  // hook lands it one window away instead. The person's wheel and keys pass untouched.
+  on('ui.scroll', { component: 'Pane', requestId: PANE }, (_, e, next) =>
+    e.origin?.kind === 'plugin' ? next({ ...e, offset: pagedOffset(e) }) : next(e),
+  )
 }

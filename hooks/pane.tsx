@@ -69,7 +69,7 @@ import {
   CONFIRM_MS,
   FINISHED_KEY,
   optionString,
-  type PANE,
+  PANE,
   readArmed,
   readChecked,
   readConfigTick,
@@ -1930,6 +1930,27 @@ export async function renderPane($: EngineInterface, e: PaneEvent, options: Plug
             </Box>
           ) : null}
           {version ? <Text dimColor>{t('pane.version', { version })}</Text> : null}
+          {/* ▲ ▼ page the pane while the PROMPT holds the keyboard: each carries the engine's page
+              action, so a chord the person binds to it (shift+pageup / shift+pagedown in the Chat
+              context) presses it from the prompt — the engine's own paging needs the pane focused
+              (ctrl+x tab). The press asks for the pane's edge; the plugin's ui.scroll hook turns
+              that into one window in that direction (pagedOffset). A click pages too. */}
+          <Button
+            key="scroll:up"
+            label={t('pane.pageUp')}
+            plain
+            dimColor
+            action="pane:pageUp"
+            onPress={() => void $.ui.scroll({ in: PANE, to: 'start' }).catch(() => {})}
+          />
+          <Button
+            key="scroll:down"
+            label={t('pane.pageDown')}
+            plain
+            dimColor
+            action="pane:pageDown"
+            onPress={() => void $.ui.scroll({ in: PANE, to: 'end' }).catch(() => {})}
+          />
           <Button
             key="settings:open"
             label={t('settings.open')}

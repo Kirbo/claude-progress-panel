@@ -57,6 +57,24 @@ a running session. **Remove:** `claude plugin uninstall progress-panel@claude-pr
   it docks beside the chat as a sidebar — drag its edge (or resize it with the keyboard) and Claude
   Code keeps that width; on a narrower one it sits full width above the prompt, its height likewise
   draggable. Its starting size comes from the settings below.
+- **Scrolling.** The pane scrolls with the wheel, and with PageUp/PageDown, Home/End and the arrows
+  once it holds the keyboard (`ctrl+x tab`, Esc gives it back). To page it **from the prompt**, bind
+  a chord to the engine's page actions, which the pane's `▲ ▼` corner buttons carry (a click on
+  them pages too) — in `~/.claude/keybindings.json`:
+
+  ```json
+  {
+    "bindings": [
+      {
+        "context": "Chat",
+        "bindings": { "shift+pageup": "pane:pageUp", "shift+pagedown": "pane:pageDown" }
+      }
+    ]
+  }
+  ```
+
+  Some terminals and tmux take Shift+PageUp/PageDown for their own scrollback; pick another chord
+  there (e.g. `ctrl+pageup`).
 - **Every session reports on its own.** The plugin adds a short rule to each session's system
   prompt (a session already running when you install or reload the plugin gets it with its next
   prompt, plus one one-line reminder if it has still reported nothing by the prompt after): on any task with more than one step the agent's first call sets `now` and the task

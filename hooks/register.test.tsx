@@ -483,6 +483,44 @@ test("the pane's corner shows its version, and a newer release with a link to it
   expect(world.fetched).toHaveLength(1)
 })
 
+test("the corner's ▲ ▼ page the pane from the prompt: they carry the engine's page actions, and the plugin's ui.scroll hook turns the edge they ask for into one window in that direction", async ($, on) => {
+  const disk = makeDisk()
+  engine(on, disk)
+  const scrolls: unknown[] = []
+  // Beneath the plugins: the engine's own answer to a scroll. (The kit does not route a plugin's
+  // own `$.ui.scroll` here, so the press itself — one line asking for the pane's edge — is not
+  // driven; the hook that turns the ask into a page is, with the input the engine resolves it to.)
+  on('ui.scroll', (_, e) => {
+    scrolls.push(e)
+    return {}
+  })
+  await start($)
+  await update($, { now: 'x' })
+  const ui = await pane($)
+  // The buttons carry the engine's page actions, so a chord the person binds to `pane:pageDown`
+  // (e.g. shift+pagedown in the Chat context) presses them while the prompt holds the keyboard.
+  expect((await ui.find({ type: 'Button', key: 'scroll:up' }))?.props.action).toBe('pane:pageUp')
+  expect((await ui.find({ type: 'Button', key: 'scroll:down' }))?.props.action).toBe('pane:pageDown')
+  // The engine resolves the press's ask to the pane's edge; the hook moves the window one page.
+  const asked = {
+    component: 'Pane',
+    requestId: 'progress',
+    offset: 100,
+    by: 100,
+    bodyRows: 20,
+    contentRows: 120,
+    origin: { kind: 'plugin', name: 'progress-panel' },
+  }
+  await $.ui.scroll(asked as never)
+  expect(scrolls).toEqual([{ ...asked, offset: 20 }])
+  // The person's own wheel or keys pass untouched.
+  scrolls.length = 0
+  const wheel = { ...asked, by: 1, offset: 1, origin: { kind: 'person' } }
+  await $.ui.scroll(wheel as never)
+  expect(scrolls).toEqual([wheel])
+  await ui.unmount()
+})
+
 test('a check older than 6 h (shared by every session) is made again; a newer release links its notes', async ($, on) => {
   const disk = makeDisk()
   const world = engine(on, disk)
